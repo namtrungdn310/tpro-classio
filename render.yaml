@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: tpro-classio-api
+    env: python
+    buildCommand: pip install -r backend/requirements.txt && cd backend && alembic upgrade head
+    startCommand: cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+      - key: ALGORITHM
+        value: HS256
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: 1440
+      - key: FRONTEND_URL
+        sync: false

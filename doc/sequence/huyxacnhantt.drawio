@@ -1,0 +1,141 @@
+<mxfile host="app.diagrams.net">
+  <diagram name="Page-1" id="cB4HFThtC6A6MLNojV5Z">
+    <mxGraphModel dx="1960" dy="1336" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <UserObject label="" mermaidData="{&#xa;  &quot;data&quot;: &quot;sequenceDiagram\n    actor Admin\n    participant UI as Next.js UI\n    participant API as FastAPI\n    participant DB as PostgreSQL\n \n    Admin-&gt;&gt;UI: Click tick cua hoc vien da PAID\n    UI-&gt;&gt;Admin: AlertDialog \&quot;Bo xac nhan thanh toan?\&quot;\n    Admin-&gt;&gt;UI: Confirm\n    UI-&gt;&gt;API: PATCH /fees/{id}/unconfirm\n    activate API\n    API-&gt;&gt;DB: UPDATE fee_records SET status=UNPAID, paid_date=null\n    activate DB\n    DB--&gt;&gt;API: OK\n    deactivate DB\n    API--&gt;&gt;UI: {status: UNPAID}\n    deactivate API\n    UI-&gt;&gt;Admin: Badge ve UNPAID (do)\n&quot;,&#xa;  &quot;config&quot;: null&#xa;}" id="pA32AqY87MzGsPXfYnrP-1">
+          <mxCell connectable="0" parent="1" style="group;transparentBounds=1;editIcon=1;lockedGroup=0;groupPadding=20;" vertex="1">
+            <mxGeometry as="geometry" />
+          </mxCell>
+        </UserObject>
+        <UserObject label="Admin" mermaidId="n:Admin" mermaidBaseStyle="html=1;shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;container=1;dropTarget=0;collapsible=0;recursiveResize=0;outlineConnect=0;portConstraint=eastwest;newEdgeStyle={&quot;edgeStyle&quot;:&quot;elbowEdgeStyle&quot;,&quot;elbow&quot;:&quot;vertical&quot;,&quot;curved&quot;:0,&quot;rounded&quot;:0};lifelineDashed=0;strokeWidth=2;rounded=1;absoluteArcSize=1;arcSize=6;lifelineColor=light-dark(#9370DB,#cccccc);participant=seqActorStick;verticalAlign=bottom;align=center;spacingBottom=4;size=90;fillColor=light-dark(#ECECFF,#1f2020);strokeColor=light-dark(#9370DB,#cccccc);fontColor=light-dark(#333333,#cccccc);fontFamily=Trebuchet MS,Verdana,Arial,sans-serif;fontSize=16;" mermaidBaseValue="Admin" id="pA32AqY87MzGsPXfYnrP-2">
+          <mxCell parent="pA32AqY87MzGsPXfYnrP-1" style="html=1;shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;container=1;dropTarget=0;collapsible=0;recursiveResize=0;outlineConnect=0;portConstraint=eastwest;newEdgeStyle={&quot;edgeStyle&quot;:&quot;elbowEdgeStyle&quot;,&quot;elbow&quot;:&quot;vertical&quot;,&quot;curved&quot;:0,&quot;rounded&quot;:0};lifelineDashed=0;strokeWidth=2;rounded=1;absoluteArcSize=1;arcSize=6;lifelineColor=light-dark(#9370DB,#cccccc);participant=seqActorStick;verticalAlign=bottom;align=center;spacingBottom=4;size=90;fillColor=light-dark(#ECECFF,#1f2020);strokeColor=light-dark(#9370DB,#cccccc);fontColor=light-dark(#333333,#cccccc);fontFamily=Trebuchet MS,Verdana,Arial,sans-serif;fontSize=16;" vertex="1">
+            <mxGeometry height="437" width="150" x="40" y="40" as="geometry" />
+          </mxCell>
+        </UserObject>
+        <mxCell id="pA32AqY87MzGsPXfYnrP-3" parent="pA32AqY87MzGsPXfYnrP-1" style="html=1;shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;container=1;dropTarget=0;collapsible=0;recursiveResize=0;outlineConnect=0;portConstraint=eastwest;lifelineDashed=0;strokeWidth=2;rounded=1;absoluteArcSize=1;arcSize=6;lifelineColor=light-dark(#9370DB,#cccccc);size=90;participant=seqActorStick;verticalAlign=bottom;align=center;spacingBottom=4;fillColor=light-dark(#ECECFF,#1f2020);strokeColor=light-dark(#9370DB,#cccccc);fontColor=light-dark(#333333,#cccccc);fontFamily=Trebuchet MS,Verdana,Arial,sans-serif;fontSize=16;" value="Admin" vertex="1">
+          <mxGeometry height="90" width="150" x="40" y="477" as="geometry" />
+        </mxCell>
+        <UserObject label="Next.js UI" mermaidId="n:UI" mermaidBaseStyle="html=1;shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;container=1;dropTarget=0;collapsible=0;recursiveResize=0;outlineConnect=0;portConstraint=eastwest;newEdgeStyle={&quot;edgeStyle&quot;:&quot;elbowEdgeStyle&quot;,&quot;elbow&quot;:&quot;vertical&quot;,&quot;curved&quot;:0,&quot;rounded&quot;:0};lifelineDashed=0;strokeWidth=2;rounded=1;absoluteArcSize=1;arcSize=6;lifelineColor=light-dark(#9370DB,#cccccc);size=65;fillColor=light-dark(#ECECFF,#1f2020);strokeColor=light-dark(#9370DB,#cccccc);fontColor=light-dark(#333333,#cccccc);fontFamily=Trebuchet MS,Verdana,Arial,sans-serif;fontSize=16;" mermaidBaseValue="Next.js UI" id="pA32AqY87MzGsPXfYnrP-4">
+          <mxCell parent="pA32AqY87MzGsPXfYnrP-1" style="html=1;shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;container=1;dropTarget=0;collapsible=0;recursiveResize=0;outlineConnect=0;portConstraint=eastwest;newEdgeStyle={&quot;edgeStyle&quot;:&quot;elbowEdgeStyle&quot;,&quot;elbow&quot;:&quot;vertical&quot;,&quot;curved&quot;:0,&quot;rounded&quot;:0};lifelineDashed=0;strokeWidth=2;rounded=1;absoluteArcSize=1;arcSize=6;lifelineColor=light-dark(#9370DB,#cccccc);size=65;fillColor=light-dark(#ECECFF,#1f2020);strokeColor=light-dark(#9370DB,#cccccc);fontColor=light-dark(#333333,#cccccc);fontFamily=Trebuchet MS,Verdana,Arial,sans-serif;fontSize=16;" vertex="1">
+            <mxGeometry height="437" width="150" x="360" y="40" as="geometry" />
+          </mxCell>
+        </UserObject>
+        <mxCell id="pA32AqY87MzGsPXfYnrP-5" parent="pA32AqY87MzGsPXfYnrP-1" style="html=1;rounded=1;absoluteArcSize=1;arcSize=6;verticalAlign=middle;align=center;strokeWidth=2;whiteSpace=wrap;fillColor=light-dark(#ECECFF,#1f2020);strokeColor=light-dark(#9370DB,#cccccc);fontColor=light-dark(#333333,#cccccc);fontFamily=Trebuchet MS,Verdana,Arial,sans-serif;fontSize=16;" value="Next.js UI" vertex="1">
+          <mxGeometry height="65" width="150" x="360" y="477" as="geometry" />
+        </mxCell>
+        <UserObject label="FastAPI" mermaidId="n:API" mermaidBaseStyle="html=1;shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;container=1;dropTarget=0;collapsible=0;recursiveResize=0;outlineConnect=0;portConstraint=eastwest;newEdgeStyle={&quot;edgeStyle&quot;:&quot;elbowEdgeStyle&quot;,&quot;elbow&quot;:&quot;vertical&quot;,&quot;curved&quot;:0,&quot;rounded&quot;:0};lifelineDashed=0;strokeWidth=2;rounded=1;absoluteArcSize=1;arcSize=6;lifelineColor=light-dark(#9370DB,#cccccc);size=65;fillColor=light-dark(#ECECFF,#1f2020);strokeColor=light-dark(#9370DB,#cccccc);fontColor=light-dark(#333333,#cccccc);fontFamily=Trebuchet MS,Verdana,Arial,sans-serif;fontSize=16;" mermaidBaseValue="FastAPI" id="pA32AqY87MzGsPXfYnrP-6">
+          <mxCell parent="pA32AqY87MzGsPXfYnrP-1" style="html=1;shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;container=1;dropTarget=0;collapsible=0;recursiveResize=0;outlineConnect=0;portConstraint=eastwest;newEdgeStyle={&quot;edgeStyle&quot;:&quot;elbowEdgeStyle&quot;,&quot;elbow&quot;:&quot;vertical&quot;,&quot;curved&quot;:0,&quot;rounded&quot;:0};lifelineDashed=0;strokeWidth=2;rounded=1;absoluteArcSize=1;arcSize=6;lifelineColor=light-dark(#9370DB,#cccccc);size=65;fillColor=light-dark(#ECECFF,#1f2020);strokeColor=light-dark(#9370DB,#cccccc);fontColor=light-dark(#333333,#cccccc);fontFamily=Trebuchet MS,Verdana,Arial,sans-serif;fontSize=16;" vertex="1">
+            <mxGeometry height="437" width="150" x="612" y="40" as="geometry" />
+          </mxCell>
+        </UserObject>
+        <mxCell id="pA32AqY87MzGsPXfYnrP-7" parent="pA32AqY87MzGsPXfYnrP-6" style="html=1;points=[];perimeter=orthogonalPerimeter;outlineConnect=0;targetShapes=umlLifeline;portConstraint=eastwest;newEdgeStyle={&quot;edgeStyle&quot;:&quot;elbowEdgeStyle&quot;,&quot;elbow&quot;:&quot;vertical&quot;,&quot;curved&quot;:0,&quot;rounded&quot;:0};fillColor=light-dark(#f4f4f4,#2a2a2a);strokeColor=light-dark(#666666,#cccccc);fontColor=light-dark(#333333,#cccccc);fontFamily=Trebuchet MS,Verdana,Arial,sans-serif;fontSize=16;" value="" vertex="1">
+          <mxGeometry height="132" width="10" x="70" y="241" as="geometry" />
+        </mxCell>
+        <mxCell id="pA32AqY87MzGsPXfYnrP-8" parent="pA32AqY87MzGsPXfYnrP-1" style="html=1;rounded=1;absoluteArcSize=1;arcSize=6;verticalAlign=middle;align=center;strokeWidth=2;whiteSpace=wrap;fillColor=light-dark(#ECECFF,#1f2020);strokeColor=light-dark(#9370DB,#cccccc);fontColor=light-dark(#333333,#cccccc);fontFamily=Trebuchet MS,Verdana,Arial,sans-serif;fontSize=16;" value="FastAPI" vertex="1">
+          <mxGeometry height="65" width="150" x="612" y="477" as="geometry" />
+        </mxCell>
+        <UserObject label="PostgreSQL" mermaidId="n:DB" mermaidBaseStyle="html=1;shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;container=1;dropTarget=0;collapsible=0;recursiveResize=0;outlineConnect=0;portConstraint=eastwest;newEdgeStyle={&quot;edgeStyle&quot;:&quot;elbowEdgeStyle&quot;,&quot;elbow&quot;:&quot;vertical&quot;,&quot;curved&quot;:0,&quot;rounded&quot;:0};lifelineDashed=0;strokeWidth=2;rounded=1;absoluteArcSize=1;arcSize=6;lifelineColor=light-dark(#9370DB,#cccccc);size=65;fillColor=light-dark(#ECECFF,#1f2020);strokeColor=light-dark(#9370DB,#cccccc);fontColor=light-dark(#333333,#cccccc);fontFamily=Trebuchet MS,Verdana,Arial,sans-serif;fontSize=16;" mermaidBaseValue="PostgreSQL" id="pA32AqY87MzGsPXfYnrP-9">
+          <mxCell parent="pA32AqY87MzGsPXfYnrP-1" style="html=1;shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;container=1;dropTarget=0;collapsible=0;recursiveResize=0;outlineConnect=0;portConstraint=eastwest;newEdgeStyle={&quot;edgeStyle&quot;:&quot;elbowEdgeStyle&quot;,&quot;elbow&quot;:&quot;vertical&quot;,&quot;curved&quot;:0,&quot;rounded&quot;:0};lifelineDashed=0;strokeWidth=2;rounded=1;absoluteArcSize=1;arcSize=6;lifelineColor=light-dark(#9370DB,#cccccc);size=65;fillColor=light-dark(#ECECFF,#1f2020);strokeColor=light-dark(#9370DB,#cccccc);fontColor=light-dark(#333333,#cccccc);fontFamily=Trebuchet MS,Verdana,Arial,sans-serif;fontSize=16;" vertex="1">
+            <mxGeometry height="437" width="150" x="1062" y="40" as="geometry" />
+          </mxCell>
+        </UserObject>
+        <mxCell id="pA32AqY87MzGsPXfYnrP-10" parent="pA32AqY87MzGsPXfYnrP-9" style="html=1;points=[];perimeter=orthogonalPerimeter;outlineConnect=0;targetShapes=umlLifeline;portConstraint=eastwest;newEdgeStyle={&quot;edgeStyle&quot;:&quot;elbowEdgeStyle&quot;,&quot;elbow&quot;:&quot;vertical&quot;,&quot;curved&quot;:0,&quot;rounded&quot;:0};fillColor=light-dark(#f4f4f4,#2a2a2a);strokeColor=light-dark(#666666,#cccccc);fontColor=light-dark(#333333,#cccccc);fontFamily=Trebuchet MS,Verdana,Arial,sans-serif;fontSize=16;" value="" vertex="1">
+          <mxGeometry height="44" width="10" x="70" y="285" as="geometry" />
+        </mxCell>
+        <mxCell id="pA32AqY87MzGsPXfYnrP-11" parent="pA32AqY87MzGsPXfYnrP-1" style="html=1;rounded=1;absoluteArcSize=1;arcSize=6;verticalAlign=middle;align=center;strokeWidth=2;whiteSpace=wrap;fillColor=light-dark(#ECECFF,#1f2020);strokeColor=light-dark(#9370DB,#cccccc);fontColor=light-dark(#333333,#cccccc);fontFamily=Trebuchet MS,Verdana,Arial,sans-serif;fontSize=16;" value="PostgreSQL" vertex="1">
+          <mxGeometry height="65" width="150" x="1062" y="477" as="geometry" />
+        </mxCell>
+        <UserObject label="Click tick cua hoc vien da PAID" mermaidId="e:Admin-&gt;UI#0" mermaidBaseStyle="endArrow=block;verticalAlign=bottom;edgeStyle=elbowEdgeStyle;elbow=vertical;curved=0;rounded=0;fontSize=16;labelBackgroundColor=none;strokeWidth=1.5;strokeColor=light-dark(#333333,#cccccc);fontColor=light-dark(#333333,#cccccc);fontFamily=Trebuchet MS,Verdana,Arial,sans-serif;" mermaidBaseValue="Click tick cua hoc vien da PAID" id="pA32AqY87MzGsPXfYnrP-12">
+          <mxCell edge="1" parent="pA32AqY87MzGsPXfYnrP-1" style="endArrow=block;verticalAlign=bottom;edgeStyle=elbowEdgeStyle;elbow=vertical;curved=0;rounded=0;fontSize=16;labelBackgroundColor=none;strokeWidth=1.5;strokeColor=light-dark(#333333,#cccccc);fontColor=light-dark(#333333,#cccccc);fontFamily=Trebuchet MS,Verdana,Arial,sans-serif;">
+            <mxGeometry relative="1" as="geometry">
+              <Array as="points">
+                <mxPoint x="275" y="149" />
+              </Array>
+              <mxPoint x="115" y="149" as="sourcePoint" />
+              <mxPoint x="435" y="149" as="targetPoint" />
+            </mxGeometry>
+          </mxCell>
+        </UserObject>
+        <UserObject label="AlertDialog &quot;Bo xac nhan thanh toan?&quot;" mermaidId="e:UI-&gt;Admin#0" mermaidBaseStyle="endArrow=block;verticalAlign=bottom;edgeStyle=elbowEdgeStyle;elbow=vertical;curved=0;rounded=0;fontSize=16;labelBackgroundColor=none;strokeWidth=1.5;strokeColor=light-dark(#333333,#cccccc);fontColor=light-dark(#333333,#cccccc);fontFamily=Trebuchet MS,Verdana,Arial,sans-serif;" mermaidBaseValue="AlertDialog &quot;Bo xac nhan thanh toan?&quot;" id="pA32AqY87MzGsPXfYnrP-13">
+          <mxCell edge="1" parent="pA32AqY87MzGsPXfYnrP-1" style="endArrow=block;verticalAlign=bottom;edgeStyle=elbowEdgeStyle;elbow=vertical;curved=0;rounded=0;fontSize=16;labelBackgroundColor=none;strokeWidth=1.5;strokeColor=light-dark(#333333,#cccccc);fontColor=light-dark(#333333,#cccccc);fontFamily=Trebuchet MS,Verdana,Arial,sans-serif;">
+            <mxGeometry relative="1" as="geometry">
+              <Array as="points">
+                <mxPoint x="275" y="193" />
+              </Array>
+              <mxPoint x="435" y="193" as="sourcePoint" />
+              <mxPoint x="115" y="193" as="targetPoint" />
+            </mxGeometry>
+          </mxCell>
+        </UserObject>
+        <UserObject label="Confirm" mermaidId="e:Admin-&gt;UI#1" mermaidBaseStyle="endArrow=block;verticalAlign=bottom;edgeStyle=elbowEdgeStyle;elbow=vertical;curved=0;rounded=0;fontSize=16;labelBackgroundColor=none;strokeWidth=1.5;strokeColor=light-dark(#333333,#cccccc);fontColor=light-dark(#333333,#cccccc);fontFamily=Trebuchet MS,Verdana,Arial,sans-serif;" mermaidBaseValue="Confirm" id="pA32AqY87MzGsPXfYnrP-14">
+          <mxCell edge="1" parent="pA32AqY87MzGsPXfYnrP-1" style="endArrow=block;verticalAlign=bottom;edgeStyle=elbowEdgeStyle;elbow=vertical;curved=0;rounded=0;fontSize=16;labelBackgroundColor=none;strokeWidth=1.5;strokeColor=light-dark(#333333,#cccccc);fontColor=light-dark(#333333,#cccccc);fontFamily=Trebuchet MS,Verdana,Arial,sans-serif;">
+            <mxGeometry relative="1" as="geometry">
+              <Array as="points">
+                <mxPoint x="275" y="237" />
+              </Array>
+              <mxPoint x="115" y="237" as="sourcePoint" />
+              <mxPoint x="435" y="237" as="targetPoint" />
+            </mxGeometry>
+          </mxCell>
+        </UserObject>
+        <UserObject label="PATCH /fees/{id}/unconfirm" mermaidId="e:UI-&gt;API#0" mermaidBaseStyle="endArrow=block;verticalAlign=bottom;edgeStyle=elbowEdgeStyle;elbow=vertical;curved=0;rounded=0;fontSize=16;labelBackgroundColor=none;strokeWidth=1.5;strokeColor=light-dark(#333333,#cccccc);fontColor=light-dark(#333333,#cccccc);fontFamily=Trebuchet MS,Verdana,Arial,sans-serif;" mermaidBaseValue="PATCH /fees/{id}/unconfirm" id="pA32AqY87MzGsPXfYnrP-15">
+          <mxCell edge="1" parent="pA32AqY87MzGsPXfYnrP-1" style="endArrow=block;verticalAlign=bottom;edgeStyle=elbowEdgeStyle;elbow=vertical;curved=0;rounded=0;fontSize=16;labelBackgroundColor=none;strokeWidth=1.5;strokeColor=light-dark(#333333,#cccccc);fontColor=light-dark(#333333,#cccccc);fontFamily=Trebuchet MS,Verdana,Arial,sans-serif;">
+            <mxGeometry relative="1" as="geometry">
+              <Array as="points">
+                <mxPoint x="559" y="281" />
+              </Array>
+              <mxPoint x="435" y="281" as="sourcePoint" />
+              <mxPoint x="682" y="281" as="targetPoint" />
+            </mxGeometry>
+          </mxCell>
+        </UserObject>
+        <UserObject label="UPDATE fee_records SET status=UNPAID, paid_date=null" mermaidId="e:API-&gt;DB#0" mermaidBaseStyle="endArrow=block;verticalAlign=bottom;edgeStyle=elbowEdgeStyle;elbow=vertical;curved=0;rounded=0;fontSize=16;labelBackgroundColor=none;strokeWidth=1.5;strokeColor=light-dark(#333333,#cccccc);fontColor=light-dark(#333333,#cccccc);fontFamily=Trebuchet MS,Verdana,Arial,sans-serif;" mermaidBaseValue="UPDATE fee_records SET status=UNPAID, paid_date=null" id="pA32AqY87MzGsPXfYnrP-16">
+          <mxCell edge="1" parent="pA32AqY87MzGsPXfYnrP-1" style="endArrow=block;verticalAlign=bottom;edgeStyle=elbowEdgeStyle;elbow=vertical;curved=0;rounded=0;fontSize=16;labelBackgroundColor=none;strokeWidth=1.5;strokeColor=light-dark(#333333,#cccccc);fontColor=light-dark(#333333,#cccccc);fontFamily=Trebuchet MS,Verdana,Arial,sans-serif;">
+            <mxGeometry relative="1" as="geometry">
+              <Array as="points">
+                <mxPoint x="912" y="325" />
+              </Array>
+              <mxPoint x="692" y="325" as="sourcePoint" />
+              <mxPoint x="1132" y="325" as="targetPoint" />
+            </mxGeometry>
+          </mxCell>
+        </UserObject>
+        <UserObject label="OK" mermaidId="e:DB-&gt;API#0" mermaidBaseStyle="dashed=1;fixDash=1;dashPattern=2 2;endArrow=block;verticalAlign=bottom;edgeStyle=elbowEdgeStyle;elbow=vertical;curved=0;rounded=0;fontSize=16;labelBackgroundColor=none;strokeWidth=1.5;strokeColor=light-dark(#333333,#cccccc);fontColor=light-dark(#333333,#cccccc);fontFamily=Trebuchet MS,Verdana,Arial,sans-serif;" mermaidBaseValue="OK" id="pA32AqY87MzGsPXfYnrP-17">
+          <mxCell edge="1" parent="pA32AqY87MzGsPXfYnrP-1" style="dashed=1;fixDash=1;dashPattern=2 2;endArrow=block;verticalAlign=bottom;edgeStyle=elbowEdgeStyle;elbow=vertical;curved=0;rounded=0;fontSize=16;labelBackgroundColor=none;strokeWidth=1.5;strokeColor=light-dark(#333333,#cccccc);fontColor=light-dark(#333333,#cccccc);fontFamily=Trebuchet MS,Verdana,Arial,sans-serif;">
+            <mxGeometry relative="1" as="geometry">
+              <Array as="points">
+                <mxPoint x="912" y="369" />
+              </Array>
+              <mxPoint x="1132" y="369" as="sourcePoint" />
+              <mxPoint x="692" y="369" as="targetPoint" />
+            </mxGeometry>
+          </mxCell>
+        </UserObject>
+        <UserObject label="{status: UNPAID}" mermaidId="e:API-&gt;UI#0" mermaidBaseStyle="dashed=1;fixDash=1;dashPattern=2 2;endArrow=block;verticalAlign=bottom;edgeStyle=elbowEdgeStyle;elbow=vertical;curved=0;rounded=0;fontSize=16;labelBackgroundColor=none;strokeWidth=1.5;strokeColor=light-dark(#333333,#cccccc);fontColor=light-dark(#333333,#cccccc);fontFamily=Trebuchet MS,Verdana,Arial,sans-serif;" mermaidBaseValue="{status: UNPAID}" id="pA32AqY87MzGsPXfYnrP-18">
+          <mxCell edge="1" parent="pA32AqY87MzGsPXfYnrP-1" style="dashed=1;fixDash=1;dashPattern=2 2;endArrow=block;verticalAlign=bottom;edgeStyle=elbowEdgeStyle;elbow=vertical;curved=0;rounded=0;fontSize=16;labelBackgroundColor=none;strokeWidth=1.5;strokeColor=light-dark(#333333,#cccccc);fontColor=light-dark(#333333,#cccccc);fontFamily=Trebuchet MS,Verdana,Arial,sans-serif;">
+            <mxGeometry relative="1" as="geometry">
+              <Array as="points">
+                <mxPoint x="559" y="413" />
+              </Array>
+              <mxPoint x="682" y="413" as="sourcePoint" />
+              <mxPoint x="435" y="413" as="targetPoint" />
+            </mxGeometry>
+          </mxCell>
+        </UserObject>
+        <UserObject label="Badge ve UNPAID (do)" mermaidId="e:UI-&gt;Admin#1" mermaidBaseStyle="endArrow=block;verticalAlign=bottom;edgeStyle=elbowEdgeStyle;elbow=vertical;curved=0;rounded=0;fontSize=16;labelBackgroundColor=none;strokeWidth=1.5;strokeColor=light-dark(#333333,#cccccc);fontColor=light-dark(#333333,#cccccc);fontFamily=Trebuchet MS,Verdana,Arial,sans-serif;" mermaidBaseValue="Badge ve UNPAID (do)" id="pA32AqY87MzGsPXfYnrP-19">
+          <mxCell edge="1" parent="pA32AqY87MzGsPXfYnrP-1" style="endArrow=block;verticalAlign=bottom;edgeStyle=elbowEdgeStyle;elbow=vertical;curved=0;rounded=0;fontSize=16;labelBackgroundColor=none;strokeWidth=1.5;strokeColor=light-dark(#333333,#cccccc);fontColor=light-dark(#333333,#cccccc);fontFamily=Trebuchet MS,Verdana,Arial,sans-serif;">
+            <mxGeometry relative="1" as="geometry">
+              <Array as="points">
+                <mxPoint x="275" y="457" />
+              </Array>
+              <mxPoint x="435" y="457" as="sourcePoint" />
+              <mxPoint x="115" y="457" as="targetPoint" />
+            </mxGeometry>
+          </mxCell>
+        </UserObject>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

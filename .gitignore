@@ -1,0 +1,24 @@
+phase0.md
+
+# Node / Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/coverage/
+frontend/.vercel/
+frontend/*.tsbuildinfo
+frontend/next-env.d.ts
+
+# Python
+backend/__pycache__/
+backend/.pytest_cache/
+backend/.mypy_cache/
+backend/.venv/
+
+# Local environment files
+frontend/.env*.local
+backend/.env
+
+# OS / editor
+.DS_Store
+Thumbs.db
