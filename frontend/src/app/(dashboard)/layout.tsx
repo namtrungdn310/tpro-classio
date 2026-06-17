@@ -8,7 +8,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   const [checked, setChecked] = useState(false);
 
   useEffect(() => {
-    const token = window.localStorage.getItem("tpro_access_token");
+    const token = window.localStorage.getItem("tpro_token");
 
     if (!token) {
       router.replace("/login");

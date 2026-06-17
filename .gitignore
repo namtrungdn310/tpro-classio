@@ -11,6 +11,7 @@ frontend/next-env.d.ts
 
 # Python
 backend/__pycache__/
+backend/**/__pycache__/
 backend/.pytest_cache/
 backend/.mypy_cache/
 backend/.venv/

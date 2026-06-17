@@ -33,7 +33,7 @@ export default function LoginPage() {
         throw new Error("Missing token");
       }
 
-      window.localStorage.setItem("tpro_access_token", token);
+      window.localStorage.setItem("tpro_token", token);
       window.localStorage.setItem("tpro_user_email", email);
       router.push("/");
     } catch {

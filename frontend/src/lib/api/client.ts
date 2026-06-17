@@ -9,7 +9,7 @@ apiClient.interceptors.request.use((config) => {
     return config;
   }
 
-  const token = window.localStorage.getItem("tpro_access_token");
+  const token = window.localStorage.getItem("tpro_token");
 
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
@@ -22,7 +22,7 @@ apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
     if (typeof window !== "undefined" && error.response?.status === 401) {
-      window.localStorage.removeItem("tpro_access_token");
+      window.localStorage.removeItem("tpro_token");
       window.localStorage.removeItem("tpro_user_email");
       window.location.href = "/login";
     }

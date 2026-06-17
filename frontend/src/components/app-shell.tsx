@@ -28,13 +28,13 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [email, setEmail] = useState("");
 
   useEffect(() => {
-    const token = window.localStorage.getItem("tpro_access_token");
+    const token = window.localStorage.getItem("tpro_token");
     setIsAuthenticated(Boolean(token));
     setEmail(window.localStorage.getItem("tpro_user_email") ?? "");
   }, [pathname]);
 
   function handleLogout() {
-    window.localStorage.removeItem("tpro_access_token");
+    window.localStorage.removeItem("tpro_token");
     window.localStorage.removeItem("tpro_user_email");
     setIsAuthenticated(false);
     setEmail("");

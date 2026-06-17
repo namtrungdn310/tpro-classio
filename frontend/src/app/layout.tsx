@@ -8,7 +8,7 @@ const inter = Inter({ subsets: ["latin", "vietnamese"], variable: "--font-sans" 
 
 export const metadata: Metadata = {
   title: "TPRO Classio",
-  description: "He thong quan ly hoc vien va hoc phi TPRO English Center",
+  description: "Hệ thống quản lý học viên và học phí TPRO English Center",
 };
 
 export default function RootLayout({

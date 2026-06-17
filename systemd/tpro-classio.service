@@ -1,0 +1,14 @@
+[Unit]
+Description=TPRO Classio FastAPI Backend
+After=network.target
+
+[Service]
+User=tpro
+WorkingDirectory=/home/tpro/tpro-classio/backend
+Environment=PATH=/home/tpro/tpro-classio/backend/venv/bin
+ExecStart=/home/tpro/tpro-classio/backend/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
