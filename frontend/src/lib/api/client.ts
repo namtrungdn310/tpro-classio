@@ -23,7 +23,6 @@ apiClient.interceptors.response.use(
   (error) => {
     if (typeof window !== "undefined" && error.response?.status === 401) {
       window.localStorage.removeItem("tpro_token");
-      window.localStorage.removeItem("tpro_user_email");
       window.location.href = "/login";
     }
 

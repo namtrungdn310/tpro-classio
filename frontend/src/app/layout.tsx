@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
-import { AppShell } from "@/components/app-shell";
 import { cn } from "@/lib/utils";
 import "./globals.css";
 
@@ -18,9 +17,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="vi" className={cn("font-sans", inter.variable)}>
-      <body className="min-h-screen bg-white text-gray-900 antialiased">
-        <AppShell>{children}</AppShell>
-      </body>
+      <body className="min-h-screen bg-white text-gray-900 antialiased">{children}</body>
     </html>
   );
 }

@@ -1,45 +1,44 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { useState } from "react";
+import { zodResolver } from "@hookform/resolvers/zod";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { apiClient } from "@/lib/api/client";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
+import { login } from "@/lib/api/auth";
 
-type LoginResponse = {
-  access_token?: string;
-  token?: string;
-};
+const loginSchema = z.object({
+  email: z.string().email("Email không hợp lệ"),
+  password: z.string().min(6, "Mật khẩu phải có ít nhất 6 ký tự"),
+});
+
+type LoginFormValues = z.infer<typeof loginSchema>;
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const {
+    formState: { errors, isSubmitting },
+    handleSubmit,
+    register,
+  } = useForm<LoginFormValues>({
+    resolver: zodResolver(loginSchema),
+    defaultValues: {
+      email: "",
+      password: "",
+    },
+  });
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function onSubmit(values: LoginFormValues) {
     setError("");
-    setIsSubmitting(true);
 
     try {
-      const { data } = await apiClient.post<LoginResponse>("/auth/login", {
-        email,
-        password,
-      });
-      const token = data.access_token ?? data.token;
-
-      if (!token) {
-        throw new Error("Missing token");
-      }
-
-      window.localStorage.setItem("tpro_token", token);
-      window.localStorage.setItem("tpro_user_email", email);
+      const data = await login(values.email, values.password);
+      window.localStorage.setItem("tpro_token", data.access_token);
       router.push("/");
     } catch {
       setError("Email hoặc mật khẩu không đúng");
-    } finally {
-      setIsSubmitting(false);
     }
   }
 
@@ -58,21 +57,19 @@ export default function LoginPage() {
           <h1 className="text-lg font-medium text-gray-900">TPRO Classio</h1>
           <p className="mt-1 text-sm text-gray-500">Đăng nhập để tiếp tục</p>
         </div>
-        <form className="space-y-4" onSubmit={handleSubmit}>
+        <form className="space-y-4" onSubmit={handleSubmit(onSubmit)}>
           <div className="space-y-1.5">
             <label htmlFor="email" className="text-sm font-medium text-gray-700">
               Email
             </label>
             <input
               id="email"
-              name="email"
               type="email"
               autoComplete="email"
-              required
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
+              {...register("email")}
               className="h-10 w-full rounded-md border border-gray-200 px-3 text-sm outline-none focus:border-[#1F5C2E] focus:ring-2 focus:ring-[#1F5C2E]/15"
             />
+            {errors.email ? <p className="text-sm text-red-600">{errors.email.message}</p> : null}
           </div>
           <div className="space-y-1.5">
             <label htmlFor="password" className="text-sm font-medium text-gray-700">
@@ -80,14 +77,14 @@ export default function LoginPage() {
             </label>
             <input
               id="password"
-              name="password"
               type="password"
               autoComplete="current-password"
-              required
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
+              {...register("password")}
               className="h-10 w-full rounded-md border border-gray-200 px-3 text-sm outline-none focus:border-[#1F5C2E] focus:ring-2 focus:ring-[#1F5C2E]/15"
             />
+            {errors.password ? (
+              <p className="text-sm text-red-600">{errors.password.message}</p>
+            ) : null}
           </div>
           {error ? <p className="text-sm text-red-600">{error}</p> : null}
           <button
