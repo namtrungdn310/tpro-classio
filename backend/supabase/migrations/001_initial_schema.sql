@@ -38,6 +38,7 @@ create table classes (
   name text not null,
   type class_type not null,
   base_fee numeric(12,0) not null default 0,
+  billing_cycle_months smallint not null default 1 check (billing_cycle_months >= 1),
   start_date date,
   end_date date,
   schedule jsonb,

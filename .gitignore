@@ -1,7 +1,8 @@
-phase1.md
-study.txt
-design.md
+# Local docs / prompts
 doc/
+design.md
+phase*.md
+study.txt
 
 # Node / Next.js
 frontend/node_modules/
@@ -18,10 +19,20 @@ backend/**/__pycache__/
 backend/.pytest_cache/
 backend/.mypy_cache/
 backend/.venv/
+backend/**/*.pyc
 
 # Local environment files
+.env
+.env.local
+.env.*.local
 frontend/.env*.local
 backend/.env
+
+# Local Docker overrides
+docker-compose.override.yml
+
+# Logs
+*.log
 
 # OS / editor
 .DS_Store

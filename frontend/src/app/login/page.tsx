@@ -36,6 +36,7 @@ export default function LoginPage() {
     try {
       const data = await login(values.email, values.password);
       window.localStorage.setItem("tpro_token", data.access_token);
+      window.localStorage.setItem("tpro_refresh_token", data.refresh_token);
       router.push("/");
     } catch {
       setError("Email hoặc mật khẩu không đúng");

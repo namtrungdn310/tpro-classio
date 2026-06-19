@@ -2,6 +2,7 @@ import { apiClient } from "@/lib/api/client";
 
 export type TokenResponse = {
   access_token: string;
+  refresh_token: string;
   token_type: string;
   role: string;
 };
@@ -18,6 +19,13 @@ export async function login(email: string, password: string): Promise<TokenRespo
   return data;
 }
 
+export async function refreshToken(refreshTokenValue: string): Promise<TokenResponse> {
+  const { data } = await apiClient.post<TokenResponse>("/auth/refresh", {
+    refresh_token: refreshTokenValue,
+  });
+  return data;
+}
+
 export async function getMe(): Promise<UserMe> {
   const { data } = await apiClient.get<UserMe>("/auth/me");
   return data;
@@ -25,4 +33,5 @@ export async function getMe(): Promise<UserMe> {
 
 export function logout(): void {
   window.localStorage.removeItem("tpro_token");
+  window.localStorage.removeItem("tpro_refresh_token");
 }

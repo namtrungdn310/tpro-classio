@@ -1,9 +1,13 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import localFont from "next/font/local";
 import { cn } from "@/lib/utils";
 import "./globals.css";
 
-const inter = Inter({ subsets: ["latin", "vietnamese"], variable: "--font-sans" });
+const geistSans = localFont({
+  src: "./fonts/GeistVF.woff",
+  variable: "--font-sans",
+  weight: "100 900",
+});
 
 export const metadata: Metadata = {
   title: "TPRO Classio",
@@ -16,7 +20,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="vi" className={cn("font-sans", inter.variable)}>
+    <html lang="vi" className={cn("font-sans", geistSans.variable)}>
       <body className="min-h-screen bg-white text-gray-900 antialiased">{children}</body>
     </html>
   );

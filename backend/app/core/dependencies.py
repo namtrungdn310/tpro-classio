@@ -1,42 +1,36 @@
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
 from app.core.security import verify_token
-from app.models.user import Profile
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login") # chuẩn bảo mật OAuth2 với định dạng Bearer Token
 
 
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
-    db: AsyncSession = Depends(get_db),
 ) -> dict[str, str | None]:
     payload = verify_token(token)
     user_id = payload.get("sub")
-    if not isinstance(user_id, str) or not user_id:
+    email = payload.get("email")
+    role = payload.get("role")
+    full_name = payload.get("full_name")
+    if (
+        not isinstance(user_id, str)
+        or not user_id
+        or not isinstance(email, str)
+        or not isinstance(role, str)
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Không thể xác thực phiên đăng nhập",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    result = await db.execute(select(Profile).where(Profile.id == user_id))
-    profile = result.scalar_one_or_none() # trả về đối tượng nếu tìm thấy hoặc None
-    if profile is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Không tìm thấy hồ sơ người dùng",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
     return {
-        "id": str(profile.id),
-        "email": payload.get("email") if isinstance(payload.get("email"), str) else "",
-        "role": profile.role,
-        "full_name": profile.full_name,
+        "id": user_id,
+        "email": email,
+        "role": role,
+        "full_name": full_name if isinstance(full_name, str) else None,
     }
 
 
