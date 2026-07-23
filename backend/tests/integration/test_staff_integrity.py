@@ -44,6 +44,11 @@ async def test_staff_lifecycle_triggers_preserve_class_assignments() -> None:
     async with AsyncSessionLocal() as db:
         transaction = await db.begin()
         try:
+            teacher_phone = f"09{int(teacher_id[:8], 16) % 100000000:08d}"
+            assistant_phone = f"08{int(assistant_id[:8], 16) % 100000000:08d}"
+            teacher_zalo = f"CI Teacher {teacher_id[:8]}"
+            assistant_zalo = f"CI Assistant {assistant_id[:8]}"
+
             await db.execute(
                 text(
                     """
@@ -51,12 +56,19 @@ async def test_staff_lifecycle_triggers_preserve_class_assignments() -> None:
                       (id, full_name, staff_type, zalo_name, phone, is_active)
                     values
                       (cast(:teacher_id as uuid), 'CI Teacher', 'TEACHER',
-                       'CI Teacher', '0912345678', true),
+                       :teacher_zalo, :teacher_phone, true),
                       (cast(:assistant_id as uuid), 'CI Assistant', 'ASSISTANT',
-                       'CI Assistant', '0987654321', true)
+                       :assistant_zalo, :assistant_phone, true)
                     """
                 ),
-                {"teacher_id": teacher_id, "assistant_id": assistant_id},
+                {
+                    "teacher_id": teacher_id,
+                    "assistant_id": assistant_id,
+                    "teacher_zalo": teacher_zalo,
+                    "teacher_phone": teacher_phone,
+                    "assistant_zalo": assistant_zalo,
+                    "assistant_phone": assistant_phone,
+                },
             )
             await db.execute(
                 text(
