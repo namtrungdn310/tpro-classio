@@ -1,101 +1,261 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
-import Image from "next/image";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { login } from "@/lib/api/auth";
+import { AuthBrand } from "@/components/layout/auth-brand";
+import {
+  AuthField,
+  authErrorInputClassName,
+  authInputClassName,
+  authSubmitClassName,
+} from "@/components/ui/auth-field";
+import { PasswordInput } from "@/components/ui/password-input";
+import { LoadingLabel } from "@/components/ui/loading-label";
+import { isAuthContinuation, login } from "@/lib/api/auth";
+import { getApiErrorMessage } from "@/lib/api/errors";
+import {
+  fieldFeedbackAfterBlur,
+  fieldFeedbackAfterInput,
+  fieldFeedbackAfterSubmit,
+  initialFieldFeedback,
+  shouldShowFieldError,
+  type FieldFeedbackState,
+} from "@/lib/auth/field-feedback";
+import { moveFocusOnValidArrowDown } from "@/lib/auth/field-navigation";
+import { cn } from "@/lib/utils";
+import { validationMessages } from "@/lib/forms/validation-messages";
+import { savedInfoAutocomplete } from "@/lib/forms/saved-info-policy";
+
+const loginEmailSchema = z
+  .string()
+  .trim()
+  .min(1, validationMessages.required("email"))
+  .email(validationMessages.emailFormat);
 
 const loginSchema = z.object({
-  email: z.string().email("Email không hợp lệ"),
-  password: z.string().min(6, "Mật khẩu phải có ít nhất 6 ký tự"),
+  email: loginEmailSchema,
+  password: z
+    .string()
+    .min(1, validationMessages.required("mật khẩu"))
+    .min(8, validationMessages.passwordMinLength),
 });
 
 type LoginFormValues = z.infer<typeof loginSchema>;
 
+const initialLoginFeedback: Record<keyof LoginFormValues, FieldFeedbackState> = {
+  email: initialFieldFeedback,
+  password: initialFieldFeedback,
+};
+
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [error, setError] = useState("");
+  const [fieldFeedback, setFieldFeedback] = useState(initialLoginFeedback);
+  const passwordResetSucceeded = searchParams.get("password_reset") === "success";
   const {
-    formState: { errors, isSubmitting },
+    formState: { errors, isSubmitted, isSubmitting },
     handleSubmit,
     register,
+    setFocus,
+    trigger,
+    watch,
   } = useForm<LoginFormValues>({
     resolver: zodResolver(loginSchema),
+    mode: "onBlur",
+    reValidateMode: "onChange",
     defaultValues: {
       email: "",
       password: "",
     },
   });
 
+  useEffect(() => {
+    const reason = searchParams.get("reason");
+    if (reason === "session-replaced") {
+      setError("Phiên đăng nhập đã được sử dụng trên một thiết bị khác. Vui lòng đăng nhập lại.");
+      return;
+    }
+    if (reason === "flow-expired") {
+      setError("Phiên xác thực hai bước đã hết hạn. Vui lòng đăng nhập lại.");
+      return;
+    }
+
+    setError("");
+  }, [searchParams]);
+
   async function onSubmit(values: LoginFormValues) {
+    restoreSubmitErrors();
     setError("");
 
     try {
-      const data = await login(values.email, values.password);
-      window.localStorage.setItem("tpro_token", data.access_token);
-      window.localStorage.setItem("tpro_refresh_token", data.refresh_token);
-      router.push("/");
-    } catch {
-      setError("Email hoặc mật khẩu không đúng");
+      const email = values.email.trim().toLowerCase();
+      const result = await login(email, values.password);
+      if (isAuthContinuation(result)) {
+        const nextPage = {
+          login_totp: "/login/totp",
+          onboarding_google: "/onboarding/google",
+          onboarding_totp: "/onboarding/totp",
+        } as const;
+        router.replace(nextPage[result.next_step]);
+        return;
+      }
+      router.replace("/");
+      router.refresh();
+    } catch (requestError) {
+      setError(getApiErrorMessage(requestError, "Email hoặc mật khẩu không chính xác."));
     }
   }
 
+  const emailValue = watch("email");
+  const passwordValue = watch("password");
+  const emailRegistration = register("email");
+  const passwordRegistration = register("password");
+
+  function updateFieldFeedback(
+    field: keyof LoginFormValues,
+    update: (current: FieldFeedbackState) => FieldFeedbackState,
+  ) {
+    setFieldFeedback((current) => ({
+      ...current,
+      [field]: update(current[field]),
+    }));
+  }
+
+  function restoreSubmitErrors() {
+    setFieldFeedback((current) => ({
+      email: fieldFeedbackAfterSubmit(current.email),
+      password: fieldFeedbackAfterSubmit(current.password),
+    }));
+  }
+
+  useEffect(() => {
+    if (passwordValue.length > 0 && emailValue.length === 0 && !errors.email) {
+      void trigger("email");
+    }
+  }, [emailValue, errors.email, passwordValue, trigger]);
+
+  const shouldShowEmailError =
+    Boolean(errors.email?.message) &&
+    (shouldShowFieldError(fieldFeedback.email, isSubmitted) || passwordValue.length > 0);
+  const shouldShowPasswordError =
+    Boolean(errors.password?.message) &&
+    shouldShowFieldError(fieldFeedback.password, isSubmitted);
+  const emailError = shouldShowEmailError ? errors.email?.message : undefined;
+  const passwordValidationError = shouldShowPasswordError ? errors.password?.message : undefined;
+  const visibleFormError = emailError || passwordValidationError ? "" : error;
+  const visibleError = emailError ?? passwordValidationError ?? visibleFormError;
+
   return (
-    <main className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
-      <section className="w-full max-w-sm rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-        <div className="mb-6">
-          <Image
-            src="/logo-mark-bw.png"
-            alt="TPRO"
-            width={40}
-            height={40}
-            className="mb-3 h-10 w-10 object-contain"
-            priority
-          />
-          <h1 className="text-lg font-medium text-gray-900">TPRO Classio</h1>
-          <p className="mt-1 text-sm text-gray-500">Đăng nhập để tiếp tục</p>
+    <main className="auth-screen flex items-center justify-center px-4">
+      <section className="auth-card">
+        <div className="auth-card-header">
+          <AuthBrand />
+          <h1 className="page-title-text text-gray-950">Đăng nhập</h1>
         </div>
-        <form className="space-y-4" onSubmit={handleSubmit(onSubmit)}>
-          <div className="space-y-1.5">
-            <label htmlFor="email" className="text-sm font-medium text-gray-700">
-              Email
-            </label>
+
+        <form
+          noValidate
+          className="auth-form-stack"
+          onSubmit={handleSubmit(onSubmit, restoreSubmitErrors)}
+        >
+          <AuthField id="login-email" label="Email" error={emailError}>
             <input
-              id="email"
+              id="login-email"
               type="email"
-              autoComplete="email"
-              {...register("email")}
-              className="h-10 w-full rounded-md border border-gray-200 px-3 text-sm outline-none focus:border-[#1F5C2E] focus:ring-2 focus:ring-[#1F5C2E]/15"
+              inputMode="email"
+              autoComplete={savedInfoAutocomplete.loginIdentifier}
+              enterKeyHint="next"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              {...emailRegistration}
+              onInput={(event) => {
+                const value = event.currentTarget.value;
+                setError("");
+                updateFieldFeedback("email", (current) =>
+                  fieldFeedbackAfterInput(current, value),
+                );
+              }}
+              onKeyDown={(event) =>
+                moveFocusOnValidArrowDown(
+                  event,
+                  loginEmailSchema.safeParse(event.currentTarget.value).success,
+                  () => setFocus("password"),
+                )
+              }
+              onBlur={(event) => {
+                updateFieldFeedback("email", fieldFeedbackAfterBlur);
+                void emailRegistration.onBlur(event);
+              }}
+              aria-invalid={Boolean(emailError)}
+              aria-describedby={emailError ? "login-email-error" : undefined}
+              className={cn(authInputClassName, emailError && authErrorInputClassName)}
             />
-            {errors.email ? <p className="text-sm text-red-600">{errors.email.message}</p> : null}
-          </div>
-          <div className="space-y-1.5">
-            <label htmlFor="password" className="text-sm font-medium text-gray-700">
-              Mật khẩu
-            </label>
-            <input
-              id="password"
-              type="password"
-              autoComplete="current-password"
-              {...register("password")}
-              className="h-10 w-full rounded-md border border-gray-200 px-3 text-sm outline-none focus:border-[#1F5C2E] focus:ring-2 focus:ring-[#1F5C2E]/15"
+          </AuthField>
+
+          <AuthField id="login-password" label="Mật khẩu" error={passwordValidationError}>
+            <PasswordInput
+              id="login-password"
+              autoComplete={savedInfoAutocomplete.loginPassword}
+              enterKeyHint="done"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              {...passwordRegistration}
+              onInput={(event) => {
+                const value = event.currentTarget.value;
+                setError("");
+                updateFieldFeedback("password", (current) =>
+                  fieldFeedbackAfterInput(current, value),
+                );
+              }}
+              onBlur={(event) => {
+                updateFieldFeedback("password", fieldFeedbackAfterBlur);
+                void passwordRegistration.onBlur(event);
+              }}
+              aria-invalid={Boolean(passwordValidationError)}
+              aria-describedby={
+                passwordValidationError ? "login-password-error" : undefined
+              }
+              className={cn(
+                authInputClassName,
+                passwordValidationError && authErrorInputClassName,
+              )}
             />
-            {errors.password ? (
-              <p className="text-sm text-red-600">{errors.password.message}</p>
-            ) : null}
+          </AuthField>
+
+          {visibleFormError ? (
+            <p role="alert" className="form-message-text text-red-600">
+              {visibleFormError}
+            </p>
+          ) : null}
+
+          {passwordResetSucceeded && !visibleError ? (
+            <p className="form-message-text text-emerald-700">
+              Mật khẩu đã được cập nhật. Vui lòng đăng nhập lại.
+            </p>
+          ) : null}
+
+          <div className="pt-2">
+            <button type="submit" disabled={isSubmitting} className={authSubmitClassName}>
+              {isSubmitting ? <LoadingLabel label="Đang đăng nhập" /> : "Đăng nhập"}
+            </button>
           </div>
-          {error ? <p className="text-sm text-red-600">{error}</p> : null}
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="h-10 w-full rounded-md bg-[#1F5C2E] px-4 text-sm font-medium text-white hover:bg-[#194a25] disabled:cursor-not-allowed disabled:opacity-70"
-          >
-            {isSubmitting ? "Đang đăng nhập" : "Đăng nhập"}
-          </button>
         </form>
+
+        <div className="mt-5 flex items-center justify-between">
+          <Link href="/register" className="auth-action-link">
+            Đăng ký
+          </Link>
+          <Link href="/reset-password" className="auth-action-link">
+            Quên mật khẩu
+          </Link>
+        </div>
       </section>
     </main>
   );

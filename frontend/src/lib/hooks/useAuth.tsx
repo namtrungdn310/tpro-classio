@@ -1,165 +1,203 @@
 "use client";
 
 import {
-  ReactNode,
   createContext,
   useCallback,
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
+  type ReactNode,
 } from "react";
-import type { UserMe } from "@/lib/api/auth";
+import { useQueryClient } from "@tanstack/react-query";
+import { getMe, logout as logoutRequest, type UserMe } from "@/lib/api/auth";
+import { announceAuthChanged, isAuthBroadcastStorageKey } from "@/lib/auth/session";
+import {
+  buildSessionReplacedLoginUrl,
+  classifyAuthFailure,
+} from "@/lib/api/errors";
+import { forgetRememberedStudentClass } from "@/lib/students/selected-class-route";
+
+const WAKE_REFRESH_INTERVAL_MS = 2 * 60 * 1000;
+
+function isPublicAuthPage(pathname: string): boolean {
+  return (
+    pathname.startsWith("/login") ||
+    pathname.startsWith("/register") ||
+    pathname.startsWith("/reset-password") ||
+    pathname.startsWith("/otp") ||
+    pathname.startsWith("/onboarding")
+  );
+}
 
 type AuthContextValue = {
   user: UserMe | null;
   isLoading: boolean;
+  isLoggingOut: boolean;
+  isSessionUnavailable: boolean;
   getMeSilently: () => Promise<void>;
-  logout: () => void;
+  /** Alias for getMeSilently — use after completing an auth step to update user state. */
+  refresh: () => Promise<void>;
+  logout: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-function clearAuthStorage(): void {
-  window.localStorage.removeItem("tpro_token");
-  window.localStorage.removeItem("tpro_refresh_token");
-}
+export function AuthProvider({
+  children,
+  initialUser,
+}: {
+  children: ReactNode;
+  initialUser: UserMe | null;
+}) {
+  const queryClient = useQueryClient();
+  const [user, setUser] = useState<UserMe | null>(initialUser);
+  const [isLoading, setIsLoading] = useState(initialUser === null);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [isSessionUnavailable, setIsSessionUnavailable] = useState(false);
+  const lastWakeRefreshAtRef = useRef(0);
+  const logoutInFlightRef = useRef(false);
 
-type TokenPayload = {
-  sub?: string;
-  email?: string;
-  full_name?: string | null;
-  role?: string;
-  exp?: number;
-};
-
-function decodeToken(token: string): TokenPayload | null {
-  try {
-    const payloadPart = token.split(".")[1];
-    if (!payloadPart) {
-      return null;
-    }
-
-    const normalizedPayload = payloadPart.replace(/-/g, "+").replace(/_/g, "/");
-    return JSON.parse(window.atob(normalizedPayload)) as TokenPayload;
-  } catch {
-    return null;
-  }
-}
-
-function isTokenExpired(payload: TokenPayload): boolean {
-  return payload.exp ? payload.exp * 1000 <= Date.now() : true;
-}
-
-function getUserFromPayload(payload: TokenPayload): UserMe | null {
-  if (!payload.sub || !payload.email || !payload.role) {
-    return null;
-  }
-
-  return {
-    id: payload.sub,
-    email: payload.email,
-    role: payload.role,
-    full_name: payload.full_name ?? null,
-  };
-}
-
-function getUserFromToken(
-  token: string | null = window.localStorage.getItem("tpro_token"),
-  options: { allowExpired?: boolean } = {},
-): UserMe | null {
-  if (!token) {
-    return null;
-  }
-
-  const payload = decodeToken(token);
-  if (!payload || (!options.allowExpired && isTokenExpired(payload))) {
-    return null;
-  }
-
-  return getUserFromPayload(payload);
-}
-
-function getInitialUser(): UserMe | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  return getUserFromToken() ?? getUserFromToken(window.localStorage.getItem("tpro_token"), {
-    allowExpired: true,
-  });
-}
-
-export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<UserMe | null>(() => getInitialUser());
-  const [isLoading, setIsLoading] = useState(false);
+  const resetAuthState = useCallback(
+    (broadcast = false) => {
+      queryClient.clear();
+      setUser(null);
+      setIsLoading(false);
+      setIsSessionUnavailable(false);
+      if (broadcast) {
+        announceAuthChanged();
+      }
+    },
+    [queryClient],
+  );
 
   const loadUser = useCallback(async () => {
-    const cachedUser = getUserFromToken();
-    if (cachedUser) {
-      setUser(cachedUser);
-      setIsLoading(false);
-      return;
-    }
-
-    const refreshTokenValue = window.localStorage.getItem("tpro_refresh_token");
-    if (!refreshTokenValue) {
-      clearAuthStorage();
-      setUser(null);
-      setIsLoading(false);
-      return;
-    }
-
-    const expiredUser = getUserFromToken(window.localStorage.getItem("tpro_token"), {
-      allowExpired: true,
-    });
-    if (expiredUser) {
-      setUser(expiredUser);
-      setIsLoading(false);
-    }
-
     try {
-      const { refreshToken } = await import("@/lib/api/auth");
-      const data = await refreshToken(refreshTokenValue);
-      window.localStorage.setItem("tpro_token", data.access_token);
-      window.localStorage.setItem("tpro_refresh_token", data.refresh_token);
-      setUser(getUserFromToken(data.access_token));
-    } catch {
-      clearAuthStorage();
-      setUser(null);
+      const currentUser = await getMe();
+      setUser(currentUser);
+      setIsSessionUnavailable(false);
+    } catch (error) {
+      const failureKind = classifyAuthFailure(error);
+      if (failureKind === "transient") {
+        setIsSessionUnavailable(true);
+      } else {
+        queryClient.clear();
+        setUser(null);
+        setIsSessionUnavailable(false);
+        if (
+          typeof window !== "undefined" &&
+          failureKind === "session-replaced" &&
+          !isPublicAuthPage(window.location.pathname)
+        ) {
+          window.location.href = buildSessionReplacedLoginUrl();
+          return;
+        }
+      }
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [queryClient]);
 
   useEffect(() => {
+    if (typeof window !== "undefined" && !initialUser && isPublicAuthPage(window.location.pathname)) {
+      setIsLoading(false);
+      return;
+    }
+
+    if (initialUser) {
+      setUser(initialUser);
+      setIsLoading(false);
+      void loadUser();
+      return;
+    }
+
     void loadUser();
-  }, [loadUser]);
+  }, [initialUser, loadUser]);
 
   useEffect(() => {
     function handleStorage(event: StorageEvent) {
-      if (event.key === "tpro_token") {
+      if (isAuthBroadcastStorageKey(event.key)) {
+        forgetRememberedStudentClass(user?.id);
         void loadUser();
       }
     }
 
     window.addEventListener("storage", handleStorage);
-    return () => window.removeEventListener("storage", handleStorage);
-  }, [loadUser]);
 
-  const handleLogout = useCallback(() => {
-    clearAuthStorage();
-    setUser(null);
-  }, []);
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+    };
+  }, [loadUser, user?.id]);
+
+  useEffect(() => {
+    function shouldRefreshOnWake() {
+      return user !== null && Date.now() - lastWakeRefreshAtRef.current >= WAKE_REFRESH_INTERVAL_MS;
+    }
+
+    function refreshOnWake() {
+      if (!shouldRefreshOnWake()) {
+        return;
+      }
+
+      lastWakeRefreshAtRef.current = Date.now();
+      void loadUser();
+    }
+
+    function handleVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        refreshOnWake();
+      }
+    }
+
+    window.addEventListener("focus", refreshOnWake);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener("focus", refreshOnWake);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [loadUser, user]);
+
+  const handleLogout = useCallback(async () => {
+    if (logoutInFlightRef.current) return;
+
+    logoutInFlightRef.current = true;
+    setIsLoggingOut(true);
+    // Stop protected requests before the BFF clears the session cookies. This
+    // prevents page-level queries from briefly rendering their 401 error state
+    // while the browser is leaving the dashboard.
+    try {
+      await queryClient.cancelQueries();
+    } catch {
+      // Cancellation is best-effort; it must never block credential revocation.
+    }
+
+    try {
+      await logoutRequest();
+    } catch {
+      // The BFF clears browser credentials even when upstream revocation is
+      // temporarily unavailable. Local logout must still complete.
+    } finally {
+      forgetRememberedStudentClass(user?.id);
+      resetAuthState(true);
+      if (typeof window !== "undefined") {
+        window.location.replace("/login");
+      }
+    }
+  }, [queryClient, resetAuthState, user?.id]);
 
   const value = useMemo<AuthContextValue>(
     () => ({
       user,
       isLoading,
-      getMeSilently: async () => loadUser(),
+      isLoggingOut,
+      isSessionUnavailable,
+      getMeSilently: loadUser,
+      refresh: loadUser,
       logout: handleLogout,
     }),
-    [handleLogout, isLoading, loadUser, user],
+    [handleLogout, isLoading, isLoggingOut, isSessionUnavailable, loadUser, user],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
