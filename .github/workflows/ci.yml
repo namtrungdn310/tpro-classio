@@ -86,4 +86,5 @@ jobs:
       - name: Verify fee transactions against PostgreSQL
         env:
           RUN_DB_INTEGRATION: "1"
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/tpro_ci
         run: pytest -q -m db_integration
