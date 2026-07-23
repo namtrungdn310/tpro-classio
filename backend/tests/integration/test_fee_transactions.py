@@ -34,7 +34,7 @@ pytestmark = [
 ]
 
 
-@pytest.mark.asyncio(loop_scope="module")
+@pytest.mark.asyncio(loop_scope="function")
 async def test_batch_payment_and_reversal_share_one_consistent_ledger() -> None:
     class_ids = [str(uuid4()), str(uuid4())]
     student_id = str(uuid4())
@@ -147,7 +147,7 @@ async def test_batch_payment_and_reversal_share_one_consistent_ledger() -> None:
             # referenced fee records after a committed transaction.
 
 
-@pytest.mark.asyncio(loop_scope="module")
+@pytest.mark.asyncio(loop_scope="function")
 async def test_refund_retry_and_reversal_keep_projection_and_ledger_consistent() -> (
     None
 ):
