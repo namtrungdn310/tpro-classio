@@ -15,6 +15,7 @@ create type payment_method as enum ('bank_transfer', 'cash');
 create table profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   role user_role not null default 'viewer',
+  username text,
   full_name text,
   created_at timestamptz not null default now()
 );
@@ -61,6 +62,8 @@ create table fee_records (
   id uuid primary key default gen_random_uuid(),
   enrollment_id uuid not null references enrollments(id) on delete cascade,
   period text not null,
+  due_date date,
+  enrollment_date_snapshot date,
   base_amount numeric(12,0) not null,
   discount_amount numeric(12,0) not null default 0,
   discount_reason text,
@@ -91,6 +94,7 @@ create index idx_enrollments_class on enrollments(class_id);
 create index idx_fee_records_enrollment on fee_records(enrollment_id);
 create index idx_fee_records_status on fee_records(status);
 create index idx_fee_records_period on fee_records(period);
+create unique index idx_profiles_username_unique on profiles (lower(username)) where username is not null;
 
 -- 4. UPDATED_AT TRIGGER
 create or replace function set_updated_at()
@@ -148,25 +152,6 @@ begin
   end loop;
 end $$;
 
--- 6. SEED DATA
-insert into classes (name, type, base_fee) values
-  ('IELTS 6.0', 'MONTHLY', 1400000),
-  ('Lớp 9 HSG', 'MONTHLY', 900000),
-  ('Thi ĐH', 'MONTHLY', 800000);
-
--- After creating users in Supabase Auth dashboard, insert their profiles:
--- insert into profiles (id, role, full_name) values
---   ('<admin-uuid>', 'admin', 'Admin'),
---   ('<viewer-uuid>', 'viewer', 'Giáo viên');
-
-insert into students (
-  full_name,
-  birth_year,
-  school,
-  parent_name,
-  parent_phone,
-  parent_zalo_name
-) values
-  ('Nguyễn Minh Tuấn', 2009, 'THPT Lê Quý Đôn', 'Nguyễn Văn Bình', '0905123456', 'Bình Tuấn PH'),
-  ('Trần Thị Lan', 2010, 'THCS Nguyễn Huệ', 'Trần Thị Mai', '0912345678', 'Mai Lan mama'),
-  ('Lê Quang Huy', 2011, 'THCS Tây Sơn', 'Lê Văn Hùng', '0934567890', 'Hùng bố Huy');
+-- Development fixtures deliberately live under supabase/seeds. Schema
+-- migrations must never insert students, classes, enrollments or fee records
+-- into staging/production.

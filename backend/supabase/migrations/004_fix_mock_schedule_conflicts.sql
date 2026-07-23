@@ -1,0 +1,3 @@
+-- Historical placeholder.
+-- Mock schedule corrections belong to development seeds, not the production
+-- schema migration chain.

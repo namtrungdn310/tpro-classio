@@ -1,0 +1,3 @@
+-- Historical placeholder.
+-- Realistic class fixtures were moved to supabase/seeds so schema migrations
+-- remain safe on staging and production databases.

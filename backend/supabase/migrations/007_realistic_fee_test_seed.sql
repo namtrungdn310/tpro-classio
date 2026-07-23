@@ -1,0 +1,11 @@
+-- Migration version 007 is intentionally retained so databases that already
+-- recorded it keep a continuous migration history.
+--
+-- The previous contents were a destructive development seed: they deleted all
+-- rows from the business tables before inserting demo data. Seeds must never be
+-- part of the production migration chain. The opt-in development seed now lives
+-- at ../seeds/realistic_fee_test_seed.sql and is never executed by deployment.
+--
+-- No schema change is required here; migration 006 already introduced the fee
+-- notification columns that the old seed defensively created.
+select 1;

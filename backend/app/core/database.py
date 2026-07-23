@@ -12,9 +12,16 @@ engine = create_async_engine(
     pool_pre_ping=True,
     connect_args=connect_args,
 )
-AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
-Base = declarative_base() # class python ở /models kế thừa class base, mục đích: quản lý và đồng bộ
+AsyncSessionLocal = async_sessionmaker(
+    engine, expire_on_commit=False, class_=AsyncSession
+)
+Base = (
+    declarative_base()
+)  # class python ở /models kế thừa class base, mục đích: quản lý và đồng bộ
 
-async def get_db() -> AsyncGenerator[AsyncSession, None]: # là hàm Dependency Injection, được gọi liên tục ở /routers nhằm cung cấp DB cho các API
+
+async def get_db() -> (
+    AsyncGenerator[AsyncSession, None]
+):  # là hàm Dependency Injection, được gọi liên tục ở /routers nhằm cung cấp DB cho các API
     async with AsyncSessionLocal() as session:
         yield session
