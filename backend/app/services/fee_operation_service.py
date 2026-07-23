@@ -47,10 +47,16 @@ def snapshot_fee_record(record: FeeRecord | None) -> FeeRecordAuditSnapshot | No
         if enrollment is not None and "class_" in enrollment.__dict__
         else None
     )
-    paid_amount = _to_int(record.paid_amount) if record.paid_amount is not None else None
+    paid_amount = (
+        _to_int(record.paid_amount) if record.paid_amount is not None else None
+    )
     refunded_amount = _to_int(record.refunded_amount)
     if record.status == "PAID" and refunded_amount > 0:
-        state = "REFUNDED_FULL" if paid_amount and refunded_amount >= paid_amount else "REFUNDED_PARTIAL"
+        state = (
+            "REFUNDED_FULL"
+            if paid_amount and refunded_amount >= paid_amount
+            else "REFUNDED_PARTIAL"
+        )
     elif record.status == "PAID":
         state = "PAID"
     elif record.notified_at is not None:
@@ -66,7 +72,8 @@ def snapshot_fee_record(record: FeeRecord | None) -> FeeRecordAuditSnapshot | No
         fee_record_id=record.id,
         enrollment_id=record.enrollment_id,
         student_id=enrollment.student_id if enrollment else None,
-        student_name=record.student_name_snapshot or (student.full_name if student else None),
+        student_name=record.student_name_snapshot
+        or (student.full_name if student else None),
         class_id=enrollment.class_id if enrollment else None,
         class_name=record.class_name_snapshot or (class_.name if class_ else None),
         period=record.period,
@@ -155,12 +162,16 @@ async def append_fee_operation(
                 notification_channel=(
                     after_item.notification_channel
                     if after_item
-                    else before_item.notification_channel if before_item else None
+                    else before_item.notification_channel
+                    if before_item
+                    else None
                 ),
                 message_snapshot=(
                     after_item.notification_message
                     if after_item and after_item.notification_message
-                    else before_item.notification_message if before_item else None
+                    else before_item.notification_message
+                    if before_item
+                    else None
                 ),
                 reason_snapshot=reason,
                 payment_id=payment.id if payment else None,

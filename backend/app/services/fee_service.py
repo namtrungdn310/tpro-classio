@@ -263,9 +263,7 @@ async def mark_fee_notified(
     channel: str,
     actor_id: str | None = None,
 ) -> FeeRecordResponse | None:
-    result = await mark_fees_notified(
-        db, [id], message, channel, actor_id=actor_id
-    )
+    result = await mark_fees_notified(db, [id], message, channel, actor_id=actor_id)
     return result.records[0] if result.records else None
 
 
@@ -800,14 +798,14 @@ async def _transition_fee_records(
             record.paid_amount = record.final_amount
             record.paid_date = payment_date
             payment = Payment(
-                    fee_record_id=record.id,
-                    amount=record.final_amount,
-                    payment_date=payment_date,
-                    payment_method=payment_method,
-                    entry_type="payment",
-                    note=f"Ghi nhận học phí kỳ {record.period}",
-                    created_by=actor_id,
-                )
+                fee_record_id=record.id,
+                amount=record.final_amount,
+                payment_date=payment_date,
+                payment_method=payment_method,
+                entry_type="payment",
+                note=f"Ghi nhận học phí kỳ {record.period}",
+                created_by=actor_id,
+            )
             db.add(payment)
             changed_records.append(record)
             operation_payments.append(payment)
@@ -832,22 +830,22 @@ async def _transition_fee_records(
                 else "đã báo, chưa nộp"
             )
             payment = Payment(
-                    fee_record_id=record.id,
-                    amount=-reversal_amount,
-                    payment_date=payment_date,
-                    payment_method=(
-                        ledger_states[record.id].payment_method or "bank_transfer"
-                    ),
-                    entry_type="payment_reversal",
-                    related_payment_id=getattr(
-                        ledger_states[record.id], "payment_id", None
-                    ),
-                    note=(
-                        f"Hoàn tác ghi nhận học phí kỳ {record.period}; "
-                        f"chuyển về {target_note}"
-                    ),
-                    created_by=actor_id,
-                )
+                fee_record_id=record.id,
+                amount=-reversal_amount,
+                payment_date=payment_date,
+                payment_method=(
+                    ledger_states[record.id].payment_method or "bank_transfer"
+                ),
+                entry_type="payment_reversal",
+                related_payment_id=getattr(
+                    ledger_states[record.id], "payment_id", None
+                ),
+                note=(
+                    f"Hoàn tác ghi nhận học phí kỳ {record.period}; "
+                    f"chuyển về {target_note}"
+                ),
+                created_by=actor_id,
+            )
             db.add(payment)
             changed_records.append(record)
             operation_payments.append(payment)

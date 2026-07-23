@@ -155,7 +155,9 @@ async def test_user_access_list_excludes_deleted_supabase_accounts() -> None:
 async def test_owner_account_cannot_be_demoted_or_disabled(operation: str) -> None:
     target_id = str(uuid4())
     db = AsyncMock()
-    db.execute.side_effect = [ScalarResult(_profile(target_id, role="admin", is_owner=True))]
+    db.execute.side_effect = [
+        ScalarResult(_profile(target_id, role="admin", is_owner=True))
+    ]
 
     with (
         patch("app.routers.auth.users.is_owner_email", return_value=True),

@@ -38,4 +38,3 @@ def test_fee_operation_cursor_rejects_malformed_input(cursor: str) -> None:
         _decode_cursor(cursor)
 
     assert exc_info.value.status_code == 422
-

@@ -510,11 +510,15 @@ def _read_google_token_error_message(response: httpx.Response) -> str:
         error_code or "unknown",
     )
     if error_code == "invalid_client":
-        return "GOOGLE_CLIENT_SECRET chưa đúng hoặc chưa được cập nhật trong backend/.env."
+        return (
+            "GOOGLE_CLIENT_SECRET chưa đúng hoặc chưa được cập nhật trong backend/.env."
+        )
     if error_code == "redirect_uri_mismatch":
         return "GOOGLE_REDIRECT_URI chưa khớp với Authorized redirect URI trong Google Cloud."
     if error_code == "invalid_grant":
-        return "Mã xác thực Google đã hết hạn hoặc đã được sử dụng. Vui lòng liên kết lại."
+        return (
+            "Mã xác thực Google đã hết hạn hoặc đã được sử dụng. Vui lòng liên kết lại."
+        )
     if error_code == "access_denied":
         return "Bạn đã huỷ quyền truy cập Google. Vui lòng cho phép lại để tiếp tục."
     return "Không thể xác minh tài khoản Google."

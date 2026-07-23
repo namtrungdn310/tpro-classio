@@ -347,7 +347,9 @@ async def get_profile_status_by_email(db: AsyncSession, email: str) -> str | Non
     user = await get_active_auth_user_by_email(email)
     if user is None:
         return None
-    result = await db.execute(select(Profile.account_status).where(Profile.id == user.id))
+    result = await db.execute(
+        select(Profile.account_status).where(Profile.id == user.id)
+    )
     account_status = result.scalar_one_or_none()
     return account_status if isinstance(account_status, str) else None
 

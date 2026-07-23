@@ -22,9 +22,7 @@ async def test_contact_suggestion_excludes_hidden_source_data(
     zalo_name: str | None,
 ) -> None:
     result = Mock()
-    result.all.return_value = [
-        SimpleNamespace(phone="0912345678", zalo_name="Mẹ An")
-    ]
+    result.all.return_value = [SimpleNamespace(phone="0912345678", zalo_name="Mẹ An")]
     db = SimpleNamespace(execute=AsyncMock(return_value=result))
 
     response = await lookup_contact_suggestion(

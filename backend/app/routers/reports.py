@@ -24,7 +24,8 @@ async def list_fee_operations(
         "refund_reversal",
         "sync",
         "template_update",
-    ] | None = None,
+    ]
+    | None = None,
     period: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$"),
     q: str | None = Query(default=None, min_length=1, max_length=100),
     date_from: date | None = None,
@@ -59,4 +60,3 @@ async def read_fee_operation(
             detail="Không tìm thấy hoạt động học phí",
         )
     return operation
-

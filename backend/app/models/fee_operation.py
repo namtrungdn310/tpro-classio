@@ -1,7 +1,19 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, Date, DateTime, ForeignKey, Identity, Integer, Numeric, SmallInteger, Text, func, text
+from sqlalchemy import (
+    BigInteger,
+    Date,
+    DateTime,
+    ForeignKey,
+    Identity,
+    Integer,
+    Numeric,
+    SmallInteger,
+    Text,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -34,7 +46,9 @@ class FeeOperation(Base):
     actor_username_snapshot: Mapped[str | None] = mapped_column(Text)
     actor_role_snapshot: Mapped[str | None] = mapped_column(Text)
     item_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    total_amount: Mapped[Decimal] = mapped_column(Numeric(12, 0), nullable=False, default=0)
+    total_amount: Mapped[Decimal] = mapped_column(
+        Numeric(12, 0), nullable=False, default=0
+    )
     schema_version: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1)
 
     items = relationship(
@@ -69,7 +83,9 @@ class FeeOperationItem(Base):
     state_after: Mapped[str | None] = mapped_column(Text)
     amount_before: Mapped[Decimal | None] = mapped_column(Numeric(12, 0))
     amount_after: Mapped[Decimal | None] = mapped_column(Numeric(12, 0))
-    amount_delta: Mapped[Decimal] = mapped_column(Numeric(12, 0), nullable=False, default=0)
+    amount_delta: Mapped[Decimal] = mapped_column(
+        Numeric(12, 0), nullable=False, default=0
+    )
     due_date_before: Mapped[date | None] = mapped_column(Date)
     due_date_after: Mapped[date | None] = mapped_column(Date)
     payment_method: Mapped[str | None] = mapped_column(Text)

@@ -59,8 +59,12 @@ def _item_response(item: FeeOperationItem) -> FeeOperationItemResponse:
         period=item.period,
         state_before=item.state_before,
         state_after=item.state_after,
-        amount_before=_to_int(item.amount_before) if item.amount_before is not None else None,
-        amount_after=_to_int(item.amount_after) if item.amount_after is not None else None,
+        amount_before=_to_int(item.amount_before)
+        if item.amount_before is not None
+        else None,
+        amount_after=_to_int(item.amount_after)
+        if item.amount_after is not None
+        else None,
         amount_delta=_to_int(item.amount_delta),
         due_date_before=item.due_date_before,
         due_date_after=item.due_date_after,
@@ -69,7 +73,9 @@ def _item_response(item: FeeOperationItem) -> FeeOperationItemResponse:
         message=item.message_snapshot,
         reason=item.reason_snapshot,
         payment_id=UUID(item.payment_id) if item.payment_id else None,
-        related_payment_id=UUID(item.related_payment_id) if item.related_payment_id else None,
+        related_payment_id=UUID(item.related_payment_id)
+        if item.related_payment_id
+        else None,
     )
 
 
@@ -87,7 +93,9 @@ def _operation_response(
         period=operation.period,
         business_date=operation.business_date,
         occurred_at=operation.occurred_at,
-        actor_user_id=UUID(operation.actor_user_id) if operation.actor_user_id else None,
+        actor_user_id=UUID(operation.actor_user_id)
+        if operation.actor_user_id
+        else None,
         actor_name=operation.actor_name_snapshot,
         actor_username=operation.actor_username_snapshot,
         actor_role=operation.actor_role_snapshot,
@@ -136,15 +144,21 @@ def _apply_filters(
                 select(FeeOperationItem.id).where(
                     FeeOperationItem.operation_id == FeeOperation.id,
                     or_(
-                        FeeOperationItem.student_name_snapshot.icontains(term, autoescape=True),
-                        FeeOperationItem.class_name_snapshot.icontains(term, autoescape=True),
+                        FeeOperationItem.student_name_snapshot.icontains(
+                            term, autoescape=True
+                        ),
+                        FeeOperationItem.class_name_snapshot.icontains(
+                            term, autoescape=True
+                        ),
                     ),
                 )
             )
             conditions.append(
                 or_(
                     FeeOperation.actor_name_snapshot.icontains(term, autoescape=True),
-                    FeeOperation.actor_username_snapshot.icontains(term, autoescape=True),
+                    FeeOperation.actor_username_snapshot.icontains(
+                        term, autoescape=True
+                    ),
                     item_match,
                 )
             )
@@ -203,8 +217,9 @@ async def get_fee_operations(
         )
 
     result = await db.execute(
-        base.order_by(FeeOperation.occurred_at.desc(), FeeOperation.sequence_no.desc())
-        .limit(limit + 1)
+        base.order_by(
+            FeeOperation.occurred_at.desc(), FeeOperation.sequence_no.desc()
+        ).limit(limit + 1)
     )
     operations = result.scalars().unique().all()
     has_more = len(operations) > limit

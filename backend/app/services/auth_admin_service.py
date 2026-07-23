@@ -45,7 +45,9 @@ def _parse_admin_user(payload: object) -> AuthAdminUser | None:
     return AuthAdminUser(
         id=user_id,
         email=email.strip().lower(),
-        email_confirmed=bool(payload.get("email_confirmed_at") or payload.get("confirmed_at")),
+        email_confirmed=bool(
+            payload.get("email_confirmed_at") or payload.get("confirmed_at")
+        ),
         deleted=bool(payload.get("deleted_at")),
     )
 

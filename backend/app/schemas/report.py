@@ -71,4 +71,3 @@ class FeeOperationListResponse(BaseModel):
     next_cursor: str | None
     summary: FeeOperationSummaryResponse
     history_complete_from: datetime | None
-

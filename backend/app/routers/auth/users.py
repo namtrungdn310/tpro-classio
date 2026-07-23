@@ -37,9 +37,7 @@ async def list_users(
     current_user: dict = Depends(require_owner),
 ) -> list[UserAccount]:
     auth_users = await list_active_auth_users()
-    result = await db.execute(
-        select(Profile).order_by(Profile.created_at.desc())
-    )
+    result = await db.execute(select(Profile).order_by(Profile.created_at.desc()))
     accounts: list[UserAccount] = []
     for profile in result.scalars().all():
         auth_user = auth_users.get(str(profile.id))
