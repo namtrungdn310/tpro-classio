@@ -82,7 +82,7 @@ create unique index if not exists ux_fee_operation_items_payment
 create or replace function public.block_fee_operation_mutation()
 returns trigger
 language plpgsql
-set search_path = pg_catalog, public
+set search_path = pg_catalog
 as $$
 begin
     raise exception 'fee operation ledger is append-only' using errcode = '42501';
