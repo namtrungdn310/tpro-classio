@@ -39,4 +39,11 @@ class Enrollment(Base):
         server_default=func.now(),
     )
 
+    student = relationship("Student", back_populates="enrollments")
     class_ = relationship("Class", back_populates="enrollments")
+    fee_records = relationship(
+        "FeeRecord",
+        back_populates="enrollment",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
