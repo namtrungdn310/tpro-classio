@@ -34,8 +34,12 @@ pytestmark = [
 ]
 
 
+from app.core.database import engine
+
+
 @pytest.mark.asyncio
 async def test_batch_payment_and_reversal_share_one_consistent_ledger() -> None:
+    await engine.dispose()
     class_ids = [str(uuid4()), str(uuid4())]
     student_id = str(uuid4())
     enrollment_ids = [str(uuid4()), str(uuid4())]
@@ -151,6 +155,7 @@ async def test_batch_payment_and_reversal_share_one_consistent_ledger() -> None:
 async def test_refund_retry_and_reversal_keep_projection_and_ledger_consistent() -> (
     None
 ):
+    await engine.dispose()
     actor_id = str(uuid4())
     class_id = str(uuid4())
     student_id = str(uuid4())

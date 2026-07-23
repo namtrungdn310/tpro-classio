@@ -35,8 +35,12 @@ async def _assert_trigger_rejects(
             await savepoint.rollback()
 
 
+from app.core.database import engine
+
+
 @pytest.mark.asyncio
 async def test_staff_lifecycle_triggers_preserve_class_assignments() -> None:
+    await engine.dispose()
     teacher_id = str(uuid4())
     assistant_id = str(uuid4())
     class_id = str(uuid4())

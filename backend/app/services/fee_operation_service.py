@@ -63,10 +63,15 @@ def snapshot_fee_record(record: FeeRecord | None) -> FeeRecordAuditSnapshot | No
         state = "NOTIFIED_UNPAID"
     else:
         state = "UNNOTIFIED"
+    final_amt = (
+        _to_int(record.final_amount)
+        if "final_amount" in record.__dict__ and record.final_amount is not None
+        else (_to_int(record.base_amount) - _to_int(record.discount_amount))
+    )
     amount = (
-        max(0, (paid_amount or _to_int(record.final_amount)) - refunded_amount)
+        max(0, (paid_amount or final_amt) - refunded_amount)
         if record.status == "PAID"
-        else _to_int(record.final_amount)
+        else final_amt
     )
     return FeeRecordAuditSnapshot(
         fee_record_id=record.id,
