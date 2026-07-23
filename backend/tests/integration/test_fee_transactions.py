@@ -9,7 +9,7 @@ from sqlalchemy import delete, select, text, update
 from sqlalchemy.exc import DBAPIError
 
 from app.core.business_time import business_today
-from app.core.database import AsyncSessionLocal
+from app.core.database import AsyncSessionLocal, engine
 from app.models.class_ import Class
 from app.models.enrollment import Enrollment
 from app.models.fee_record import FeeRecord
@@ -32,9 +32,6 @@ pytestmark = [
         reason="requires a migrated PostgreSQL test database",
     ),
 ]
-
-
-from app.core.database import engine
 
 
 @pytest.mark.asyncio

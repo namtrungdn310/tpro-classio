@@ -7,7 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import AsyncSessionLocal
+from app.core.database import AsyncSessionLocal, engine
 
 
 pytestmark = [
@@ -33,9 +33,6 @@ async def _assert_trigger_rejects(
     finally:
         if savepoint.is_active:
             await savepoint.rollback()
-
-
-from app.core.database import engine
 
 
 @pytest.mark.asyncio
