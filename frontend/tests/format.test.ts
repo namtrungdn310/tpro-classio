@@ -3,7 +3,7 @@ import test from "node:test";
 import { formatCompactDateTime, formatDate, formatPeriod } from "../src/lib/utils/format";
 
 test("compact dashboard update time includes dd/mm/yy and time", () => {
-  const timestamp = new Date(2026, 6, 13, 8, 5).getTime();
+  const timestamp = Date.UTC(2026, 6, 13, 1, 5);
 
   assert.equal(formatCompactDateTime(timestamp), "13/07/26 · 08:05");
 });
