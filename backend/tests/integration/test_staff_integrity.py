@@ -35,7 +35,7 @@ async def _assert_trigger_rejects(
             await savepoint.rollback()
 
 
-@pytest.mark.asyncio(loop_scope="function")
+@pytest.mark.asyncio
 async def test_staff_lifecycle_triggers_preserve_class_assignments() -> None:
     teacher_id = str(uuid4())
     assistant_id = str(uuid4())
