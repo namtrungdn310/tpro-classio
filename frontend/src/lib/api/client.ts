@@ -1,39 +1,45 @@
 import axios from "axios";
+import { ensureDeviceId } from "@/lib/auth/device";
+import { buildSessionReplacedLoginUrl, isSessionReplacedError } from "@/lib/api/errors";
 
-export const apiClient = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL,
-});
-
-let refreshPromise: Promise<string> | null = null;
-
-async function refreshAccessToken(): Promise<string> {
-  const refreshToken = window.localStorage.getItem("tpro_refresh_token");
-  if (!refreshToken) {
-    throw new Error("Missing refresh token");
-  }
-
-  const { data } = await axios.post<{
-    access_token: string;
-    refresh_token: string;
-  }>(
-    `${process.env.NEXT_PUBLIC_API_URL}/auth/refresh`,
-    { refresh_token: refreshToken },
+// Các API route liên quan đến xác thực không nên trigger global 401 redirect
+function isBrowserAuthRoute(url: string): boolean {
+  return (
+    url.includes("/auth/login") ||
+    url.includes("/auth/register") ||
+    url.includes("/auth/password") ||
+    url.includes("/auth/refresh") ||
+    url.includes("/auth/logout") ||
+    url.includes("/auth/me") ||
+    url.includes("/auth/onboarding") ||
+    url.includes("/auth/invitations")
   );
-
-  window.localStorage.setItem("tpro_token", data.access_token);
-  window.localStorage.setItem("tpro_refresh_token", data.refresh_token);
-  return data.access_token;
 }
 
+// Các trang (page) công khai không nên bị redirect về /login nếu có lỗi 401 bất ngờ
+function isPublicPage(pathname: string): boolean {
+  return (
+    pathname.startsWith("/login") ||
+    pathname.startsWith("/register") ||
+    pathname.startsWith("/reset-password") ||
+    pathname.startsWith("/otp") ||
+    pathname.startsWith("/onboarding")
+  );
+}
+
+export const apiClient = axios.create({
+  baseURL: "/api/proxy",
+  timeout: 15_000,
+  withCredentials: true,
+});
+
 apiClient.interceptors.request.use((config) => {
-  if (typeof window === "undefined") {
-    return config;
-  }
-
-  const token = window.localStorage.getItem("tpro_token");
-
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
+  if (typeof window !== "undefined") {
+    const deviceId = ensureDeviceId();
+    if (deviceId) {
+      config.headers = config.headers ?? {};
+      config.headers["X-TPRO-Device-Id"] = deviceId;
+    }
   }
 
   return config;
@@ -42,31 +48,21 @@ apiClient.interceptors.request.use((config) => {
 apiClient.interceptors.response.use(
   (response) => response,
   async (error) => {
-    const originalRequest = error.config;
+    if (
+      typeof window !== "undefined" &&
+      isSessionReplacedError(error) &&
+      !isPublicPage(window.location.pathname)
+    ) {
+      window.location.href = buildSessionReplacedLoginUrl();
+      return Promise.reject(error);
+    }
+
     if (
       typeof window !== "undefined" &&
       error.response?.status === 401 &&
-      originalRequest &&
-      !originalRequest._retry &&
-      !originalRequest.url?.includes("/auth/login") &&
-      !originalRequest.url?.includes("/auth/refresh")
+      !isBrowserAuthRoute(error.config?.url ?? "") &&
+      !isPublicPage(window.location.pathname)
     ) {
-      originalRequest._retry = true;
-
-      try {
-        refreshPromise = refreshPromise ?? refreshAccessToken();
-        const token = await refreshPromise;
-        refreshPromise = null;
-        originalRequest.headers.Authorization = `Bearer ${token}`;
-        return apiClient(originalRequest);
-      } catch {
-        refreshPromise = null;
-      }
-    }
-
-    if (typeof window !== "undefined" && error.response?.status === 401) {
-      window.localStorage.removeItem("tpro_token");
-      window.localStorage.removeItem("tpro_refresh_token");
       window.location.href = "/login";
     }
 

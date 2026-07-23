@@ -1,0 +1,22 @@
+export const validationMessages = {
+  required: (field: string) => `Vui lòng nhập ${field}.`,
+  selectRequired: (field: string) => `Vui lòng chọn ${field}.`,
+  emailFormat: "Email chưa đúng định dạng. Ví dụ: ten@example.com.",
+  usernameLength: "Tên đăng nhập phải có từ 3 đến 20 ký tự.",
+  usernameCharacters:
+    "Tên đăng nhập chỉ được chứa chữ cái không dấu và chữ số, không có khoảng trắng.",
+  passwordMinLength: "Mật khẩu phải có ít nhất 8 ký tự.",
+  passwordMaxLength: "Mật khẩu không được vượt quá 128 ký tự.",
+  passwordUppercase: "Mật khẩu phải có ít nhất một chữ cái viết hoa.",
+  passwordNumber: "Mật khẩu phải có ít nhất một chữ số.",
+  passwordSpecial: "Mật khẩu phải có ít nhất một ký tự đặc biệt.",
+  passwordConfirmation: "Mật khẩu xác nhận không khớp.",
+  otpFormat: "Vui lòng nhập đầy đủ mã OTP gồm 6 chữ số.",
+  birthDateFormat: "Ngày sinh không hợp lệ. Vui lòng nhập ngày thực tế theo định dạng dd/mm/yyyy.",
+  studentPhoneFormat: "Số điện thoại học viên chưa đúng định dạng.",
+  parentPhoneFormat: "Số điện thoại phụ huynh chưa đúng định dạng.",
+  phoneFormat: "Số điện thoại chưa đúng định dạng.",
+  feeFormat: "Học phí phải là một số hợp lệ.",
+  feeNonNegative: "Học phí phải lớn hơn hoặc bằng 0.",
+  billingCycle: "Thời lượng gói phải từ một tháng trở lên.",
+} as const;

@@ -12,21 +12,33 @@ frontend/coverage/
 frontend/.vercel/
 frontend/*.tsbuildinfo
 frontend/next-env.d.ts
+.eslintcache
 
 # Python
 backend/__pycache__/
 backend/**/__pycache__/
 backend/.pytest_cache/
 backend/.mypy_cache/
+backend/.ruff_cache/
 backend/.venv/
 backend/**/*.pyc
+.coverage
+coverage.xml
+htmlcov/
 
 # Local environment files
 .env
-.env.local
-.env.*.local
-frontend/.env*.local
+.env.*
+!.env.example
+!.env.*.example
 backend/.env
+backend/.env.*
+!backend/.env.example
+!backend/.env.*.example
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+!frontend/.env.*.example
 
 # Local Docker overrides
 docker-compose.override.yml
@@ -34,6 +46,23 @@ docker-compose.override.yml
 # Logs
 *.log
 
+# Editor / temporary files
+*.bak
+*.tmp
+*.swp
+*~
+
+# Database backups
+backups/
+*.dump
+*.backup
+
+# Temporary reconstruction / local data scripts
+*.reconstructed
+backend/mock_*.py
+backend/cleanup_mock.py
+
 # OS / editor
 .DS_Store
 Thumbs.db
+.idea/

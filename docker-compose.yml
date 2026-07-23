@@ -5,14 +5,33 @@ services:
     env_file:
       - ./backend/.env
     ports:
-      - "${BACKEND_PORT:-8000}:8000"
+      - "${BACKEND_HOST:-127.0.0.1}:${BACKEND_PORT:-8000}:8000"
+    healthcheck:
+      test:
+        ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
 
   frontend:
     build:
       context: ./frontend
       args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+        NEXT_INTERNAL_API_URL: ${NEXT_INTERNAL_API_URL:-http://backend:8000}
+        NEXT_PUBLIC_APP_ORIGIN: ${NEXT_PUBLIC_APP_ORIGIN:-http://localhost:3000}
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    environment:
+      NEXT_INTERNAL_API_URL: ${NEXT_INTERNAL_API_URL:-http://backend:8000}
+      NEXT_PUBLIC_APP_ORIGIN: ${NEXT_PUBLIC_APP_ORIGIN:-http://localhost:3000}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
     ports:
-      - "${FRONTEND_PORT:-3000}:3000"
+      - "${FRONTEND_HOST:-127.0.0.1}:${FRONTEND_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/login"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
