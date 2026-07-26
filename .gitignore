@@ -5,6 +5,8 @@ phase*.md
 study.txt
 todo*.md
 fix_ci*.md
+backend/README.md
+frontend/README.md
 
 # Node / Next.js
 frontend/node_modules/
