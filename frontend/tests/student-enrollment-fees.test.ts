@@ -12,6 +12,7 @@ function enrollment(
     class_id: `class-${id}`,
     class_name: `Lớp ${id}`,
     custom_fee: customFee,
+    effective_fee: customFee ?? 750_000,
     enrollment_date: "2026-06-05",
     status: "active",
   };

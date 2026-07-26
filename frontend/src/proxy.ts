@@ -5,6 +5,10 @@ import {
   FLOW_SESSION_COOKIE_KEY,
   REFRESH_TOKEN_COOKIE_KEY,
 } from "@/lib/auth/session";
+import {
+  buildContentSecurityPolicy,
+  createRequestNonce,
+} from "@/lib/server/security-headers";
 
 const AUTH_PAGES = new Set(["/login", "/register", "/reset-password", "/otp"]);
 const PRE_AUTH_PAGES = new Set([
@@ -68,11 +72,12 @@ function isHttpsRequest(request: NextRequest): boolean {
   return forwardedProtocol ? forwardedProtocol === "https" : request.nextUrl.protocol === "https:";
 }
 
-function applySecurityHeaders(response: NextResponse, request: NextRequest): NextResponse {
-  response.headers.set(
-    "Content-Security-Policy",
-    "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; img-src 'self' data: blob:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'",
-  );
+function applySecurityHeaders(
+  response: NextResponse,
+  request: NextRequest,
+  contentSecurityPolicy: string,
+): NextResponse {
+  response.headers.set("Content-Security-Policy", contentSecurityPolicy);
   response.headers.set(
     "Referrer-Policy",
     request.nextUrl.pathname === "/register" ||
@@ -87,33 +92,62 @@ function applySecurityHeaders(response: NextResponse, request: NextRequest): Nex
   response.headers.set("Cross-Origin-Resource-Policy", "same-site");
   // Browsers persist HSTS per host. Sending it over local HTTP makes subsequent
   // localhost requests upgrade to HTTPS even though the development port has no TLS.
+  // Subdomains are intentionally excluded until every production subdomain is
+  // independently verified as HTTPS-only at the edge.
   if (process.env.NODE_ENV === "production" && isHttpsRequest(request)) {
-    response.headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+    response.headers.set("Strict-Transport-Security", "max-age=31536000");
   }
   return response;
 }
 
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  const nonce = createRequestNonce();
+  const contentSecurityPolicy = buildContentSecurityPolicy(
+    nonce,
+    process.env.NODE_ENV,
+  );
   const hasAccessSession = hasValidAccessToken(request);
   const hasRefreshSession = request.cookies.has(REFRESH_TOKEN_COOKIE_KEY);
   const hasFlowSession = request.cookies.has(FLOW_SESSION_COOKIE_KEY);
 
   if ((AUTH_PAGES.has(pathname) || PRE_AUTH_PAGES.has(pathname)) && hasAccessSession) {
-    return applySecurityHeaders(NextResponse.redirect(new URL("/", request.url)), request);
+    return applySecurityHeaders(
+      NextResponse.redirect(new URL("/", request.url)),
+      request,
+      contentSecurityPolicy,
+    );
   }
 
   if (PRE_AUTH_PAGES.has(pathname) && !hasFlowSession) {
     const loginUrl = new URL("/login", request.url);
     loginUrl.searchParams.set("reason", "flow-expired");
-    return applySecurityHeaders(NextResponse.redirect(loginUrl), request);
+    return applySecurityHeaders(
+      NextResponse.redirect(loginUrl),
+      request,
+      contentSecurityPolicy,
+    );
   }
 
   if (isProtectedPath(pathname) && !hasAccessSession && !hasRefreshSession) {
-    return applySecurityHeaders(NextResponse.redirect(new URL("/login", request.url)), request);
+    return applySecurityHeaders(
+      NextResponse.redirect(new URL("/login", request.url)),
+      request,
+      contentSecurityPolicy,
+    );
   }
 
-  return applySecurityHeaders(NextResponse.next(), request);
+  // Next.js reads the nonce from the request CSP and applies it to framework
+  // and application scripts during server rendering. Never expose the nonce
+  // through a response header other than the CSP itself.
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("Content-Security-Policy", contentSecurityPolicy);
+  requestHeaders.set("x-nonce", nonce);
+  return applySecurityHeaders(
+    NextResponse.next({ request: { headers: requestHeaders } }),
+    request,
+    contentSecurityPolicy,
+  );
 }
 
 export const config = {

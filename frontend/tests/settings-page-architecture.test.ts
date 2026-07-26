@@ -88,7 +88,10 @@ test("account settings use shared typography, accessible labels, loading feedbac
 });
 
 test("password change uses dedicated reauthentication and server OTP lifetime with guarded submissions", () => {
-  assert.match(authApiSource, /post<\{ message: string \}>\("\/auth\/me\/password\/verify"/);
+  assert.match(
+    authApiSource,
+    /post<unknown>\("\/auth\/me\/password\/verify"[\s\S]*messageResponseSchema\.parse\(data\)/,
+  );
   assert.doesNotMatch(securitySource, /\blogin\(/);
   assert.match(securitySource, /response\.otp_expires_in_seconds/);
   assert.match(securitySource, /REAUTH_VALIDITY_MS = 5 \* 60 \* 1000/);

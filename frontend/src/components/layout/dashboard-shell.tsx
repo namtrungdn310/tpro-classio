@@ -109,6 +109,10 @@ function DashboardContent({ children }: { children: ReactNode }) {
     );
   }
 
+  if (!user) {
+    return <DashboardSessionScreen label="Đang chuyển hướng" />;
+  }
+
   return (
     <div className={lockScrollToPanel ? "dashboard-app min-h-screen bg-[#F8FAFD] md:h-screen md:overflow-hidden" : "dashboard-app min-h-screen bg-[#F8FAFD]"}>
       <header className="dashboard-header fixed inset-x-0 top-0 z-40 border-b border-gray-100 bg-white">

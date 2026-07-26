@@ -1,31 +1,47 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
-import { Be_Vietnam_Pro, Josefin_Sans, Source_Sans_3 } from "next/font/google";
+import localFont from "next/font/local";
 import { AppProviders } from "@/components/providers/app-providers";
 import { getUserFromToken, ACCESS_TOKEN_COOKIE_KEY } from "@/lib/auth/session";
 import { cn } from "@/lib/utils";
 import "./globals.css";
 
-const bodyFont = Source_Sans_3({
-  subsets: ["latin", "vietnamese"],
+const bodyFont = localFont({
+  src: "./fonts/source-sans-3/SourceSans3-400-700.woff2",
   display: "swap",
   variable: "--font-body",
-  style: ["normal"],
+  style: "normal",
+  weight: "400 700",
 });
 
-const uiFont = Be_Vietnam_Pro({
-  subsets: ["latin", "vietnamese"],
+const uiFont = localFont({
+  src: [
+    {
+      path: "./fonts/be-vietnam-pro/BeVietnamPro-500.woff2",
+      weight: "500",
+      style: "normal",
+    },
+    {
+      path: "./fonts/be-vietnam-pro/BeVietnamPro-600.woff2",
+      weight: "600",
+      style: "normal",
+    },
+    {
+      path: "./fonts/be-vietnam-pro/BeVietnamPro-700.woff2",
+      weight: "700",
+      style: "normal",
+    },
+  ],
   display: "swap",
   variable: "--font-ui",
-  weight: ["500", "600", "700"],
-  style: ["normal"],
 });
 
-const metricFont = Josefin_Sans({
-  subsets: ["latin", "vietnamese"],
+const metricFont = localFont({
+  src: "./fonts/josefin-sans/JosefinSans-500-700.woff2",
   display: "swap",
   variable: "--font-metric",
-  weight: ["500", "600", "700"],
+  style: "normal",
+  weight: "500 700",
   preload: false,
 });
 

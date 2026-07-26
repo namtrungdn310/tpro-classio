@@ -1,4 +1,4 @@
-﻿/**
+/**
  * FormTextControl — shared input styling token for all text controls in the
  * dashboard: Header search, Settings fields, and add/edit Dialog forms.
  *

@@ -1,4 +1,5 @@
 import type { NextResponse } from "next/server";
+import { isLoopbackPublicOrigin } from "@/lib/server/public-origin";
 import {
   ACCESS_TOKEN_COOKIE_KEY,
   DEVICE_ID_COOKIE_KEY,
@@ -17,15 +18,32 @@ const FLOW_SESSION_COOKIE_MAX_AGE_SECONDS = 60 * 15;
 export function resolveSecureCookieSetting(
   configuredValue: string | undefined,
   nodeEnvironment: string | undefined,
+  publicAppOrigin?: string,
 ): boolean {
   const configured = configuredValue?.trim().toLowerCase();
   if (configured === "true" || configured === "1") return true;
-  if (configured === "false" || configured === "0") return false;
+  if (configured === "false" || configured === "0") {
+    if (nodeEnvironment !== "production") {
+      return false;
+    }
+
+    // `next start` and the standalone Docker image both run with
+    // NODE_ENV=production, including on plain-HTTP localhost. Never let the
+    // same local override silently disable Secure on a staging/production host.
+    if (isLoopbackPublicOrigin(publicAppOrigin)) {
+      return false;
+    }
+    return true;
+  }
   return nodeEnvironment === "production";
 }
 
 function isSecureCookie(): boolean {
-  return resolveSecureCookieSetting(process.env.AUTH_COOKIE_SECURE, process.env.NODE_ENV);
+  return resolveSecureCookieSetting(
+    process.env.AUTH_COOKIE_SECURE,
+    process.env.NODE_ENV,
+    process.env.APP_ORIGIN,
+  );
 }
 
 function buildCookieOptions(maxAge: number) {

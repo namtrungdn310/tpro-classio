@@ -64,6 +64,7 @@ export type StudentEnrollmentInfo = {
   class_id: string;
   class_name: string;
   custom_fee: number | null;
+  effective_fee: number;
   enrollment_date: string | null;
   status: "active" | "dropped";
 };
@@ -76,7 +77,6 @@ export type StudentResponse = {
   parent_name: string | null;
   parent_phone: string | null;
   parent_zalo: string | null;
-  parent_contact_hidden: boolean;
   student_zalo: string | null;
   student_phone: string | null;
   notes: string | null;
@@ -130,6 +130,7 @@ export type EnrollmentResponse = {
   status: "active" | "dropped";
   enrollment_date: string | null;
   class_name: string;
+  effective_fee: number;
 };
 
 export type EnrollmentUpdate = {

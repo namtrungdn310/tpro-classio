@@ -7,6 +7,7 @@ import {
   PASSWORD_RESET_COOKIE_KEY,
   REFRESH_TOKEN_COOKIE_KEY,
 } from "@/lib/auth/session";
+import { normalizeDeviceId } from "@/lib/auth/device";
 import type { SessionCookiePayload } from "@/lib/server/auth-cookies";
 import {
   buildBackendUrl,
@@ -27,6 +28,7 @@ import { readUpstreamFlowCookie } from "@/lib/server/flow-cookie";
 import { buildPrivateAvatarResponse } from "@/lib/server/backend-image-response";
 import { prepareBackendRequestBody } from "@/lib/server/backend-request";
 import { applyProxyResponseCookies } from "@/lib/server/proxy-response-cookies";
+import { normalizePublicAppOrigin } from "@/lib/server/public-origin";
 
 const JSON_CONTENT_TYPE = "application/json";
 const REFRESH_RESULT_GRACE_MS = 10_000;
@@ -57,6 +59,13 @@ function isJsonContentType(value: string | null): boolean {
   return Boolean(value && value.toLowerCase().includes(JSON_CONTENT_TYPE));
 }
 
+function readRequestDeviceId(request: NextRequest): string | null {
+  return normalizeDeviceId(
+    request.headers.get("x-tpro-device-id") ??
+      request.cookies.get(DEVICE_ID_COOKIE_KEY)?.value,
+  );
+}
+
 function validateMutationOrigin(request: NextRequest): NextResponse | null {
   if (SAFE_METHODS.has(request.method)) {
     return null;
@@ -68,24 +77,26 @@ function validateMutationOrigin(request: NextRequest): NextResponse | null {
   }
 
   const origin = request.headers.get("origin");
-  if (origin) {
-    const forwardedHost = request.headers.get("x-forwarded-host")?.split(",", 1)[0]?.trim();
-    const forwardedProtocol = request.headers
-      .get("x-forwarded-proto")
-      ?.split(",", 1)[0]
-      ?.trim()
-      .toLowerCase();
-    const expectedHost = forwardedHost || request.headers.get("host") || request.nextUrl.host;
-    const expectedProtocol = forwardedProtocol || request.nextUrl.protocol.replace(":", "");
+  if (!origin) {
+    return NextResponse.json({ detail: "Nguồn yêu cầu không hợp lệ" }, { status: 403 });
+  }
 
-    try {
-      const originUrl = new URL(origin);
-      if (originUrl.host !== expectedHost || originUrl.protocol !== `${expectedProtocol}:`) {
-        return NextResponse.json({ detail: "Nguồn yêu cầu không hợp lệ" }, { status: 403 });
-      }
-    } catch {
+  try {
+    const configuredOrigin = normalizePublicAppOrigin(
+      process.env.APP_ORIGIN,
+    );
+    if (!configuredOrigin && process.env.NODE_ENV === "production") {
+      return NextResponse.json(
+        { detail: "Cấu hình nguồn ứng dụng chưa hợp lệ" },
+        { status: 503, headers: { "Cache-Control": "no-store" } },
+      );
+    }
+    const expectedOrigin = configuredOrigin ?? request.nextUrl.origin;
+    if (new URL(origin).origin !== expectedOrigin) {
       return NextResponse.json({ detail: "Nguồn yêu cầu không hợp lệ" }, { status: 403 });
     }
+  } catch {
+    return NextResponse.json({ detail: "Nguồn yêu cầu không hợp lệ" }, { status: 403 });
   }
 
   return null;
@@ -118,7 +129,7 @@ function buildForwardHeaders(
   const userAgent = request.headers.get("user-agent");
   const secChUaMobile = request.headers.get("sec-ch-ua-mobile");
   const ifNoneMatch = request.headers.get("if-none-match");
-  const deviceId = request.headers.get("x-tpro-device-id") ?? request.cookies.get(DEVICE_ID_COOKIE_KEY)?.value ?? null;
+  const deviceId = readRequestDeviceId(request);
 
   if (contentType) {
     headers.set("Content-Type", contentType);
@@ -200,9 +211,7 @@ async function refreshSession(
   refreshToken: string,
 ): Promise<SessionRefreshResult> {
   const requestDeviceId =
-    request.headers.get("x-tpro-device-id") ??
-    request.cookies.get(DEVICE_ID_COOKIE_KEY)?.value ??
-    "";
+    readRequestDeviceId(request) ?? "";
   const refreshKey = await buildRefreshKey(refreshToken, requestDeviceId);
   return refreshCoordinator.run(refreshKey, async () => {
     const response = await fetch(`${getBackendBaseUrl()}/auth/refresh`, {
@@ -216,12 +225,9 @@ async function refreshSession(
         ...(request.headers.get("sec-ch-ua-mobile")
           ? { "sec-ch-ua-mobile": request.headers.get("sec-ch-ua-mobile") as string }
           : {}),
-        ...((request.headers.get("x-tpro-device-id") ??
-          request.cookies.get(DEVICE_ID_COOKIE_KEY)?.value)
+        ...(readRequestDeviceId(request)
           ? {
-              "X-TPRO-Device-Id":
-                (request.headers.get("x-tpro-device-id") ??
-                  request.cookies.get(DEVICE_ID_COOKIE_KEY)?.value) as string,
+              "X-TPRO-Device-Id": readRequestDeviceId(request) as string,
             }
           : {}),
       },
@@ -358,13 +364,29 @@ async function handleProxy(request: NextRequest, context: RouteContext) {
   const passwordResetToken =
     cookieStore.get(PASSWORD_RESET_COOKIE_KEY)?.value ?? null;
   const flowSessionToken = cookieStore.get(FLOW_SESSION_COOKIE_KEY)?.value ?? null;
-  const requestDeviceId =
-    request.headers.get("x-tpro-device-id") ?? cookieStore.get(DEVICE_ID_COOKIE_KEY)?.value ?? null;
+  const rawRequestDeviceId = request.headers.get("x-tpro-device-id");
+  if (rawRequestDeviceId && !normalizeDeviceId(rawRequestDeviceId)) {
+    return NextResponse.json(
+      { detail: "Không nhận diện được thiết bị đăng nhập" },
+      { status: 400, headers: { "Cache-Control": "no-store" } },
+    );
+  }
+  const requestDeviceId = normalizeDeviceId(
+    rawRequestDeviceId ?? cookieStore.get(DEVICE_ID_COOKIE_KEY)?.value,
+  );
   const isPublicPath = isPublicAuthProxyPath(path);
   const usesFlowSession = usesFlowSessionProxyPath(path);
   const isRefreshRoute = path === "auth/refresh";
   const rawBody =
     request.method === "GET" || request.method === "HEAD" ? "" : await request.text();
+  let forwardedRefreshToken = refreshToken;
+  if (path === "auth/logout" && refreshToken) {
+    const refreshKey = await buildRefreshKey(refreshToken, requestDeviceId ?? "");
+    const latest = await refreshCoordinator.invalidate(refreshKey);
+    if (latest.kind === "refreshed") {
+      forwardedRefreshToken = latest.session.refresh_token;
+    }
+  }
 
   let backendResponse: Response;
   try {
@@ -373,7 +395,7 @@ async function handleProxy(request: NextRequest, context: RouteContext) {
       request,
       isPublicPath ? null : accessToken,
       rawBody,
-      refreshToken,
+      forwardedRefreshToken,
       passwordResetToken,
       usesFlowSession ? flowSessionToken : null,
     );

@@ -34,6 +34,14 @@ test("temporary BFF failures are never cacheable", () => {
   );
 });
 
+test("cookie-authenticated mutations require a matching browser origin", () => {
+  assert.match(bffSource, /if \(!origin\) \{[\s\S]*status: 403/);
+  assert.match(bffSource, /normalizePublicAppOrigin/);
+  assert.match(bffSource, /new URL\(origin\)\.origin !== expectedOrigin/);
+  assert.doesNotMatch(bffSource, /x-forwarded-host/);
+  assert.match(bffSource, /fetchSite === "cross-site"/);
+});
+
 test("logout clears every browser auth stage even if upstream revocation is unavailable", () => {
   assert.match(
     bffSource,
@@ -63,6 +71,19 @@ test("Google authorization and callback remain server-controlled", () => {
   assert.match(
     nginxSource,
     /location = \/auth\/google\/callback \{[\s\S]*?access_log off;[\s\S]*?proxy_pass http:\/\/127\.0\.0\.1:3000;/,
+  );
+});
+
+test("Google callback logs cannot serialize OAuth secrets", () => {
+  assert.match(callbackSource, /readSafeCallbackErrorMetadata\(error\)/);
+  assert.match(callbackSource, /SAFE_CALLBACK_CAUSE_CODES/);
+  assert.doesNotMatch(
+    callbackSource,
+    /console\.warn\("Google onboarding callback request failed", error\)/,
+  );
+  assert.doesNotMatch(
+    callbackSource,
+    /Google onboarding callback rejected"[\s\S]{0,120}detail:/,
   );
 });
 

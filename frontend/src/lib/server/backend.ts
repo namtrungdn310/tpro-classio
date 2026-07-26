@@ -28,12 +28,32 @@ const FLOW_SESSION_PROXY_PATHS = new Set([
 ]);
 
 export function getBackendBaseUrl(): string {
-  const internalUrl = (process.env.NEXT_INTERNAL_API_URL ?? DEFAULT_INTERNAL_BACKEND_URL).replace(
-    /\/$/,
-    "",
-  );
+  return normalizeBackendBaseUrl(process.env.NEXT_INTERNAL_API_URL);
+}
 
-  return internalUrl;
+export function normalizeBackendBaseUrl(configuredValue: string | undefined): string {
+  const configuredUrl = configuredValue?.trim() || DEFAULT_INTERNAL_BACKEND_URL;
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(configuredUrl);
+  } catch {
+    throw new TypeError("NEXT_INTERNAL_API_URL must be an absolute HTTP(S) URL");
+  }
+
+  if (
+    (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") ||
+    parsedUrl.username ||
+    parsedUrl.password ||
+    parsedUrl.search ||
+    parsedUrl.hash ||
+    (parsedUrl.pathname !== "/" && parsedUrl.pathname !== "")
+  ) {
+    throw new TypeError(
+      "NEXT_INTERNAL_API_URL must contain only an HTTP(S) origin without credentials or a path",
+    );
+  }
+
+  return parsedUrl.origin;
 }
 
 export function buildBackendUrl(path: string, search: string): string {

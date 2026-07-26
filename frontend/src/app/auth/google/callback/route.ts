@@ -6,10 +6,50 @@ import {
 } from "@/lib/server/auth-cookies";
 import { buildBackendUrl } from "@/lib/server/backend";
 import { readUpstreamFlowCookie } from "@/lib/server/flow-cookie";
+import { normalizePublicAppOrigin } from "@/lib/server/public-origin";
 
 const CALLBACK_TIMEOUT_MS = 15_000;
 const UNSAFE_BROWSER_HOSTS = new Set(["0.0.0.0", "::", "[::]"]);
 const DEFAULT_PUBLIC_APP_ORIGIN = "http://localhost:3000";
+const SAFE_CALLBACK_ERROR_NAMES = new Set([
+  "AbortError",
+  "Error",
+  "TimeoutError",
+  "TypeError",
+]);
+const SAFE_CALLBACK_CAUSE_CODES = new Set([
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "ENOTFOUND",
+  "ETIMEDOUT",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_SOCKET",
+]);
+
+function readSafeCallbackErrorMetadata(error: unknown): {
+  errorName: string;
+  causeCode?: string;
+} {
+  const errorName =
+    error instanceof Error && SAFE_CALLBACK_ERROR_NAMES.has(error.name)
+      ? error.name
+      : "UnknownError";
+
+  const cause =
+    error instanceof Error &&
+    error.cause &&
+    typeof error.cause === "object" &&
+    "code" in error.cause
+      ? error.cause.code
+      : null;
+  const causeCode =
+    typeof cause === "string" && SAFE_CALLBACK_CAUSE_CODES.has(cause)
+      ? cause
+      : undefined;
+
+  return causeCode ? { errorName, causeCode } : { errorName };
+}
 
 function readRequestHost(request: NextRequest): string | null {
   return request.headers.get("host")?.split(",", 1)[0]?.trim() || null;
@@ -24,25 +64,17 @@ function readHostname(host: string): string {
 
 function buildSafeRequestUrl(request: NextRequest): URL {
   const url = request.nextUrl.clone();
-  const configuredOrigin = process.env.NEXT_PUBLIC_APP_ORIGIN?.trim();
+  const configuredOrigin = normalizePublicAppOrigin(
+    process.env.APP_ORIGIN,
+  );
   if (configuredOrigin) {
-    try {
-      const origin = new URL(configuredOrigin);
-      if (
-        ["http:", "https:"].includes(origin.protocol) &&
-        !origin.pathname.replaceAll("/", "") &&
-        !origin.search &&
-        !origin.hash &&
-        !origin.username &&
-        !origin.password
-      ) {
-        url.protocol = origin.protocol;
-        url.host = origin.host;
-        return url;
-      }
-    } catch {
-      // Fall back to the request host normalization below.
-    }
+    const origin = new URL(configuredOrigin);
+    url.protocol = origin.protocol;
+    url.host = origin.host;
+    return url;
+  }
+  if (process.env.NODE_ENV === "production") {
+    throw new TypeError("APP_ORIGIN is required in production");
   }
 
   const host = readRequestHost(request);
@@ -153,7 +185,12 @@ export async function GET(request: NextRequest) {
       },
     );
   } catch (error) {
-    console.warn("Google onboarding callback request failed", error);
+    // OAuth callbacks carry one-time code/state values in the URL. Never log
+    // the Error object, message, request URL, query string, or upstream body.
+    console.warn(
+      "Google onboarding callback request failed",
+      readSafeCallbackErrorMetadata(error),
+    );
     return redirectTo(
       request,
       "/onboarding/google",
@@ -176,7 +213,6 @@ export async function GET(request: NextRequest) {
   const errorDetail = await readBackendErrorDetail(backendResponse);
   console.warn("Google onboarding callback rejected", {
     status: backendResponse.status,
-    detail: errorDetail,
   });
   const response = redirectTo(
     request,

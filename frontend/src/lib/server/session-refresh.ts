@@ -6,6 +6,8 @@ export type SessionRefreshResult =
 
 type RefreshEntry = {
   expiresAt: number;
+  cancelled: boolean;
+  rawPromise: Promise<SessionRefreshResult>;
   promise: Promise<SessionRefreshResult>;
 };
 
@@ -36,27 +38,64 @@ export class SessionRefreshCoordinator {
       return existing.promise;
     }
 
+    const rawPromise = Promise.resolve().then(refresh);
     const entry: RefreshEntry = {
       expiresAt: now + this.graceMs,
-      promise: Promise.resolve().then(refresh),
+      cancelled: false,
+      rawPromise,
+      promise: rawPromise,
     };
-    entry.promise = entry.promise.then(
-        (result) => {
-          if (this.entries.get(key) === entry) {
-            entry.expiresAt = this.now() + this.graceMs;
-          }
-          return result;
-        },
-        (error: unknown) => {
-          if (this.entries.get(key) === entry) {
-            this.entries.delete(key);
-          }
-          throw error;
-        },
-      );
+    entry.promise = rawPromise.then(
+      (result) => {
+        if (entry.cancelled || this.entries.get(key) !== entry) {
+          return { kind: "invalid" };
+        }
+        entry.expiresAt = this.now() + this.graceMs;
+        return result;
+      },
+      (error: unknown) => {
+        if (this.entries.get(key) === entry) {
+          this.entries.delete(key);
+        }
+        throw error;
+      },
+    );
     this.entries.set(key, entry);
     this.pruneOverflow();
     return entry.promise;
+  }
+
+  /**
+   * Prevent an in-flight/staggered refresh from restoring cookies after
+   * logout.  The raw rotated credential is returned only to the logout path
+   * so that it can revoke the newest upstream session.
+   */
+  async invalidate(key: string): Promise<SessionRefreshResult> {
+    const now = this.now();
+    this.pruneExpired(now);
+    const existing = this.entries.get(key);
+    if (existing) {
+      existing.cancelled = true;
+    }
+
+    const invalidResult: SessionRefreshResult = { kind: "invalid" };
+    const invalidEntry: RefreshEntry = {
+      expiresAt: now + this.graceMs,
+      cancelled: false,
+      rawPromise: Promise.resolve(invalidResult),
+      promise: Promise.resolve(invalidResult),
+    };
+    this.entries.set(key, invalidEntry);
+    this.pruneOverflow();
+
+    if (!existing) {
+      return invalidResult;
+    }
+    try {
+      return await existing.rawPromise;
+    } catch {
+      return invalidResult;
+    }
   }
 
   private pruneExpired(now: number): void {

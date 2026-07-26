@@ -77,6 +77,14 @@ const otpStartResponseSchema = z.object({
 
 export type OtpStartResponse = z.infer<typeof otpStartResponseSchema>;
 
+const messageResponseSchema = z.object({
+  message: z.string().min(1).max(500),
+});
+
+const passwordResetOtpResponseSchema = z.object({
+  reset_token_expires_in_seconds: z.number().int().positive().max(3600),
+});
+
 const totpEnrollResponseSchema = z.object({
   factor_id: z.string().uuid(),
   totp_uri: z.string().startsWith("otpauth://totp/"),
@@ -89,9 +97,13 @@ const totpEnrollResponseSchema = z.object({
 
 export type TotpEnrollResponse = z.infer<typeof totpEnrollResponseSchema>;
 
-export type GoogleOnboardingStartResponse = {
-  authorization_url: string;
-};
+const googleOnboardingStartResponseSchema = z.object({
+  authorization_url: z.string().url().max(4096),
+});
+
+export type GoogleOnboardingStartResponse = z.infer<
+  typeof googleOnboardingStartResponseSchema
+>;
 
 const invitationResponseSchema = z.object({
   id: z.string().uuid(),
@@ -149,11 +161,11 @@ export async function verifyRegisterOtp(
   email: string,
   otp: string,
 ): Promise<{ message: string }> {
-  const { data } = await apiClient.post<{ message: string }>("/auth/register/verify", {
+  const { data } = await apiClient.post<unknown>("/auth/register/verify", {
     email,
     otp,
   });
-  return data;
+  return messageResponseSchema.parse(data);
 }
 
 export async function startPasswordReset(email: string): Promise<OtpStartResponse> {
@@ -165,20 +177,20 @@ export async function verifyPasswordResetOtp(
   email: string,
   otp: string,
 ): Promise<PasswordResetOtpResponse> {
-  const { data } = await apiClient.post<PasswordResetOtpResponse>(
+  const { data } = await apiClient.post<unknown>(
     "/auth/password/reset/verify-otp",
     { email, otp },
   );
-  return data;
+  return passwordResetOtpResponseSchema.parse(data);
 }
 
 export async function completePasswordReset(
   newPassword: string,
 ): Promise<{ message: string }> {
-  const { data } = await apiClient.post<{ message: string }>("/auth/password/reset/complete", {
+  const { data } = await apiClient.post<unknown>("/auth/password/reset/complete", {
     new_password: newPassword,
   });
-  return data;
+  return messageResponseSchema.parse(data);
 }
 
 export async function getMe(): Promise<UserMe> {
@@ -187,15 +199,15 @@ export async function getMe(): Promise<UserMe> {
 }
 
 export async function updateMyUsername(username: string): Promise<{ message: string }> {
-  const { data } = await apiClient.patch<{ message: string }>("/auth/me/username", { username });
-  return data;
+  const { data } = await apiClient.patch<unknown>("/auth/me/username", { username });
+  return messageResponseSchema.parse(data);
 }
 
 export async function verifyMyPassword(password: string): Promise<{ message: string }> {
-  const { data } = await apiClient.post<{ message: string }>("/auth/me/password/verify", {
+  const { data } = await apiClient.post<unknown>("/auth/me/password/verify", {
     password,
   });
-  return data;
+  return messageResponseSchema.parse(data);
 }
 
 export async function logout(): Promise<void> {
@@ -205,10 +217,10 @@ export async function logout(): Promise<void> {
 // ─── TOTP / MFA ──────────────────────────────────────────────────────────────
 
 export async function startGoogleOnboarding(): Promise<GoogleOnboardingStartResponse> {
-  const { data } = await apiClient.post<GoogleOnboardingStartResponse>(
+  const { data } = await apiClient.post<unknown>(
     "/auth/onboarding/google/start",
   );
-  return data;
+  return googleOnboardingStartResponseSchema.parse(data);
 }
 
 export async function enrollTotp(): Promise<TotpEnrollResponse> {
@@ -256,16 +268,16 @@ export async function updateUserRole(
   userId: string,
   role: "admin" | "viewer",
 ): Promise<UserAccount> {
-  const { data } = await apiClient.patch<UserAccount>(`/auth/users/${userId}/role`, { role });
-  return data;
+  const { data } = await apiClient.patch<unknown>(`/auth/users/${userId}/role`, { role });
+  return userAccountSchema.parse(data);
 }
 
 export async function updateUserStatus(
   userId: string,
   status: Exclude<AccountStatus, "pending">,
 ): Promise<UserAccount> {
-  const { data } = await apiClient.patch<UserAccount>(`/auth/users/${userId}/status`, { status });
-  return data;
+  const { data } = await apiClient.patch<unknown>(`/auth/users/${userId}/status`, { status });
+  return userAccountSchema.parse(data);
 }
 
 // ─── Invitations ─────────────────────────────────────────────────────────────

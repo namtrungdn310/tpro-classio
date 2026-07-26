@@ -73,6 +73,28 @@ test("refresh coordinator does not cache temporary refresh failures", async () =
   assert.equal(calls, 2);
 });
 
+test("logout invalidates an in-flight refresh and receives its newest credential", async () => {
+  const coordinator = new SessionRefreshCoordinator(10_000);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const inFlight = coordinator.run("old-token:device", async () => {
+    await gate;
+    return refreshedResult;
+  });
+
+  const logout = coordinator.invalidate("old-token:device");
+  release();
+
+  assert.deepEqual(await inFlight, { kind: "invalid" });
+  assert.deepEqual(await logout, refreshedResult);
+  assert.deepEqual(
+    await coordinator.run("old-token:device", async () => refreshedResult),
+    { kind: "invalid" },
+  );
+});
+
 test("refresh coordinator bounds cached token generations", async () => {
   const coordinator = new SessionRefreshCoordinator(10_000, Date.now, 2);
   let calls = 0;

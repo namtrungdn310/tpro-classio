@@ -9,7 +9,7 @@
     "type-check": "tsc --noEmit",
     "start": "next start",
     "lint": "eslint .",
-    "test": "tsx --test tests/*.test.ts"
+    "test": "node scripts/run-tests.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",
@@ -30,7 +30,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@types/node": "^20",
+    "@types/node": "^22.0.0",
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "eslint": "^9.39.4",
@@ -41,6 +41,6 @@
   },
   "overrides": {
     "postcss": "8.5.16",
-    "sharp": ">=0.35.0"
+    "sharp": "0.35.3"
   }
 }
