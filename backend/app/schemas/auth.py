@@ -8,6 +8,8 @@ OTP_LENGTH = 6
 USERNAME_MIN_LENGTH = 3
 USERNAME_MAX_LENGTH = 20
 USERNAME_PATTERN = r"^[A-Za-z0-9]+$"
+OPAQUE_HANDLE_MAX_LENGTH = 256
+REFRESH_TOKEN_MAX_LENGTH = 4096
 
 
 def validate_password_strength(value: str) -> str:
@@ -47,7 +49,9 @@ class RegisterRequest(BaseModel):
         pattern=USERNAME_PATTERN,
     )
     invitation_token: str = Field(
-        min_length=1, description="Opaque invitation token from invite link"
+        min_length=1,
+        max_length=OPAQUE_HANDLE_MAX_LENGTH,
+        description="Opaque invitation token from invite link",
     )
 
     @field_validator("password")
@@ -66,7 +70,7 @@ class VerifyOtpRequest(BaseModel):
 
 
 class CompletePasswordResetRequest(BaseModel):
-    reset_token: str = Field(min_length=1)
+    reset_token: str = Field(min_length=1, max_length=OPAQUE_HANDLE_MAX_LENGTH)
     new_password: str = Field(
         min_length=PASSWORD_MIN_LENGTH, max_length=PASSWORD_MAX_LENGTH
     )
@@ -78,13 +82,17 @@ class CompletePasswordResetRequest(BaseModel):
 
 
 class RefreshRequest(BaseModel):
-    refresh_token: str = Field(min_length=1)
+    refresh_token: str = Field(min_length=1, max_length=REFRESH_TOKEN_MAX_LENGTH)
 
 
 class LogoutRequest(BaseModel):
     # Injected from the HttpOnly cookie by the trusted Next BFF. Optional so
     # the local application session can still be revoked after cookie expiry.
-    refresh_token: str | None = Field(default=None, min_length=1)
+    refresh_token: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=REFRESH_TOKEN_MAX_LENGTH,
+    )
 
 
 class TokenResponse(BaseModel):

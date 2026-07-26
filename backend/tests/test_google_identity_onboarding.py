@@ -51,8 +51,9 @@ async def test_google_identity_without_picture_uses_initials_fallback() -> None:
     assert identity.avatar_object_path is None
     assert identity.avatar_source_url is None
     db.add.assert_called_once_with(identity)
-    db.commit.assert_awaited_once()
-    db.refresh.assert_awaited_once_with(identity)
+    db.flush.assert_awaited_once()
+    db.commit.assert_not_awaited()
+    db.refresh.assert_not_awaited()
 
 
 def test_google_identity_avatar_path_is_nullable_in_migration() -> None:

@@ -230,6 +230,73 @@ async def test_every_role_without_completed_factor_enters_onboarding_not_app_ses
 
 
 @pytest.mark.asyncio
+async def test_rejected_pending_login_revokes_its_temporary_supabase_session() -> None:
+    user_id = str(uuid4())
+    auth_data = {
+        "access_token": _supabase_access_token(user_id, aal="aal1"),
+        "refresh_token": "supabase-refresh-token",
+        "user": {"id": user_id, "email": "member@example.com"},
+    }
+    db = AsyncMock()
+    db.execute.side_effect = [OneResult(None), OneResult(None)]
+    revoke = AsyncMock(return_value=True)
+
+    with (
+        patch("app.routers.auth.session.ensure_supabase_auth_configured"),
+        patch("app.routers.auth.session.enforce_rate_limit", new=AsyncMock()),
+        patch("app.routers.auth.session.clear_rate_limit", new=AsyncMock()),
+        patch(
+            "app.routers.auth.session.supabase_post",
+            new=AsyncMock(
+                return_value=SimpleNamespace(
+                    status_code=200,
+                    json=lambda: auth_data,
+                )
+            ),
+        ),
+        patch(
+            "app.routers.auth.session.get_or_create_profile",
+            new=AsyncMock(
+                return_value=_profile(
+                    user_id,
+                    account_status="pending",
+                    onboarded=False,
+                )
+            ),
+        ),
+        patch(
+            "app.routers.auth.session.get_bound_invitation",
+            new=AsyncMock(
+                side_effect=HTTPException(
+                    status_code=403,
+                    detail="Đăng ký không còn lời mời hợp lệ.",
+                )
+            ),
+        ),
+        patch(
+            "app.routers.auth.session.revoke_temporary_supabase_session",
+            new=revoke,
+        ),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await session.login(
+                LoginRequest(
+                    email="member@example.com",
+                    password="StrongPassword1!",
+                ),
+                SimpleNamespace(headers={}),
+                Response(),
+                db,
+            )
+
+    assert exc_info.value.status_code == 403
+    revoke.assert_awaited_once_with(
+        auth_data,
+        operation="rejected incomplete onboarding login",
+    )
+
+
+@pytest.mark.asyncio
 async def test_fully_onboarded_password_login_still_requires_totp() -> None:
     user_id = str(uuid4())
     auth_data = {
@@ -535,7 +602,6 @@ async def test_password_reset_revokes_sessions_without_auto_login() -> None:
 async def test_logout_always_deletes_local_session_and_revokes_upstream_cookie() -> (
     None
 ):
-    user_id = str(uuid4())
     db = AsyncMock()
     revoke_upstream = AsyncMock(return_value=False)
 
@@ -546,15 +612,12 @@ async def test_logout_always_deletes_local_session_and_revokes_upstream_cookie()
         response = await session.logout(
             LogoutRequest(refresh_token="server-injected-refresh-token"),
             db,
-            {
-                "id": user_id,
-                "device_type": "desktop",
-                "session_nonce": "current-session-nonce",
-            },
         )
 
     statement = str(db.execute.await_args.args[0]).lower()
     assert "delete from user_device_sessions" in statement
+    assert "refresh_token_hash" in statement
+    assert db.execute.await_args.args[1:] == ()
     db.commit.assert_awaited_once()
     revoke_upstream.assert_awaited_once_with(
         "server-injected-refresh-token",

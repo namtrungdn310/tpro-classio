@@ -32,7 +32,12 @@ logger = logging.getLogger("tpro_classio")
 avatar_sync_task: asyncio.Task[None] | None = None
 auth_flow_cleanup_task: asyncio.Task[None] | None = None
 
-app = FastAPI(title="TPRO Classio API")
+app = FastAPI(
+    title="TPRO Classio API",
+    docs_url="/docs" if settings.api_docs_enabled else None,
+    redoc_url="/redoc" if settings.api_docs_enabled else None,
+    openapi_url="/openapi.json" if settings.api_docs_enabled else None,
+)
 app.add_middleware(
     TrustedHostMiddleware,
     allowed_hosts=settings.allowed_host_list,
@@ -105,6 +110,12 @@ async def log_slow_requests(request: Request, call_next) -> Response:
 @app.get("/")
 async def health_check() -> dict[str, str]:
     return {"status": "ok", "app": "TPRO Classio API"}
+
+
+@app.get("/health/live")
+async def liveness_check() -> dict[str, str]:
+    """Process liveness; intentionally does not depend on external services."""
+    return {"status": "live", "app": "TPRO Classio API"}
 
 
 @app.get("/health/ready")

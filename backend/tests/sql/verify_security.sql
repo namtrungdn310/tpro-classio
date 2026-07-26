@@ -40,6 +40,40 @@ begin
     raise exception 'one or more required public tables are missing';
   end if;
 
+  if to_regclass('storage.buckets') is null
+     or to_regclass('storage.objects') is null then
+    raise exception 'Supabase Storage tables are missing';
+  end if;
+
+  if not exists (
+    select 1
+    from storage.buckets
+    where id = 'avatars'
+      and name = 'avatars'
+      and public is false
+      and file_size_limit = 5242880
+      and allowed_mime_types = array['image/webp']::text[]
+  ) then
+    raise exception 'avatar bucket is missing or not private/restricted';
+  end if;
+
+  if has_table_privilege('anon', 'storage.buckets', 'select')
+     or has_table_privilege('authenticated', 'storage.buckets', 'select')
+     or has_table_privilege('anon', 'storage.objects', 'select')
+     or has_table_privilege('authenticated', 'storage.objects', 'select') then
+    raise exception 'browser roles must not read avatar storage directly';
+  end if;
+  if exists (
+    select 1
+    from information_schema.column_privileges
+    where table_schema = 'storage'
+      and table_name in ('buckets', 'objects')
+      and grantee in ('PUBLIC', 'anon', 'authenticated')
+      and privilege_type in ('SELECT', 'INSERT', 'UPDATE', 'REFERENCES')
+  ) then
+    raise exception 'browser storage column grants must remain revoked';
+  end if;
+
   if exists (
     select required_column.table_name, required_column.column_name
     from (
@@ -962,12 +996,80 @@ begin
   ) or not exists (
     select 1
     from pg_trigger
+    where tgrelid = 'public.fee_operations'::regclass
+      and tgname = 'trg_fee_operations_truncate_append_only'
+      and not tgisinternal
+  ) or not exists (
+    select 1
+    from pg_trigger
     where tgrelid = 'public.fee_operation_items'::regclass
       and tgname = 'trg_fee_operation_items_append_only'
+      and not tgisinternal
+  ) or not exists (
+    select 1
+    from pg_trigger
+    where tgrelid = 'public.fee_operation_items'::regclass
+      and tgname = 'trg_fee_operation_items_truncate_append_only'
       and not tgisinternal
   ) then
     raise exception 'fee operation ledger append-only triggers are missing';
   end if;
+
+  -- Verify behavior as well as trigger names. Each expected error runs inside
+  -- its own subtransaction, so these probes never change staging data.
+  if exists (select 1 from public.fee_operations) then
+    begin
+      update public.fee_operations
+      set total_amount = total_amount + 1
+      where id = (select id from public.fee_operations limit 1);
+      raise exception 'fee operation ledger accepted a mutation';
+    exception
+      when insufficient_privilege then null;
+    end;
+
+    begin
+      delete from public.fee_operations
+      where id = (select id from public.fee_operations limit 1);
+      raise exception 'fee operation ledger accepted a deletion';
+    exception
+      when insufficient_privilege then null;
+    end;
+  end if;
+
+  if exists (select 1 from public.fee_operation_items) then
+    begin
+      update public.fee_operation_items
+      set amount_delta = amount_delta + 1
+      where id = (select id from public.fee_operation_items limit 1);
+      raise exception 'fee operation item ledger accepted a mutation';
+    exception
+      when insufficient_privilege then null;
+    end;
+
+    begin
+      delete from public.fee_operation_items
+      where id = (select id from public.fee_operation_items limit 1);
+      raise exception 'fee operation item ledger accepted a deletion';
+    exception
+      when insufficient_privilege then null;
+    end;
+  end if;
+
+  begin
+    truncate table public.fee_operation_items;
+    raise exception 'fee operation item ledger accepted truncation';
+  exception
+    when insufficient_privilege then null;
+  end;
+
+  begin
+    -- CASCADE lets PostgreSQL reach the parent table trigger even though
+    -- fee_operation_items holds a restrictive foreign key to this ledger.
+    truncate table public.fee_operations cascade;
+    raise exception 'fee operation ledger accepted truncation';
+  exception
+    when insufficient_privilege then null;
+  end;
   if (
     select count(*)
     from pg_indexes

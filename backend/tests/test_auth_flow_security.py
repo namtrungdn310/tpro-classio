@@ -80,9 +80,14 @@ async def test_expired_or_consumed_flow_credentials_are_purged() -> None:
 
     removed = await purge_expired_auth_flows(db)
 
-    statement = " ".join(str(db.execute.await_args.args[0]).lower().split())
-    assert "delete from auth_flow_sessions" in statement
-    assert "expires_at <= now() or consumed_at is not null" in statement
+    statements = [
+        " ".join(str(call.args[0]).lower().split())
+        for call in db.execute.await_args_list
+    ]
+    assert "delete from auth_flow_sessions" in statements[0]
+    assert "expires_at <= now() or consumed_at is not null" in statements[0]
+    assert "delete from password_reset_sessions" in statements[1]
+    assert "delete from auth_rate_limits" in statements[2]
     assert removed == 2
     db.commit.assert_awaited_once()
 
@@ -202,6 +207,8 @@ async def test_invitation_binding_is_exact_and_atomic() -> None:
     assert "consumed_at is null" in statement
     assert "revoked_at is null" in statement
     assert "expires_at > now()" in statement
+    assert "expires_at = greatest(" in statement
+    assert "make_interval(mins => :onboarding_minutes)" in statement
     assert (
         "registered_user_id is null or registered_user_id = cast(:uid as uuid)"
         in statement
@@ -211,6 +218,7 @@ async def test_invitation_binding_is_exact_and_atomic() -> None:
         "id": invitation_id,
         "uid": user_id,
         "email": "Member@Example.com",
+        "onboarding_minutes": 15,
     }
     db.commit.assert_awaited_once()
 
@@ -291,3 +299,76 @@ async def test_disabled_pending_account_cannot_finish_stale_onboarding_flow() ->
     consume.assert_not_awaited()
     issue_token.assert_not_awaited()
     db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_onboarding_audit_preserves_role_before_viewer_activation() -> None:
+    user_id = str(uuid4())
+    flow = SimpleNamespace(
+        id=str(uuid4()),
+        user_id=user_id,
+        email="member@example.com",
+        invitation_id=str(uuid4()),
+    )
+    profile = SimpleNamespace(
+        id=user_id,
+        role="admin",
+        account_status="pending",
+        approved_at=None,
+        disabled_at=None,
+        disabled_by=None,
+        onboarding_completed_at=None,
+        totp_enrolled_at=None,
+    )
+    identity = SimpleNamespace(user_id=user_id)
+    factor = SimpleNamespace(
+        provider_factor_id="factor-id",
+        verified_at=datetime.now(timezone.utc),
+    )
+    db = AsyncMock()
+    db.execute.side_effect = [
+        ScalarResult(profile),
+        ScalarResult(identity),
+        ScalarResult(factor),
+    ]
+    audit_event = AsyncMock()
+    token_response = SimpleNamespace(access_token="access", refresh_token="refresh")
+
+    with (
+        patch(
+            "app.routers.auth.mfa.mark_onboarding_recovery_codes_confirmed",
+            new=AsyncMock(return_value=flow),
+        ),
+        patch("app.routers.auth.mfa.consume_invitation", new=AsyncMock()),
+        patch(
+            "app.routers.auth.mfa.read_upstream_credentials",
+            return_value=("upstream-access", "upstream-refresh"),
+        ),
+        patch(
+            "app.routers.auth.mfa.upsert_device_session",
+            new=AsyncMock(return_value=SimpleNamespace(session_nonce="nonce")),
+        ),
+        patch(
+            "app.routers.auth.mfa.record_account_security_event",
+            new=audit_event,
+        ),
+        patch("app.routers.auth.mfa.consume_flow_session", new=AsyncMock()),
+        patch(
+            "app.routers.auth.mfa.issue_internal_token",
+            new=AsyncMock(return_value=token_response),
+        ),
+        patch("app.routers.auth.mfa.delete_flow_session", new=AsyncMock()),
+        patch("app.routers.auth.mfa.read_device_id", return_value="device-id"),
+    ):
+        result = await mfa_router.confirm_onboarding_recovery_codes(
+            Request({"type": "http", "headers": []}),
+            Response(),
+            db,
+        )
+
+    assert result is token_response
+    assert profile.role == "viewer"
+    first_event = audit_event.await_args_list[0].kwargs
+    assert first_event["action"] == "totp_enrolled"
+    assert first_event["previous_role"] == "admin"
+    assert first_event["next_role"] == "viewer"

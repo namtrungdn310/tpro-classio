@@ -34,7 +34,9 @@ async def test_totp_enrollment_is_rate_limited_before_provider_write(
     )
     db = AsyncMock()
     google_result = Mock()
-    google_result.scalar_one_or_none.return_value = object()
+    google_result.scalar_one_or_none.return_value = SimpleNamespace(
+        account_status="pending"
+    )
     db.execute.return_value = google_result
     enforce = AsyncMock()
     enroll = AsyncMock(
@@ -73,7 +75,7 @@ def _patch_totp_login_success(
         user_id=user_id,
         email="member@example.com",
     )
-    profile = SimpleNamespace(id=user_id, role="viewer")
+    profile = SimpleNamespace(id=user_id, role="viewer", account_status="active")
     db = AsyncMock()
     profile_result = Mock()
     profile_result.scalar_one_or_none.return_value = profile

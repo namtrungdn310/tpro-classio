@@ -148,7 +148,7 @@ async def delete_student_route(
 async def list_student_enrollments(
     id: UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: dict[str, str | None] = Depends(get_current_user),
+    current_user: dict[str, str | None] = Depends(require_admin),
 ) -> list[EnrollmentResponse]:
     return await get_student_enrollments(db, id)
 

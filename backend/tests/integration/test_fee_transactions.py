@@ -1,15 +1,16 @@
 import os
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import Protocol
 from uuid import UUID, uuid4
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import delete, select, text, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import DBAPIError
 
 from app.core.business_time import business_today
-from app.core.database import AsyncSessionLocal, engine
+from app.core.database import AsyncSessionLocal
 from app.models.class_ import Class
 from app.models.enrollment import Enrollment
 from app.models.fee_record import FeeRecord
@@ -24,7 +25,6 @@ from app.services.fee_service import (
     reverse_fee_refund,
 )
 
-
 pytestmark = [
     pytest.mark.db_integration,
     pytest.mark.skipif(
@@ -34,9 +34,14 @@ pytestmark = [
 ]
 
 
+class AuthUserAdmin(Protocol):
+    async def create(self, user_id: str, email: str) -> None: ...
+
+    async def delete(self, user_id: str) -> None: ...
+
+
 @pytest.mark.asyncio
 async def test_batch_payment_and_reversal_share_one_consistent_ledger() -> None:
-    await engine.dispose()
     class_ids = [str(uuid4()), str(uuid4())]
     student_id = str(uuid4())
     enrollment_ids = [str(uuid4()), str(uuid4())]
@@ -149,10 +154,9 @@ async def test_batch_payment_and_reversal_share_one_consistent_ledger() -> None:
 
 
 @pytest.mark.asyncio
-async def test_refund_retry_and_reversal_keep_projection_and_ledger_consistent() -> (
-    None
-):
-    await engine.dispose()
+async def test_refund_retry_and_reversal_keep_projection_and_ledger_consistent(
+    auth_user_admin: AuthUserAdmin,
+) -> None:
     actor_id = str(uuid4())
     class_id = str(uuid4())
     student_id = str(uuid4())
@@ -162,12 +166,12 @@ async def test_refund_retry_and_reversal_keep_projection_and_ledger_consistent()
     today = business_today()
     period = today.strftime("%Y-%m")
 
-    async with AsyncSessionLocal() as db:
-        try:
-            await db.execute(
-                text("insert into auth.users (id, email) values (:id, :email)"),
-                {"id": actor_id, "email": f"{actor_id}@integration.invalid"},
-            )
+    await auth_user_admin.create(
+        actor_id,
+        f"{actor_id}@integration.invalid",
+    )
+    try:
+        async with AsyncSessionLocal() as db:
             db.add(Profile(id=actor_id, role="admin", full_name="CI Refund Actor"))
             db.add(
                 Class(
@@ -276,5 +280,5 @@ async def test_refund_retry_and_reversal_keep_projection_and_ledger_consistent()
                     .values(refunded_amount=1)
                 )
             await db.rollback()
-        finally:
-            await db.rollback()
+    finally:
+        await auth_user_admin.delete(actor_id)

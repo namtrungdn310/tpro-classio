@@ -67,7 +67,9 @@ async def update_user_role(
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(require_owner),
 ) -> UserAccount:
-    result = await db.execute(select(Profile).where(Profile.id == user_id))
+    result = await db.execute(
+        select(Profile).where(Profile.id == user_id).with_for_update()
+    )
     profile = result.scalar_one_or_none()
     if profile is None:
         raise HTTPException(
@@ -132,7 +134,9 @@ async def update_user_status(
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(require_owner),
 ) -> UserAccount:
-    result = await db.execute(select(Profile).where(Profile.id == user_id))
+    result = await db.execute(
+        select(Profile).where(Profile.id == user_id).with_for_update()
+    )
     profile = result.scalar_one_or_none()
     if profile is None:
         raise HTTPException(

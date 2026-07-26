@@ -50,6 +50,34 @@ from app.services.mfa_service import (
 router = APIRouter(tags=["auth"])
 
 
+async def _lock_flow_profile(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    allowed_statuses: set[str],
+) -> Profile:
+    """Serialize account lifecycle changes with MFA side effects."""
+    result = await db.execute(
+        select(Profile).where(Profile.id == user_id).with_for_update()
+    )
+    profile = result.scalar_one_or_none()
+    if profile is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Hồ sơ tài khoản không tồn tại.",
+        )
+    if profile.account_status not in allowed_statuses:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Tài khoản đã bị vô hiệu hóa. Vui lòng liên hệ tài khoản Dev."
+                if profile.account_status == "disabled"
+                else "Tài khoản chưa sẵn sàng để xác thực."
+            ),
+        )
+    return profile
+
+
 @router.post("/onboarding/totp/enroll", response_model=TotpEnrollResponse)
 async def onboarding_totp_enroll(
     request: Request,
@@ -79,6 +107,11 @@ async def onboarding_totp_enroll(
         subject=flow.user_id,
         max_attempts=3,
         window_seconds=15 * 60,
+    )
+    await _lock_flow_profile(
+        db,
+        user_id=flow.user_id,
+        allowed_statuses={"pending", "active"},
     )
     access_token, _ = read_upstream_credentials(flow)
     result = await enroll_totp(
@@ -111,6 +144,11 @@ async def onboarding_totp_verify(
         subject=flow.user_id,
         max_attempts=5,
         window_seconds=5 * 60,
+    )
+    await _lock_flow_profile(
+        db,
+        user_id=flow.user_id,
+        allowed_statuses={"pending", "active"},
     )
     access_token, _ = read_upstream_credentials(flow)
     factor, auth_data = await verify_totp_code(
@@ -172,6 +210,7 @@ async def confirm_onboarding_recovery_codes(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Hồ sơ tài khoản không tồn tại.",
         )
+    previous_role = profile.role
     previous_status = profile.account_status
     if flow.invitation_id and previous_status != "pending":
         # The profile row is locked above, so an Owner disabling the account
@@ -250,7 +289,7 @@ async def confirm_onboarding_recovery_codes(
         actor_user_id=flow.user_id,
         target_user_id=flow.user_id,
         action="totp_enrolled",
-        previous_role=profile.role,
+        previous_role=previous_role,
         next_role=profile.role,
         previous_status=previous_status,
         next_status="active",
@@ -293,6 +332,11 @@ async def login_totp_verify(
         max_attempts=5,
         window_seconds=5 * 60,
     )
+    profile = await _lock_flow_profile(
+        db,
+        user_id=flow.user_id,
+        allowed_statuses={"active"},
+    )
     access_token, _ = read_upstream_credentials(flow)
     factor, auth_data = await verify_totp_code(
         db,
@@ -304,9 +348,6 @@ async def login_totp_verify(
     aal2_refresh = auth_data.get("refresh_token")
     if not isinstance(aal2_access, str) or not isinstance(aal2_refresh, str):
         raise HTTPException(status_code=502, detail="Phiên AAL2 không hợp lệ.")
-    profile = (
-        await db.execute(select(Profile).where(Profile.id == flow.user_id))
-    ).scalar_one_or_none()
     now = datetime.now(timezone.utc)
     session_context = await upsert_device_session(
         db,
@@ -358,6 +399,11 @@ async def login_recovery_verify(
         max_attempts=5,
         window_seconds=10 * 60,
     )
+    profile = await _lock_flow_profile(
+        db,
+        user_id=flow.user_id,
+        allowed_statuses={"active"},
+    )
     await use_recovery_code(
         db,
         user_id=flow.user_id,
@@ -374,9 +420,6 @@ async def login_recovery_verify(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Chưa thể thu hồi các phiên cũ. Vui lòng thử lại để bảo vệ tài khoản.",
         )
-    profile = (
-        await db.execute(select(Profile).where(Profile.id == flow.user_id))
-    ).scalar_one_or_none()
     now = datetime.now(timezone.utc)
     # A recovery code is an exceptional credential: retire every local session
     # before binding the newly recovered AAL2-equivalent session.
@@ -402,8 +445,8 @@ async def login_recovery_verify(
         actor_user_id=flow.user_id,
         target_user_id=flow.user_id,
         action="recovery_code_used",
-        previous_role=profile.role if profile else "viewer",
-        next_role=profile.role if profile else "viewer",
+        previous_role=profile.role,
+        next_role=profile.role,
     )
     await clear_rate_limit(
         db,

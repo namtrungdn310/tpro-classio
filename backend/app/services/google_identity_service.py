@@ -210,8 +210,10 @@ async def link_google_identity(
             ),
             {"now": now, "uid": user_id},
         )
-    await db.commit()
-    await db.refresh(existing)
+    # The callback owns the transaction so identity/profile changes, the
+    # security event and the completed flow marker become visible atomically.
+    # Flush here to surface uniqueness violations before finishing the flow.
+    await db.flush()
     return existing
 
 

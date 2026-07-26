@@ -1,4 +1,4 @@
-﻿-- Staff roster and teacher-aware class schedules.
+-- Staff roster and teacher-aware class schedules.
 -- Staff fixtures and class assignments live under supabase/seeds; this
 -- migration only changes schema and never replaces production staff data.
 

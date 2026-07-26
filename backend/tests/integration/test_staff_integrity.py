@@ -7,7 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import AsyncSessionLocal, engine
+from app.core.database import AsyncSessionLocal
 
 
 pytestmark = [
@@ -37,7 +37,6 @@ async def _assert_trigger_rejects(
 
 @pytest.mark.asyncio
 async def test_staff_lifecycle_triggers_preserve_class_assignments() -> None:
-    await engine.dispose()
     teacher_id = str(uuid4())
     assistant_id = str(uuid4())
     class_id = str(uuid4())

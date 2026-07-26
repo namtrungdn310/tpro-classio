@@ -1,9 +1,12 @@
+import inspect
 from datetime import date, datetime, timezone
 from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
 
+from app.core.dependencies import require_admin
+from app.routers.students import list_student_enrollments
 from app.schemas.student import StudentEnrollmentInfo, StudentResponse, StudentUpdate
 from app.services.student_service import redact_student_hidden_fields
 
@@ -67,3 +70,10 @@ def test_hidden_fields_are_allowlisted_and_deduplicated() -> None:
 def test_student_update_rejects_null_hidden_fields() -> None:
     with pytest.raises(ValidationError):
         StudentUpdate(hidden_fields=None)
+
+
+def test_raw_enrollment_history_requires_admin_access() -> None:
+    dependency = (
+        inspect.signature(list_student_enrollments).parameters["current_user"].default
+    )
+    assert dependency.dependency is require_admin

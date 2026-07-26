@@ -5,15 +5,21 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from app.core import auth_credentials
 from app.core.config import Settings
+from app.core.database import engine
 from app.routers.auth.common import log_supabase_auth_failure, read_supabase_error
 from app.services.auth_flow_service import purge_expired_auth_flows
 from app.services.mfa_service import assert_aal2_auth_response
 
 
 ROOT = Path(__file__).parents[1]
+
+
+def test_database_engine_hides_bound_parameters_from_errors() -> None:
+    assert engine.sync_engine.hide_parameters is True
 
 
 def _migration_035() -> str:
@@ -109,6 +115,8 @@ def test_deployment_examples_separate_secrets_and_cookie_security() -> None:
 
     required_backend_keys = {
         "APP_ENVIRONMENT",
+        "DATABASE_SSL_MODE",
+        "DATABASE_SSL_ROOT_CERT",
         "AUTH_ENCRYPTION_KEY",
         "SUPABASE_SERVICE_ROLE_KEY",
         "GOOGLE_CLIENT_ID",
@@ -133,6 +141,8 @@ def test_deployment_examples_separate_secrets_and_cookie_security() -> None:
     assert "PRE_AUTH_SESSION_MINUTES" not in local + staging + production
     assert "AUTH_COOKIE_SECURE=true" in staging
     assert "AUTH_COOKIE_SECURE=true" in production
+    assert "DATABASE_SSL_MODE=verify-full" in staging
+    assert "DATABASE_SSL_MODE=verify-full" in production
     assert "ALLOWED_HOSTS=" in staging and "127.0.0.1" in staging
     assert "ALLOWED_HOSTS=" in production and "127.0.0.1" in production
     assert "AUTH_COOKIE_SECURE=false" in frontend
@@ -161,8 +171,8 @@ def test_container_runtime_and_access_logs_are_hardened() -> None:
     assert "USER app" in backend_dockerfile
     assert '"--no-access-log"' in backend_dockerfile
     assert "RUN npm ci" in frontend_dockerfile
-    assert "USER node" in frontend_dockerfile
-    assert "COPY --chown=node:node" in frontend_dockerfile
+    assert "USER 65532:65532" in frontend_dockerfile
+    assert "COPY --chown=65532:65532" in frontend_dockerfile
     frontend_runner = frontend_dockerfile.split(" AS runner", maxsplit=1)[1]
     assert "/app/node_modules" not in frontend_runner
     assert "log_format tpro_redacted" in nginx
@@ -179,6 +189,8 @@ def test_production_cors_never_inherits_localhost() -> None:
         _env_file=None,
         app_environment="production",
         database_url="postgresql+asyncpg://tpro_backend:strong@db.tpro.vn/postgres",
+        database_ssl_mode="verify-full",
+        database_ssl_root_cert="/run/secrets/database-ca.crt",
         secret_key="test-signing-key-with-more-than-thirty-two-chars",
         auth_encryption_key="test-encryption-key-with-more-than-thirty-two-chars",
         owner_admin_email="owner@tpro.vn",
@@ -195,7 +207,8 @@ def test_production_cors_never_inherits_localhost() -> None:
     local = Settings(
         _env_file=None,
         app_environment="local",
-        database_url="postgresql+asyncpg://unused",
+        database_url="postgresql+asyncpg://postgres@127.0.0.1/postgres",
+        database_ssl_mode="disable",
         secret_key="test-signing-key-with-more-than-thirty-two-chars",
         owner_admin_email="owner@example.com",
         frontend_url="http://127.0.0.1:3000",
@@ -203,6 +216,210 @@ def test_production_cors_never_inherits_localhost() -> None:
 
     assert production.cors_origin_list == ["https://classio.tpro.vn"]
     assert "http://localhost:3000" in local.cors_origin_list
+
+
+def test_api_discovery_and_database_tls_follow_environment_boundary() -> None:
+    production = Settings(
+        _env_file=None,
+        app_environment="production",
+        database_url=(
+            "postgresql+asyncpg://tpro_backend:strong@db.tpro.vn:5432/postgres"
+        ),
+        database_ssl_mode="verify-full",
+        database_ssl_root_cert="/run/secrets/database-ca.crt",
+        secret_key="test-signing-key-with-more-than-thirty-two-chars",
+        auth_encryption_key=(
+            "independent-encryption-key-with-more-than-thirty-two-chars"
+        ),
+        owner_admin_email="owner@tpro.vn",
+        frontend_url="https://classio.tpro.vn",
+        allowed_hosts="classio.tpro.vn,backend",
+        supabase_url="https://project.supabase.co",
+        supabase_anon_key="test-anon-key",
+        supabase_service_role_key="test-service-role-key",
+        google_client_id="test-client.apps.googleusercontent.com",
+        google_client_secret="test-google-secret",
+        google_redirect_uri="https://classio.tpro.vn/auth/google/callback",
+        auth_cookie_secure=True,
+    )
+    local_supabase = Settings(
+        _env_file=None,
+        app_environment="local",
+        database_url=(
+            "postgresql+asyncpg://postgres:strong@db.project.supabase.co:5432/postgres"
+        ),
+        database_ssl_mode="verify-full",
+        secret_key="test-signing-key-with-more-than-thirty-two-chars",
+        owner_admin_email="owner@example.com",
+    )
+    local_postgres = Settings(
+        _env_file=None,
+        app_environment="local",
+        database_url="postgresql+asyncpg://postgres:strong@127.0.0.1:5432/postgres",
+        database_ssl_mode="disable",
+        secret_key="test-signing-key-with-more-than-thirty-two-chars",
+        owner_admin_email="owner@example.com",
+    )
+
+    assert production.api_docs_enabled is False
+    assert production.database_ssl_required is True
+    assert local_supabase.api_docs_enabled is True
+    assert local_supabase.database_ssl_required is True
+    assert local_postgres.database_ssl_required is False
+
+
+def test_local_remote_database_requires_verified_tls() -> None:
+    with pytest.raises(ValueError, match="Remote development databases"):
+        Settings(
+            _env_file=None,
+            app_environment="local",
+            database_url=(
+                "postgresql+asyncpg://tpro_backend:strong@"
+                "pooler.supabase.com:5432/postgres"
+            ),
+            database_ssl_mode="require",
+            secret_key="test-signing-key-with-more-than-thirty-two-chars",
+            owner_admin_email="owner@example.com",
+        )
+
+
+def test_deployed_configuration_rejects_privileged_or_reused_credentials() -> None:
+    common = {
+        "_env_file": None,
+        "app_environment": "production",
+        "database_ssl_mode": "verify-full",
+        "database_ssl_root_cert": "/run/secrets/database-ca.crt",
+        "secret_key": "test-signing-key-with-more-than-thirty-two-chars",
+        "auth_encryption_key": (
+            "independent-encryption-key-with-more-than-thirty-two-chars"
+        ),
+        "owner_admin_email": "owner@tpro.vn",
+        "frontend_url": "https://classio.tpro.vn",
+        "allowed_hosts": "classio.tpro.vn,backend",
+        "supabase_url": "https://project.supabase.co",
+        "supabase_anon_key": "test-anon-key",
+        "supabase_service_role_key": "test-service-role-key",
+        "google_client_id": "test-client.apps.googleusercontent.com",
+        "google_client_secret": "test-google-secret",
+        "google_redirect_uri": "https://classio.tpro.vn/auth/google/callback",
+        "auth_cookie_secure": True,
+    }
+    with pytest.raises(ValueError, match="dedicated non-superuser"):
+        Settings(
+            **common,
+            database_url=(
+                "postgresql+asyncpg://postgres.project:strong@"
+                "pooler.supabase.com:5432/postgres"
+            ),
+        )
+
+    with pytest.raises(ValueError, match="complete postgresql"):
+        Settings(
+            **common,
+            database_url=(
+                "postgresql+asyncpg://tpro_backend:@db.tpro.vn:5432/postgres"
+            ),
+        )
+
+    with pytest.raises(ValueError, match="independent from SECRET_KEY"):
+        Settings(
+            **{
+                **common,
+                "auth_encryption_key": common["secret_key"],
+                "database_url": (
+                    "postgresql+asyncpg://tpro_backend:strong@db.tpro.vn:5432/postgres"
+                ),
+            },
+        )
+
+    with pytest.raises(ValueError, match="must differ"):
+        Settings(
+            **{
+                **common,
+                "supabase_service_role_key": common["supabase_anon_key"],
+                "database_url": (
+                    "postgresql+asyncpg://tpro_backend:strong@db.tpro.vn:5432/postgres"
+                ),
+            },
+        )
+
+    with pytest.raises(ValueError, match="without wildcards"):
+        Settings(
+            **{
+                **common,
+                "allowed_hosts": "*.tpro.vn,classio.tpro.vn,backend",
+                "database_url": (
+                    "postgresql+asyncpg://tpro_backend:strong@db.tpro.vn:5432/postgres"
+                ),
+            },
+        )
+
+
+@pytest.mark.parametrize(
+    "tls_query", ["ssl=require", "sslmode=require", "sslrootcert=ca.pem"]
+)
+def test_deployed_database_url_rejects_ambiguous_tls_query(tls_query: str) -> None:
+    with pytest.raises(ValueError, match="DATABASE_SSL_MODE"):
+        Settings(
+            _env_file=None,
+            app_environment="production",
+            database_url=(
+                "postgresql+asyncpg://tpro_backend:strong@db.tpro.vn:5432/"
+                f"postgres?{tls_query}"
+            ),
+            database_ssl_mode="verify-full",
+            database_ssl_root_cert="/run/secrets/database-ca.crt",
+            secret_key="test-signing-key-with-more-than-thirty-two-chars",
+            auth_encryption_key=(
+                "independent-encryption-key-with-more-than-thirty-two-chars"
+            ),
+            owner_admin_email="owner@tpro.vn",
+            frontend_url="https://classio.tpro.vn",
+            allowed_hosts="classio.tpro.vn,backend",
+            supabase_url="https://project.supabase.co",
+            supabase_anon_key="test-anon-key",
+            supabase_service_role_key="test-service-role-key",
+            google_client_id="test-client.apps.googleusercontent.com",
+            google_client_secret="test-google-secret",
+            google_redirect_uri="https://classio.tpro.vn/auth/google/callback",
+            auth_cookie_secure=True,
+        )
+
+
+def test_settings_reject_unknown_or_dangerously_large_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # BaseSettings filters unrelated process variables before model validation.
+    # Keeping extra="forbid" therefore catches stale/misspelled dotenv entries
+    # without breaking ordinary Docker/Kubernetes environment injection.
+    monkeypatch.setenv("UNRELATED_CONTAINER_RUNTIME_VARIABLE", "safe-to-ignore")
+    with pytest.raises(ValidationError, match="app_environment"):
+        Settings(
+            _env_file=None,
+            database_url="postgresql+asyncpg://postgres:strong@localhost/postgres",
+            secret_key="test-signing-key-with-more-than-thirty-two-chars",
+            owner_admin_email="owner@example.com",
+        )
+
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        Settings(
+            _env_file=None,
+            app_environment="local",
+            database_url="postgresql+asyncpg://postgres:strong@localhost/postgres",
+            secret_key="test-signing-key-with-more-than-thirty-two-chars",
+            owner_admin_email="owner@example.com",
+            misspelled_access_token_minutes=999,
+        )
+
+    with pytest.raises(ValidationError):
+        Settings(
+            _env_file=None,
+            app_environment="local",
+            database_url="postgresql+asyncpg://postgres:strong@localhost/postgres",
+            secret_key="test-signing-key-with-more-than-thirty-two-chars",
+            owner_admin_email="owner@example.com",
+            access_token_expire_minutes=24 * 60,
+        )
 
 
 def test_production_auth_config_fails_closed_on_placeholders_or_insecure_cookie() -> (
@@ -244,9 +461,15 @@ async def test_expired_auth_flow_cleanup_is_destructive_and_committed() -> None:
 
     removed = await purge_expired_auth_flows(db)
 
-    statement = " ".join(str(db.execute.await_args.args[0]).lower().split())
-    assert "delete from auth_flow_sessions" in statement
-    assert "expires_at <= now() or consumed_at is not null" in statement
+    statements = [
+        " ".join(str(call.args[0]).lower().split())
+        for call in db.execute.await_args_list
+    ]
+    assert "delete from auth_flow_sessions" in statements[0]
+    assert "expires_at <= now() or consumed_at is not null" in statements[0]
+    assert "delete from password_reset_sessions" in statements[1]
+    assert "expires_at <= now() or used_at is not null" in statements[1]
+    assert "delete from auth_rate_limits" in statements[2]
     assert removed == 4
     db.commit.assert_awaited_once()
 

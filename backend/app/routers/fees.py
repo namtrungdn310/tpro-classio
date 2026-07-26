@@ -291,7 +291,11 @@ async def unnotify_fee_record(
     db: AsyncSession = Depends(get_db),
     current_user: dict[str, str | bool | None] = Depends(require_admin),
 ) -> FeeBatchResponse:
-    return await mark_fees_unnotified(db, [id])
+    return await mark_fees_unnotified(
+        db,
+        [id],
+        actor_id=_get_actor_id(current_user),
+    )
 
 
 def _get_actor_id(current_user: dict[str, str | bool | None]) -> str | None:

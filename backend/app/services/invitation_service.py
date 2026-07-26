@@ -91,13 +91,22 @@ async def bind_invitation_to_registration(
     result = await db.execute(
         text(
             "update account_invitations set registered_user_id = cast(:uid as uuid),"
-            " registration_started_at = coalesce(registration_started_at, now())"
+            " registration_started_at = coalesce(registration_started_at, now()),"
+            " expires_at = greatest("
+            "   expires_at,"
+            "   now() + make_interval(mins => :onboarding_minutes)"
+            " )"
             " where id = cast(:id as uuid) and lower(email) = lower(:email)"
             " and consumed_at is null and revoked_at is null and expires_at > now()"
             " and (registered_user_id is null or registered_user_id = cast(:uid as uuid))"
             " returning id"
         ),
-        {"id": invitation_id, "uid": user_id, "email": email},
+        {
+            "id": invitation_id,
+            "uid": user_id,
+            "email": email,
+            "onboarding_minutes": settings.onboarding_session_minutes,
+        },
     )
     if result.first() is None:
         raise HTTPException(

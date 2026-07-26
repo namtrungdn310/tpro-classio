@@ -115,7 +115,9 @@ async def google_link_callback(
         target_user_id=flow.user_id,
         action="google_linked",
     )
-    await db.commit()
+    # finish_google_oauth commits the identity, profile avatar, audit event and
+    # flow marker together. A later failure must not leave a partially linked
+    # account that the onboarding flow cannot resume.
     await finish_google_oauth(db, flow.id)
     target = urljoin(
         settings.frontend_url.rstrip("/") + "/", "onboarding/totp?google=linked"

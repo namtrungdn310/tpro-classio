@@ -1,0 +1,172 @@
+\set ON_ERROR_STOP on
+
+-- Run this file as the migration/database owner after every migration batch.
+-- Supply the new runtime password through TPRO_RUNTIME_DB_PASSWORD; never put
+-- it in this file, a command argument or shell history.
+\getenv runtime_password TPRO_RUNTIME_DB_PASSWORD
+\if :{?runtime_password}
+\else
+  \echo 'TPRO_RUNTIME_DB_PASSWORD is required'
+  \quit 3
+\endif
+
+select length(:'runtime_password') >= 32 as runtime_password_valid \gset
+\if :runtime_password_valid
+\else
+  \echo 'TPRO_RUNTIME_DB_PASSWORD must contain at least 32 characters'
+  \quit 3
+\endif
+
+begin;
+set local lock_timeout = '5s';
+set local statement_timeout = '30s';
+
+select exists (
+  select 1 from pg_roles where rolname = 'tpro_backend'
+) as runtime_role_exists \gset
+
+\if :runtime_role_exists
+  alter role tpro_backend
+    with login bypassrls nosuperuser nocreatedb nocreaterole noinherit
+    noreplication;
+  select format(
+    'alter role tpro_backend password %L',
+    :'runtime_password'
+  ) \gexec
+\else
+  select format(
+    'create role tpro_backend login bypassrls nosuperuser nocreatedb '
+    'nocreaterole noinherit noreplication password %L',
+    :'runtime_password'
+  ) \gexec
+\endif
+
+select format(
+  'revoke all privileges on database %I from tpro_backend',
+  current_database()
+) \gexec
+select format(
+  'grant connect on database %I to tpro_backend',
+  current_database()
+) \gexec
+
+revoke all privileges on schema public from tpro_backend;
+grant usage on schema public to tpro_backend;
+revoke all privileges on all tables in schema public from tpro_backend;
+revoke all privileges on all sequences in schema public from tpro_backend;
+revoke all privileges on all functions in schema public from tpro_backend;
+
+-- Table-level REVOKE does not clear an explicit column grant that may have
+-- survived from an older deployment.
+do $$
+declare
+  target record;
+begin
+  for target in
+    select distinct
+      table_schema,
+      table_name,
+      column_name,
+      privilege_type
+    from information_schema.column_privileges
+    where table_schema = 'public'
+      and grantee = 'tpro_backend'
+      and privilege_type in ('SELECT', 'INSERT', 'UPDATE', 'REFERENCES')
+  loop
+    execute format(
+      'revoke %s (%I) on table %I.%I from tpro_backend',
+      target.privilege_type,
+      target.column_name,
+      target.table_schema,
+      target.table_name
+    );
+  end loop;
+end
+$$;
+
+grant select, insert, update, delete on all tables in schema public
+  to tpro_backend;
+grant usage, select on all sequences in schema public to tpro_backend;
+
+do $$
+declare
+  runtime_role record;
+begin
+  select
+    rolcanlogin,
+    rolbypassrls,
+    rolsuper,
+    rolcreatedb,
+    rolcreaterole,
+    rolinherit,
+    rolreplication
+  into strict runtime_role
+  from pg_roles
+  where rolname = 'tpro_backend';
+
+  if not runtime_role.rolcanlogin
+     or not runtime_role.rolbypassrls
+     or runtime_role.rolsuper
+     or runtime_role.rolcreatedb
+     or runtime_role.rolcreaterole
+     or runtime_role.rolinherit
+     or runtime_role.rolreplication then
+    raise exception 'tpro_backend role attributes violate the runtime policy';
+  end if;
+
+  if exists (
+    select 1
+    from pg_auth_members membership
+    join pg_roles member on member.oid = membership.member
+    where member.rolname = 'tpro_backend'
+  ) then
+    raise exception 'tpro_backend must not retain membership in another role';
+  end if;
+
+  if exists (
+    select 1
+    from pg_roles runtime
+    where runtime.rolname = 'tpro_backend'
+      and (
+        exists (select 1 from pg_database where datdba = runtime.oid)
+        or exists (select 1 from pg_namespace where nspowner = runtime.oid)
+        or exists (select 1 from pg_class where relowner = runtime.oid)
+        or exists (select 1 from pg_proc where proowner = runtime.oid)
+        or exists (select 1 from pg_type where typowner = runtime.oid)
+      )
+  ) then
+    raise exception 'tpro_backend must not own database or schema objects';
+  end if;
+
+  if not has_schema_privilege('tpro_backend', 'public', 'USAGE')
+     or has_schema_privilege('tpro_backend', 'public', 'CREATE') then
+    raise exception 'tpro_backend schema privileges violate the runtime policy';
+  end if;
+
+  if has_database_privilege(
+       'tpro_backend',
+       current_database(),
+       'CREATE'
+     ) then
+    raise exception 'tpro_backend must not create database objects';
+  end if;
+
+  if exists (
+    select 1
+    from pg_class relation
+    join pg_namespace namespace on namespace.oid = relation.relnamespace
+    where namespace.nspname = 'public'
+      and relation.relkind in ('r', 'p', 'v', 'm', 'f')
+      and (
+        has_table_privilege('tpro_backend', relation.oid, 'TRUNCATE')
+        or has_table_privilege('tpro_backend', relation.oid, 'REFERENCES')
+        or has_table_privilege('tpro_backend', relation.oid, 'TRIGGER')
+      )
+  ) then
+    raise exception 'tpro_backend retains unsafe table privileges';
+  end if;
+end
+$$;
+
+commit;
+\unset runtime_password

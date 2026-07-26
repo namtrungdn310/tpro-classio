@@ -32,13 +32,20 @@ async def purge_expired_auth_flows(
     *,
     commit: bool = True,
 ) -> int:
-    """Permanently remove expired/consumed rows that contain credentials."""
+    """Remove expired credential-bearing flows and other short-lived auth state."""
     result = await db.execute(
         text(
             "delete from auth_flow_sessions"
             " where expires_at <= now() or consumed_at is not null"
         )
     )
+    await db.execute(
+        text(
+            "delete from password_reset_sessions"
+            " where expires_at <= now() or used_at is not null"
+        )
+    )
+    await db.execute(text("delete from auth_rate_limits where expires_at <= now()"))
     rowcount = getattr(result, "rowcount", 0)
     removed = rowcount if isinstance(rowcount, int) and rowcount > 0 else 0
     if commit:

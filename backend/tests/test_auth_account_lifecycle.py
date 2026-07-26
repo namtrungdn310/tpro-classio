@@ -87,6 +87,7 @@ async def test_role_change_revokes_sessions_and_writes_security_event() -> None:
         )
 
     assert response.role == "admin"
+    assert "FOR UPDATE" in str(db.execute.await_args_list[0].args[0])
     assert any(
         "DELETE FROM user_device_sessions" in statement
         for statement in _executed_statements(db)
@@ -126,6 +127,7 @@ async def test_disabling_account_revokes_sessions_and_is_audited() -> None:
         )
 
     assert response.account_status == "disabled"
+    assert "FOR UPDATE" in str(db.execute.await_args_list[0].args[0])
     assert any(
         "DELETE FROM user_device_sessions" in statement
         for statement in _executed_statements(db)

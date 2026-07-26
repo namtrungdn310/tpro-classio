@@ -104,6 +104,7 @@ async def login(
         raise_auth_error(detail)
 
     auth_data = resp.json()
+    temporary_auth_data = auth_data
     user_id, email, refresh_token = read_auth_session(auth_data, payload.email)
     full_name, avatar_url = read_user_metadata(auth_data)
     profile = await get_or_create_profile(db, user_id, email, full_name)
@@ -168,6 +169,7 @@ async def login(
                 detail="Không thể tiếp tục thiết lập xác thực. Vui lòng thử lại.",
             )
         resumed_data = resumed_response.json()
+        temporary_auth_data = resumed_data
         resumed_user_id, resumed_email, refresh_token = read_auth_session(
             resumed_data,
             email,
@@ -182,20 +184,30 @@ async def login(
         supabase_access_token = read_supabase_access_token(resumed_data)
     flow_type = "login_mfa" if fully_onboarded else "onboarding"
     invitation_id: str | None = None
-    if not fully_onboarded and profile.account_status == "pending":
-        invitation = await get_bound_invitation(db, user_id=user_id, email=email)
-        invitation_id = str(invitation.id)
+    try:
+        if not fully_onboarded and profile.account_status == "pending":
+            invitation = await get_bound_invitation(db, user_id=user_id, email=email)
+            invitation_id = str(invitation.id)
 
-    flow_session_id = await create_flow_session(
-        db,
-        response,
-        user_id=user_id,
-        email=email,
-        flow_type=flow_type,
-        invitation_id=invitation_id,
-        supabase_access_token=supabase_access_token,
-        supabase_refresh_token=refresh_token,
-    )
+        flow_session_id = await create_flow_session(
+            db,
+            response,
+            user_id=user_id,
+            email=email,
+            flow_type=flow_type,
+            invitation_id=invitation_id,
+            supabase_access_token=supabase_access_token,
+            supabase_refresh_token=refresh_token,
+        )
+    except Exception:
+        # Password authentication has already created an upstream AAL1
+        # session.  Never leave it alive when the local onboarding contract
+        # (invitation, DB write or flow-session encryption) rejects the login.
+        await revoke_temporary_supabase_session(
+            temporary_auth_data,
+            operation="rejected incomplete onboarding login",
+        )
+        raise
     if fully_onboarded:
         return MfaRequiredResponse(
             message="Vui lòng nhập mã Google Authenticator.",
@@ -335,25 +347,18 @@ async def me(current_user: dict = Depends(get_current_user)) -> UserMe:
 async def logout(
     payload: LogoutRequest | None = None,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
-):
-    session_nonce = current_user.get("session_nonce")
-    device_type = current_user.get("device_type")
-    if not isinstance(session_nonce, str) or not isinstance(device_type, str):
-        raise_auth_error("Phiên đăng nhập không hợp lệ")
-    await db.execute(
-        delete(UDS).where(
-            UDS.user_id == str(current_user["id"] or ""),
-            UDS.device_type == device_type,
-            UDS.session_nonce == session_nonce,
-        )
-    )
-    await db.commit()
+) -> dict[str, str]:
     refresh_token = payload.refresh_token if payload is not None else None
     if refresh_token:
-        # Local invalidation above is authoritative for this app. Even during a
-        # temporary Supabase outage, a stolen refresh token cannot pass the
-        # missing local device-session binding on /auth/refresh.
+        # Match the server-held refresh credential directly so logout remains
+        # idempotent even when the short-lived access token is already expired.
+        # Local invalidation happens before the best-effort upstream request.
+        await db.execute(
+            delete(UDS).where(
+                UDS.refresh_token_hash == hash_device_value(refresh_token)
+            )
+        )
+        await db.commit()
         await revoke_supabase_session_by_refresh_token(
             refresh_token,
             operation="user logout",
