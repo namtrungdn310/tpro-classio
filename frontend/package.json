@@ -19,7 +19,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.18.0",
-    "next": "^16.2.11",
+    "next": "^16.2.12",
     "postcss-load-config": "^6.0.1",
     "react": "^18",
     "react-dom": "^18",
