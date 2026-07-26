@@ -218,7 +218,7 @@ jobs:
 
           backend_id="$(docker run -d --read-only --cap-drop ALL \
             --security-opt no-new-privileges --tmpfs /tmp:rw,noexec,nosuid,size=64m \
-            --network "$network_name" --name tpro-backend-ci \
+            --network "$network_name" --network-alias backend --name tpro-backend-ci \
             --user 10001:10001 -p 127.0.0.1:18000:8000 \
             -e APP_ENVIRONMENT=test \
             -e DATABASE_URL=postgresql+asyncpg://postgres:unused@127.0.0.1:9/unused \
@@ -245,7 +245,7 @@ jobs:
             --user 65532:65532 -p 127.0.0.1:13000:3000 \
             -e APP_ORIGIN=http://127.0.0.1:13000 \
             -e AUTH_COOKIE_SECURE=false \
-            -e NEXT_INTERNAL_API_URL=http://tpro-backend-ci:8000 \
+            -e NEXT_INTERNAL_API_URL=http://backend:8000 \
             tpro-classio-frontend:ci)"
 
           for attempt in $(seq 1 30); do
