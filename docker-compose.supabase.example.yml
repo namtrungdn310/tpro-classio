@@ -1,0 +1,10 @@
+# Copy this file to docker-compose.override.yml when local development connects
+# to Supabase. The override is ignored by Git and loaded automatically by
+# Docker Compose.
+services:
+  backend:
+    volumes:
+      - type: bind
+        source: ./certs/prod-ca-2021.crt
+        target: /certs/prod-ca-2021.crt
+        read_only: true

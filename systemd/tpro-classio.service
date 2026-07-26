@@ -1,14 +1,50 @@
 [Unit]
 Description=TPRO Classio FastAPI Backend
-After=network.target
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
+Type=simple
 User=tpro
+Group=tpro
 WorkingDirectory=/home/tpro/tpro-classio/backend
+EnvironmentFile=/etc/tpro-classio/backend.env
 Environment=PATH=/home/tpro/tpro-classio/backend/venv/bin
-ExecStart=/home/tpro/tpro-classio/backend/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
-Restart=always
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/tpro/tpro-classio/backend/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --no-access-log --proxy-headers --forwarded-allow-ips=127.0.0.1
+Restart=on-failure
 RestartSec=5
+TimeoutStartSec=60
+TimeoutStopSec=30
+KillSignal=SIGINT
+UMask=0077
+
+# Runtime hardening. The API persists state in PostgreSQL/Supabase and does not
+# require writes to the application directory.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
 
 [Install]
 WantedBy=multi-user.target

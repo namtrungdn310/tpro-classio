@@ -3,32 +3,59 @@ name: CI
 on:
   push:
     branches:
-      - "**"
+      - main
+      - dev
+  pull_request:
+    branches:
+      - main
+      - dev
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   frontend:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - run: npm ci
-      - run: npm audit --omit=dev --audit-level=high
-      - run: npm run type-check
-      - run: npm run lint
-      - run: npm test
-      - run: npm run build
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Audit locked dependency tree
+        run: npm audit --audit-level=high
+      - name: Type-check
+        run: npm run type-check
+      - name: Lint
+        run: npm run lint
+      - name: Test
+        run: npm test
+      - name: Build
+        run: npm run build
 
   backend:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/tpro_ci
+      APP_ENVIRONMENT: test
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/tpro_ci
+      DATABASE_SSL_MODE: disable
       SECRET_KEY: ci-only-secret-key-with-at-least-32-characters
       AUTH_ENCRYPTION_KEY: ci-only-independent-auth-encryption-key-with-at-least-32-characters
       SUPABASE_URL: https://example.invalid
@@ -41,7 +68,7 @@ jobs:
       OWNER_ADMIN_EMAIL: owner@example.com
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: tpro_ci
@@ -56,20 +83,31 @@ jobs:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: backend/requirements-dev.txt
-      - run: pip install -r requirements-dev.txt
-      - run: ruff check app tests
-      - run: ruff format --check app tests
-      - run: pytest -q
-      - run: pip-audit -r requirements.txt
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements-dev.txt
+      - name: Lint
+        run: python -m ruff check app tests
+      - name: Check formatting
+        run: python -m ruff format --check app tests
+      - name: Scan Python source
+        run: python -m bandit -q -r app -ll
+      - name: Test
+        run: python -m pytest -q
+      - name: Audit Python dependencies
+        run: python -m pip_audit -r requirements-dev.txt
       - name: Verify migrations and database security
         env:
-          PGHOST: localhost
+          PGHOST: 127.0.0.1
           PGPORT: 5432
           PGUSER: postgres
           PGPASSWORD: postgres
@@ -83,8 +121,145 @@ jobs:
             psql -v ON_ERROR_STOP=1 -f "$migration"
           done
           psql -v ON_ERROR_STOP=1 -f tests/sql/verify_security.sql
+          psql -v ON_ERROR_STOP=1 -f tests/sql/pre_038_legacy_trigger_fixture.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/migrations/038_reconcile_fee_operation_append_only_guards.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/migrations/038_reconcile_fee_operation_append_only_guards.sql
+          psql -v ON_ERROR_STOP=1 -f tests/sql/verify_security.sql
+      - name: Provision restricted application role
+        env:
+          TPRO_RUNTIME_DB_PASSWORD: ci-runtime-only-password-at-least-32
+          PGHOST: 127.0.0.1
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: tpro_ci
+        run: |
+          psql -v ON_ERROR_STOP=1 -f ops/provision_runtime_role.psql
+          psql -v ON_ERROR_STOP=1 -f ops/provision_runtime_role.psql
       - name: Verify fee transactions against PostgreSQL
         env:
           RUN_DB_INTEGRATION: "1"
-          DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/tpro_ci
-        run: pytest -q -m db_integration
+          DATABASE_URL: postgresql+asyncpg://tpro_backend:ci-runtime-only-password-at-least-32@127.0.0.1:5432/tpro_ci
+          DB_TEST_ADMIN_DSN: postgresql://postgres:postgres@127.0.0.1:5432/tpro_ci
+        run: python -m pytest -q -m db_integration
+
+  security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out full source history
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Scan complete Git history for secrets
+        run: >-
+          docker run --rm
+          --network none
+          --volume "$PWD:/repo:ro"
+          docker.io/zricethezav/gitleaks:v8.30.0@sha256:691af3c7c5a48b16f187ce3446d5f194838f91238f27270ed36eef6359a574d9
+          git /repo --log-opts="--all" --redact=100 --no-banner --no-color
+
+  containers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs:
+      - frontend
+      - backend
+      - security
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Build backend runtime image
+        run: docker build --pull --tag tpro-classio-backend:ci backend
+      - name: Build frontend runtime image
+        run: >-
+          docker build --pull
+          --build-arg NEXT_INTERNAL_API_URL=http://backend:8000
+          --tag tpro-classio-frontend:ci
+          frontend
+      - name: Verify Compose configurations
+        env:
+          BACKEND_IMAGE: ghcr.io/tpro-classio/backend@sha256:1111111111111111111111111111111111111111111111111111111111111111
+          FRONTEND_IMAGE: ghcr.io/tpro-classio/frontend@sha256:2222222222222222222222222222222222222222222222222222222222222222
+          NEXT_INTERNAL_API_URL: http://backend:8000
+          APP_ORIGIN: https://staging.classio.example.com
+          AUTH_COOKIE_SECURE: "true"
+        run: |
+          python scripts/validate_deploy_env.py
+          BACKEND_ENV_FILE=./backend/.env.example docker compose config --quiet
+          BACKEND_ENV_FILE=./backend/.env.staging.example \
+          docker compose \
+            --env-file .env.staging.example \
+            -f docker-compose.yml \
+            -f docker-compose.deploy.yml \
+            config --quiet
+      - name: Smoke-test hardened runtime images
+        shell: bash
+        run: |
+          set -euo pipefail
+          backend_id=""
+          frontend_id=""
+          network_name="tpro-classio-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            [ -z "$backend_id" ] || docker rm -f "$backend_id" >/dev/null 2>&1 || true
+            [ -z "$frontend_id" ] || docker rm -f "$frontend_id" >/dev/null 2>&1 || true
+            docker network rm "$network_name" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker network create "$network_name" >/dev/null
+
+          test "$(docker image inspect --format '{{.Config.User}}' tpro-classio-backend:ci)" = "app"
+          test "$(docker image inspect --format '{{.Config.User}}' tpro-classio-frontend:ci)" = "65532:65532"
+
+          backend_id="$(docker run -d --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+            --network "$network_name" --name tpro-backend-ci \
+            --user 10001:10001 -p 127.0.0.1:18000:8000 \
+            -e APP_ENVIRONMENT=test \
+            -e DATABASE_URL=postgresql+asyncpg://postgres:unused@127.0.0.1:9/unused \
+            -e DATABASE_SSL_MODE=disable \
+            -e SECRET_KEY=container-smoke-signing-key-at-least-32-characters \
+            -e OWNER_ADMIN_EMAIL=owner@example.com \
+            tpro-classio-backend:ci)"
+
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:18000/health/live >/dev/null; then
+              break
+            fi
+            if [ "$attempt" = 30 ]; then
+              docker logs "$backend_id"
+              exit 1
+            fi
+            sleep 1
+          done
+
+          frontend_id="$(docker run -d --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+            --tmpfs /app/.next/cache:rw,noexec,nosuid,size=64m,mode=0700,uid=65532,gid=65532 \
+            --network "$network_name" --name tpro-frontend-ci \
+            --user 65532:65532 -p 127.0.0.1:13000:3000 \
+            -e APP_ORIGIN=http://127.0.0.1:13000 \
+            -e AUTH_COOKIE_SECURE=false \
+            -e NEXT_INTERNAL_API_URL=http://tpro-backend-ci:8000 \
+            tpro-classio-frontend:ci)"
+
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --dump-header /tmp/frontend-headers \
+              http://127.0.0.1:13000/login >/dev/null; then
+              break
+            fi
+            if [ "$attempt" = 30 ]; then
+              docker logs "$frontend_id"
+              exit 1
+            fi
+            sleep 1
+          done
+
+          grep -qi '^content-security-policy:' /tmp/frontend-headers
+          grep -qi '^x-content-type-options: nosniff' /tmp/frontend-headers
+          curl --fail --silent \
+            http://127.0.0.1:13000/api/proxy/health/live \
+            | grep -q '"status":"live"'

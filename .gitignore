@@ -3,6 +3,8 @@ doc/
 design.md
 phase*.md
 study.txt
+todo*.md
+fix_ci*.md
 
 # Node / Next.js
 frontend/node_modules/
@@ -10,6 +12,10 @@ frontend/.next/
 frontend/out/
 frontend/coverage/
 frontend/.vercel/
+frontend/.turbo/
+frontend/.nyc_output/
+frontend/playwright-report/
+frontend/test-results/
 frontend/*.tsbuildinfo
 frontend/next-env.d.ts
 .eslintcache
@@ -25,6 +31,25 @@ backend/**/*.pyc
 .coverage
 coverage.xml
 htmlcov/
+
+# Root-level tool caches / reports
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.scannerwork/
+.coverage.*
+coverage/
+junit*.xml
+
+# Local package/publishing credentials
+.npmrc
+.pypirc
+.pgpass
+pgpass.conf
+client_secret*.json
+service-account*.json
+application_default_credentials.json
+secrets/
 
 # Local environment files
 .env
@@ -56,6 +81,21 @@ docker-compose.override.yml
 backups/
 *.dump
 *.backup
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+
+# Local certificates and private keys (mount from the host/secret manager)
+certs/
+*.crt
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore
 
 # Temporary reconstruction / local data scripts
 *.reconstructed
@@ -73,3 +113,5 @@ Thumbs.db:encryptable
 
 # Gemini / AI agent scratch files
 .gemini/
+.agents/
+.codex/

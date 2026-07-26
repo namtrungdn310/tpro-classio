@@ -1,0 +1,23 @@
+services:
+  backend:
+    # Staging/production promote the exact image digest that passed CI. They
+    # never rebuild application source on the target host.
+    image: ${BACKEND_IMAGE:?Set BACKEND_IMAGE to an immutable image digest}
+    build: !reset null
+    env_file: !override
+      - ${BACKEND_ENV_FILE:?Set BACKEND_ENV_FILE}
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: ${DATABASE_CA_HOST_PATH:?Set DATABASE_CA_HOST_PATH}
+        target: /run/secrets/database-ca.crt
+        read_only: true
+
+  frontend:
+    image: ${FRONTEND_IMAGE:?Set FRONTEND_IMAGE to an immutable image digest}
+    build: !reset null
+    restart: unless-stopped
+    environment:
+      NEXT_INTERNAL_API_URL: ${NEXT_INTERNAL_API_URL:?Set NEXT_INTERNAL_API_URL}
+      APP_ORIGIN: ${APP_ORIGIN:?Set APP_ORIGIN}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:?Set AUTH_COOKIE_SECURE}
