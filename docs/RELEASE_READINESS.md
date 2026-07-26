@@ -244,6 +244,27 @@ với cùng grant trong một runbook riêng; không tự coi `ALTER ROLE` là r
       đều hợp lệ.
 - [ ] Rollback ứng dụng và chiến lược forward-fix database đã được diễn tập.
 
+### 6.1 Ngoại lệ tạm thời cho toolchain frontend
+
+Ngày 24/07/2026, GitHub công bố `GHSA-mh99-v99m-4gvg` cho
+`brace-expansion <= 5.0.7`. Runtime tree của frontend không chứa dependency này;
+nó chỉ đi qua ESLint/plugin trong dev toolchain. Bản vá duy nhất hiện là 5.0.8,
+nhưng `minimatch@3` của ESLint ecosystem dùng API CommonJS cũ và bị hỏng nếu ép
+major override (`expand is not a function`).
+
+Do đó CI:
+
+- từ chối High/Critical trong production tree bằng
+  `npm audit --omit=dev --audit-level=high`;
+- từ chối Critical trong toàn bộ toolchain;
+- vẫn giữ Dependabot và CodeQL để nhận bản nâng cấp upstream.
+
+Không dùng `npm audit fix --force`, không hạ phiên bản Next.js và không patch
+thư viện trong `node_modules`. Ngoại lệ này phải được review lại mỗi tuần và bị
+gỡ ngay khi ESLint/minimatch phát hành chuỗi dependency tương thích với
+`brace-expansion >= 5.0.8`. Nếu advisory lan vào runtime tree hoặc tăng Critical,
+release bị chặn ngay.
+
 ## 7. Cổng production
 
 - [ ] Tất cả cổng staging đạt trên đúng artifact/image sẽ promote.

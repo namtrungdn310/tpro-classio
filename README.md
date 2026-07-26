@@ -212,7 +212,8 @@ npm run type-check
 npm run lint
 npm test
 npm run build
-npm audit --audit-level=high
+npm audit --omit=dev --audit-level=high
+npm audit --audit-level=critical
 ```
 
 CI chạy lại các cổng trên, kiểm tra migration/security trên PostgreSQL 16 sạch

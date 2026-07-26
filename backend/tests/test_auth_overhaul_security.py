@@ -392,6 +392,7 @@ def test_settings_reject_unknown_or_dangerously_large_values(
     # BaseSettings filters unrelated process variables before model validation.
     # Keeping extra="forbid" therefore catches stale/misspelled dotenv entries
     # without breaking ordinary Docker/Kubernetes environment injection.
+    monkeypatch.delenv("APP_ENVIRONMENT", raising=False)
     monkeypatch.setenv("UNRELATED_CONTAINER_RUNTIME_VARIABLE", "safe-to-ignore")
     with pytest.raises(ValidationError, match="app_environment"):
         Settings(
