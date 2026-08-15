@@ -444,5 +444,3 @@ commit;
 --   drop index if exists classes_operational_end_idx;
 --   alter table public.classes drop column if exists operational_end_date;
 --   commit;
-
-

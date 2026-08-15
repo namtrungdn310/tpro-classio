@@ -115,7 +115,6 @@ export function PaidReportSummaryBand({
     </section>
   );
 }
-
 function MethodAmount({
   color,
   label,
@@ -135,4 +134,3 @@ function MethodAmount({
     </span>
   );
 }
-

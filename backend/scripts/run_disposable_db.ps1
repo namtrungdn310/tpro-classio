@@ -496,4 +496,3 @@ finally {
   Restore-Env
   Remove-Item env:PGPASSWORD -ErrorAction SilentlyContinue
 }
-
