@@ -37,6 +37,11 @@ SQL = ROOT / "tests" / "sql"
 VENV_PY = ROOT / ".venv" / "Scripts" / "python.exe"
 if not VENV_PY.exists():
     VENV_PY = ROOT / ".venv" / "bin" / "python"
+if not VENV_PY.exists():
+    # GitHub Actions installs dependencies into the interpreter selected by
+    # setup-python and intentionally does not create a project venv.  Do not
+    # hard-code a POSIX venv path: use the interpreter running this runner.
+    VENV_PY = Path(sys.executable)
 
 PSQL = shutil.which("psql")
 PG_ISREADY = shutil.which("pg_isready")
