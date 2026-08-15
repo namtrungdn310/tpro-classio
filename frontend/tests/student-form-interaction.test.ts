@@ -6,19 +6,19 @@ const studentPageSource = readFileSync(
   new URL("../src/app/(dashboard)/students/page.tsx", import.meta.url),
   "utf8",
 );
-const classDialogSource = readFileSync(
-  new URL("../src/components/classes/class-form-dialog.tsx", import.meta.url),
+const shellSource = readFileSync(
+  new URL("../src/components/ui/form-dialog-shell.tsx", import.meta.url),
   "utf8",
 );
 
 test("student enrollment dates use a non-selectable display control", () => {
   assert.match(
     studentPageSource,
-    /const datePickerButtonClassName = `\$\{formControlBaseClassName\} select-none text-left`/,
+    /const datePickerButtonClassName = `\$\{formTextControlClassName\} select-none text-left`/,
   );
   assert.match(
     studentPageSource,
-    /className=\{`\$\{datePickerButtonClassName\} \$\{error \? "border-red-400 ring-2 ring-red-100" : ""\}`\}/,
+    /className=\{`\$\{datePickerButtonClassName\} \$\{error \? "border-destructive ring-2 ring-destructive\/15" : ""\}`\}/,
   );
   assert.match(
     studentPageSource,
@@ -33,13 +33,47 @@ test("current-class panel blocks ambient selection but preserves class-name sele
   );
   assert.match(
     studentPageSource,
-    /className="inline-flex h-7 select-text items-center rounded-md border px-2 text-\[13px\] font-medium"/,
+    /className="inline-flex h-7 select-text items-center rounded-md border px-2 text-\[13px\] font-semibold"/,
+  );
+});
+
+test("visible custom fee allows selecting its label and amount as one value", () => {
+  assert.match(
+    studentPageSource,
+    /data-text-selection-scope=\{isHidden \? undefined : "true"\}[\s\S]*data-text-selection-value="true"[\s\S]*Học phí: \{formatCurrencyVnd\(customFee\)\}/,
+  );
+  assert.match(
+    studentPageSource,
+    /isHidden[\s\S]*"flex select-none items-center gap-1"[\s\S]*<HiddenStudentValue \/>/,
+  );
+});
+
+test("removing a student describes the last-class lifecycle and uses precise action labels", () => {
+  assert.match(
+    studentPageSource,
+    /label: `Xoá \$\{actionTarget\.full_name\} khỏi lớp`/,
+  );
+  assert.match(
+    studentPageSource,
+    /actionTarget && !isFormOpen && !deleteTarget && !pendingIdentityConflict/,
+  );
+  assert.match(
+    studentPageSource,
+    /const isLastActiveClass = student\.active_enrollments\.length <= 1/,
+  );
+  assert.match(
+    studentPageSource,
+    /Đây là lớp đang học cuối cùng nên hồ sơ cũng sẽ được xoá khỏi danh sách học viên\. Lịch sử học phí vẫn được giữ nguyên\./,
+  );
+  assert.match(
+    studentPageSource,
+    /Hồ sơ và các lớp đang học khác vẫn được giữ nguyên\./,
   );
 });
 
 test("class form dialog clips its footer to the rounded modal corners", () => {
   assert.match(
-    classDialogSource,
-    /className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-white shadow-xl[^\"]*sm:rounded-xl"/,
+    shellSource,
+    /className=\{cn\(\s*"flex h-full min-h-0 w-full flex-col overflow-hidden bg-white shadow-xl outline-none[^\"]*sm:rounded-xl"/,
   );
 });

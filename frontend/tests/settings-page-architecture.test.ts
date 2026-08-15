@@ -83,7 +83,8 @@ test("account settings use shared typography, accessible labels, loading feedbac
   );
   assert.match(accountSource, /disabled=\{!hasUsernameChanges\}/);
   assert.doesNotMatch(accountSource, /Thông tin nhận diện và phạm vi quyền/);
-  assert.match(roleSource, /viewer: "Viewer"/);
+  assert.match(roleSource, /teacher: "Giáo viên"/);
+  assert.doesNotMatch(roleSource, /viewer:/);
   assert.doesNotMatch(roleSource, /description:/);
 });
 

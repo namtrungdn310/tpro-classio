@@ -6,6 +6,10 @@ const pageSource = readFileSync(
   new URL("../src/app/(dashboard)/staff/page.tsx", import.meta.url),
   "utf8",
 );
+const dialogSource = readFileSync(
+  new URL("../src/components/shared/entity-actions-dialog.tsx", import.meta.url),
+  "utf8",
+);
 const tableSource = readFileSync(
   new URL("../src/components/staff/staff-table.tsx", import.meta.url),
   "utf8",
@@ -36,10 +40,10 @@ test("staff class assignments use comma separators and account linkage is absent
 });
 
 test("staff form aligns name and role while assignments span the full form row", () => {
-  assert.match(formSource, /section-title-text min-w-0 select-none/);
+  assert.match(formSource, /<FormDialogShell/);
   assert.match(formSource, /grid grid-cols-1 items-start gap-3 sm:grid-cols-2/);
-  assert.match(formSource, /grid h-8 w-full select-none grid-cols-2/);
-  assert.match(formSource, /sm:max-w-\[536px\]/);
+  assert.match(formSource, /<SegmentedControl/);
+  assert.match(formSource, /width=\{staff \? "md" : "standard"\}/);
   assert.match(
     formSource,
     /label="Họ và tên"[\s\S]*?label="Vai trò"[\s\S]*?Đang phụ trách:/,
@@ -51,8 +55,9 @@ test("staff form aligns name and role while assignments span the full form row",
     3,
   );
   assert.match(formSource, /\.\.\.noSavedInfoFormProps/);
-  assert.match(formSource, /flex h-full min-h-0 w-full flex-col overflow-hidden/);
-  assert.match(formSource, /<InlineFieldDivider \/>/);
+  assert.match(formSource, /<SplitTextField/);
+  assert.doesNotMatch(formSource, /compound-text-field/);
+  assert.doesNotMatch(formSource, /<CompoundFieldDivider/);
   assert.doesNotMatch(formSource, /h-4 w-px bg-gray-(?:300|600)/);
   assert.match(formSource, /<SaveButton/);
 });
@@ -67,10 +72,15 @@ test("staff header keeps the active total independent from search and filters", 
 });
 
 test("staff status action is teacher-only and uses the danger treatment", () => {
-  assert.match(tableSource, /staff\.staff_type === "TEACHER"/);
+  assert.match(pageSource, /actionTarget\.staff\.staff_type === "TEACHER"/);
   assert.match(pageSource, /record\.staff\.staff_type !== "TEACHER"/);
-  assert.match(tableSource, /tone=\{staff\.is_active \? "danger" : "success"\}/);
-  assert.doesNotMatch(tableSource, /warning|amber-/);
+  assert.match(pageSource, /tone: actionTarget\.staff\.is_active \? "danger" : "default"/);
+  assert.match(dialogSource, /tone === "danger"[\s\S]*bg-destructive\/10 text-destructive/);
+  assert.doesNotMatch(dialogSource, /warning|amber-/);
+});
+
+test("staff actions dialog hides while the edit form or status confirm is open", () => {
+  assert.match(pageSource, /actionTarget && !isFormOpen && !statusTarget/);
 });
 
 test("staff prefetch uses the consumed all-staff query without the obsolete teacher list", () => {

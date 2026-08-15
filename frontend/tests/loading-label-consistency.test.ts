@@ -9,7 +9,7 @@ function source(path: string) {
 const loadingLabelSource = source("../src/components/ui/loading-label.tsx");
 const saveButtonSource = source("../src/components/ui/save-button.tsx");
 const classFormSource = source("../src/components/classes/class-form-dialog.tsx");
-const archiveClassSource = source("../src/components/classes/archive-class-dialog.tsx");
+const classCancelSource = source("../src/components/classes/class-cancel-content.tsx");
 const staffFormSource = source("../src/components/staff/staff-form-dialog.tsx");
 const studentPageSource = source("../src/app/(dashboard)/students/page.tsx");
 const feeTemplateSource = source("../src/components/fees/fee-message-template-dialog.tsx");
@@ -26,6 +26,7 @@ test("loading labels reserve both idle and pending widths without double punctua
 
 test("persisted actions expand only while the shared save button is pending", () => {
   assert.match(saveButtonSource, /<LoadingLabel/);
+  assert.match(saveButtonSource, /aria-busy=\{isSaving \|\| undefined\}/);
   assert.match(
     saveButtonSource,
     /isSaving \? <LoadingLabel label=\{pendingLabel\} \/> : idleLabel/,
@@ -42,7 +43,13 @@ test("persisted actions expand only while the shared save button is pending", ()
   ]) {
     assert.match(formSource, /<SaveButton/);
   }
-  assert.match(studentPageSource, /label="Đang xoá"[\s\S]{0,80}idleLabel="Xoá khỏi lớp"/);
-  assert.match(archiveClassSource, /label="Đang xử lý"[\s\S]{0,80}idleLabel="Ngừng lớp"/);
-  assert.match(confirmationDialogSource, /label="Đang xử lý"[\s\S]{0,80}idleLabel=\{confirmLabel\}/);
+  assert.match(
+    studentPageSource,
+    /isDeleting \? <LoadingLabel label="Đang xoá" \/> : "Xoá khỏi lớp"/,
+  );
+  assert.match(
+    classCancelSource,
+    /isDeleting \? <LoadingLabel label="Đang hủy" \/> : "Hủy lớp"/,
+  );
+  assert.match(confirmationDialogSource, /<LoadingLabel label=\{activePendingLabel\} \/>/);
 });

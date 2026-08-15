@@ -119,7 +119,7 @@ test("fee table renders long and multi-date values without truncation", () => {
   assert.match(html, /IELTS Chuyên sâu/);
   assert.match(html, /Học sinh giỏi thành phố lớp 9/);
   assert.match(html, /Theo tháng/);
-  assert.match(html, /Theo khóa · 12 tuần/);
+  assert.match(html, /Theo gói · 12 tuần/);
   assert.match(html, /01\/06\/2026, 15\/06\/2026/);
   assert.match(html, /01\/07\/2026, 15\/07\/2026/);
   assert.match(html, /Thông tin học viên/);
@@ -159,8 +159,60 @@ test("paid fee actions use the shared refund icon", () => {
     "utf8",
   );
 
-  assert.match(source, /<RefundIcon \/>/);
+  assert.match(source, /<RefundIcon className="h-4 w-4"/);
   assert.doesNotMatch(source, /HandCoins/);
+});
+
+test("payment reversal action communicates both possible target states", () => {
+  const source = readFileSync(
+    new URL("../src/components/fees/fees-table.tsx", import.meta.url),
+    "utf8",
+  );
+  const reportSource = readFileSync(
+    new URL("../src/components/fees/fee-report-panel.tsx", import.meta.url),
+    "utf8",
+  );
+  const guardSource = readFileSync(
+    new URL("../src/components/providers/action-selection-guard.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /bg-rose-100/);
+  assert.match(source, /bg-amber-100/);
+  assert.match(source, /bg-rose-200/);
+  assert.match(source, /bg-amber-200/);
+  assert.match(source, /border border-transparent/);
+  assert.doesNotMatch(
+    source,
+    /onClick=\{\(\) => \{[\s\S]{0,1200}border-gray-200/,
+  );
+  assert.match(source, /clip-path:polygon\(0_0,100%_0,0_100%\)/);
+  assert.match(source, /const isUnpayDisabled = disabled \|\| group\.refunded_amount > 0/);
+  assert.match(source, /aria-disabled=\{isUnpayDisabled\}/);
+  assert.match(source, /tabIndex=\{isUnpayDisabled \? -1 : undefined\}/);
+  assert.match(source, /if \(!isUnpayDisabled\) onUnpay\(group\)/);
+  assert.match(source, /appearance-none/);
+  assert.doesNotMatch(source, /onPointerDown=\{\(event\) => \{[\s\S]{0,180}removeAllRanges/);
+  assert.match(guardSource, /selectstart/);
+  assert.match(guardSource, /dblclick/);
+  assert.match(guardSource, /isActionContinuation/);
+  assert.match(guardSource, /suppressNextClick/);
+  assert.match(guardSource, /event\.stopPropagation\(\)/);
+  assert.match(guardSource, /data-fee-template-editor-control/);
+  assert.match(guardSource, /isSelectionPreservingTarget/);
+  assert.doesNotMatch(source, /\sdisabled=\{isUnpayDisabled\}/);
+  assert.doesNotMatch(source, /linear-gradient/);
+  assert.doesNotMatch(source, /inset-y-\[-3px\].*-rotate-45/);
+  assert.match(source, /text-gray-600/);
+  assert.doesNotMatch(
+    source,
+    /onClick=\{\(\) => onUnpay\(group\)\}[\s\S]{0,700}disabled:opacity-50/,
+  );
+  assert.match(source, /Hoàn tác ghi nhận đã nộp/);
+  assert.match(reportSource, /rose: "border-rose-200 bg-rose-50/);
+  assert.match(reportSource, /amber: "border-amber-200 bg-amber-50/);
+  assert.doesNotMatch(reportSource, /rose: "[^"]*bg-rose-100/);
+  assert.doesNotMatch(reportSource, /amber: "[^"]*bg-amber-100/);
 });
 
 test("fee table gives the three date and amount columns more breathing room", () => {

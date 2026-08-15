@@ -15,7 +15,7 @@ const editorSource = readFileSync(
 );
 
 test("Zalo template dialog keeps both editors balanced at the expanded desktop width", () => {
-  assert.match(dialogSource, /w-full max-w-\[1100px\]/);
+  assert.match(dialogSource, /width="xl"/);
   assert.match(dialogSource, /grid gap-5 lg:grid-cols-2/);
   assert.match(dialogSource, /min-w-0/);
 });

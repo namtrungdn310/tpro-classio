@@ -107,7 +107,7 @@ test("refund amount errors stay attached to the exact class amount field", () =>
   ];
 
   assert.deepEqual(getRefundAmountErrors(records, {}), {
-    [FIRST_ID]: "Vui lòng nhập số tiền cần hoàn cho ít nhất một lớp.",
+    [FIRST_ID]: "Vui lòng nhập số tiền cần hoàn.",
   });
   assert.deepEqual(
     getRefundAmountErrors(records, {

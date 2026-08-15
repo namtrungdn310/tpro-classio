@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildStudentFeeGroups,
+  formatFeeGroupSubject,
   getGroupCopyMessage,
   renderGroupFeeMessage,
 } from "../src/lib/fees/view-model";
@@ -57,6 +58,22 @@ function buildDefaultGroupFeeMessage(
       : DEFAULT_FEE_MESSAGE_TEMPLATES.payment_reminder_template,
   );
 }
+
+test("formats the fee action subject with the student and every class", () => {
+  const group = buildStudentFeeGroups([
+    feeRecord(),
+    feeRecord({
+      id: "fee-ielts",
+      class_id: "class-ielts",
+      class_name: "IELTS Chuyên sâu",
+    }),
+  ])[0];
+
+  assert.equal(
+    formatFeeGroupSubject(group),
+    "em Nguyễn An, các lớp 6C1, IELTS Chuyên sâu",
+  );
+});
 
 test("groups distinct dates explicitly and keeps the earliest date as the summary", () => {
   const groups = buildStudentFeeGroups([

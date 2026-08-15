@@ -73,8 +73,8 @@ test("fee export identifies the duration of course-based tuition", () => {
   const summary = buildFeeSummaryRows(group, context)[0];
   const detail = buildFeeDetailRows(group, context)[0];
 
-  assert.equal(summary["Hình thức học phí"], "6C1: Theo khóa · 12 tuần");
-  assert.equal(detail["Hình thức học phí"], "Theo khóa · 12 tuần");
+  assert.equal(summary["Hình thức học phí"], "6C1: Theo gói · 12 tuần");
+  assert.equal(detail["Hình thức học phí"], "Theo gói · 12 tuần");
 });
 
 test("fee export leaves redacted contact pairs empty", () => {

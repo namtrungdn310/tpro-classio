@@ -50,11 +50,14 @@ test("logout hides protected content before credentials and query data are clear
 test("auth surfaces share one restrained depth background and a clean card", () => {
   assert.match(
     globalStyles,
-    /background: radial-gradient\(ellipse at 50% 42%, #fff 0%, #f7f9fc 46%, #edf1f6 100%\)/,
+    /background: radial-gradient\(ellipse at 50% 38%, #fff 0%, #f5f8ff 46%, #e9eef9 100%\)/,
   );
   assert.doesNotMatch(globalStyles, /\.auth-screen::before/);
   assert.doesNotMatch(globalStyles, /\.auth-screen::after/);
-  assert.doesNotMatch(globalStyles, /clip-path/);
+  // Decorative clipping is allowed outside the auth surface (for example, the
+  // fee-status action). The auth shell itself stays deliberately minimal.
+  const authScreenRules = globalStyles.match(/\.auth-screen\s*\{[^}]*\}/g) ?? [];
+  assert.doesNotMatch(authScreenRules.join("\n"), /clip-path/);
   assert.doesNotMatch(globalStyles, /url\("\/logo-mark-bw\.png"\)/);
   assert.match(globalStyles, /min-height: 100vh/);
   assert.match(globalStyles, /min-height: 100dvh/);

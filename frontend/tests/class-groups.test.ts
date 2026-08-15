@@ -76,3 +76,24 @@ test("uses a stable fallback color for future custom names", () => {
   assert.deepEqual(first.color, second.color);
   assert.equal(first.key, second.key);
 });
+
+test("long custom names keep whole words instead of cryptic initials", () => {
+  const cases: Array<[string, string]> = [
+    ["Tiếng Anh giao tiếp cơ bản cho người mới bắt đầu", "Tiếng Anh giao"],
+    ["Tiếng Anh mầm non vui nhộn bé 4-6 tuổi cuối tuần", "Tiếng Anh mầm"],
+    ["Hội thoại tiếng Anh nâng cao kỹ năng giao tiếp với người nước ngoài", "Hội thoại"],
+    ["Lớp Hóa 10 - Ban nâng cao chuyên sâu", "Lớp Hóa 10 Ban"],
+  ];
+
+  for (const [className, expectedShortName] of cases) {
+    assert.equal(abbreviateClassName(className), expectedShortName, className);
+    assert.ok(abbreviateClassName(className).length <= 14, className);
+  }
+});
+
+test("long custom names expand into the weekly schedule two-line budget", () => {
+  const name = "Tiếng Anh giao tiếp cơ bản cho người mới bắt đầu";
+  const result = abbreviateClassName(name, 20);
+  assert.ok(result.length <= 20);
+  assert.match(result, /^Tiếng Anh/);
+});

@@ -4,19 +4,36 @@ import {
   filterAndSortClasses,
   filterAndSortPreparedClasses,
   getClassBillingDurationLabel,
+  getClassCategoryLabel,
+  getClassGroupInfoForRecord,
   getClassEarliestStartMinutes,
+  getClassGradeYearLabel,
+  getClassInfoLine,
+  getClassPeriodLabel,
   getClassScheduleSlots,
   getClassScheduleSlotsLabel,
   getClassScheduleSummary,
   getClassScheduleText,
   getClassTeacherIds,
   getClassTeacherNames,
+  getClassTotalDurationLabel,
   getCourseDurationLabel,
   normalizeClassScheduleSlots,
   normalizeCourseBillingMonths,
   prepareClassRecords,
 } from "../src/lib/classes/presentation";
 import type { ClassResponse, ClassType } from "../src/lib/types";
+
+test("specialized classes use the complete Thi Chuyên category label", () => {
+  assert.equal(
+    getClassCategoryLabel(
+      makeClass("specialized", "Luyện thi chuyên Anh", "MONTHLY", 1, {
+        class_category: "SPECIALIZED",
+      }),
+    ),
+    "Thi Chuyên",
+  );
+});
 
 function makeClass(
   id: string,
@@ -33,15 +50,31 @@ function makeClass(
     billing_cycle_months: billingCycleMonths,
     start_date: null,
     end_date: null,
+    identity_scheme: "LEGACY",
+    program_name: null,
+    grade_level: null,
+    education_level: null,
+    academic_year_start: null,
     schedule: null,
     teacher_id: null,
     teacher_ids: [],
     teacher_name: null,
     teacher_names: [],
+    assistant_ids: [],
+    assistant_names: [],
     is_active: true,
     student_count: 0,
     created_at: "2026-07-14T00:00:00Z",
+    updated_at: "2026-07-14T00:00:00Z",
+    version: 1,
+    display_name: name,
+    primary_label: name,
+    secondary_label: null,
+    effective_status: "LEGACY",
+    can_edit_end_date: false,
     ...overrides,
+    class_category: overrides.class_category ?? null,
+    grade_mode: overrides.grade_mode ?? null,
   };
 }
 
@@ -65,6 +98,18 @@ test("teacher helpers trim, deduplicate and safely fall back to legacy fields", 
   assert.deepEqual(getClassTeacherIds(malformed), ["legacy-id"]);
   assert.deepEqual(getClassTeacherNames(malformed), ["Cô Legacy"]);
   assert.deepEqual(getClassTeacherIds(null), []);
+});
+
+test("structured class metadata controls the color group even when the entered name is free-form", () => {
+  const class_ = makeClass("academic-6", "Nhóm chiều thứ hai", "MONTHLY", 1, {
+    identity_scheme: "ACADEMIC_YEAR",
+    grade_level: 6,
+    education_level: "MIDDLE",
+    academic_year_start: 2026,
+    secondary_label: "Lớp 6 · THCS · Năm học 2026–2027",
+  });
+
+  assert.equal(getClassGroupInfoForRecord(class_).label, "Lớp 6");
 });
 
 test("schedule helpers keep valid slots and discard malformed response data", () => {
@@ -140,7 +185,7 @@ test("billing labels normalize unsupported or malformed durations", () => {
   assert.equal(normalizeCourseBillingMonths(6), 6);
   assert.equal(normalizeCourseBillingMonths(5), 3);
   assert.equal(normalizeCourseBillingMonths(Number.NaN), 3);
-  assert.equal(getCourseDurationLabel(12), "48 tuần");
+  assert.equal(getCourseDurationLabel(48), "48 tuần");
   assert.equal(getCourseDurationLabel(undefined), "12 tuần");
   assert.equal(
     getClassBillingDurationLabel(makeClass("monthly", "6C1", "MONTHLY", 99)),
@@ -150,6 +195,74 @@ test("billing labels normalize unsupported or malformed durations", () => {
     getClassBillingDurationLabel(makeClass("course", "IELTS", "COURSE", 2)),
     "8 tuần",
   );
+});
+
+test("total duration label shows months for monthly and weeks for package classes", () => {
+  assert.equal(
+    getClassTotalDurationLabel(
+      makeClass("m", "6C1", "MONTHLY", 1, { start_date: "2026-09-01", end_date: "2026-11-30" }),
+    ),
+    "3 tháng",
+  );
+  assert.equal(
+    getClassTotalDurationLabel(
+      makeClass("c", "IELTS", "COURSE", 2, { start_date: "2026-09-01", end_date: "2026-10-27" }),
+    ),
+    "8 tuần",
+  );
+  assert.equal(
+    getClassTotalDurationLabel(makeClass("no-dates", "X", "MONTHLY", 1)),
+    null,
+  );
+  assert.equal(
+    getClassTotalDurationLabel(
+      makeClass("ielts", "IELTS 10", "COURSE", 3, {
+        start_date: "2026-04-06",
+        end_date: "2027-06-06",
+      }),
+    ),
+    "12 tuần",
+  );
+});
+
+test("period label omits the open month/year when the class has no grade or year", () => {
+  const ieltsWithoutGradeYear = makeClass("ielts", "IELTS", "COURSE", 2, {
+    class_category: "IELTS",
+    identity_scheme: "INTAKE",
+    grade_mode: "NONE",
+    start_date: "2026-07-01",
+    end_date: "2026-09-30",
+  });
+  assert.equal(getClassPeriodLabel(ieltsWithoutGradeYear), null);
+
+  const academicYear = makeClass("ay", "Lớp 6A1", "MONTHLY", 1, {
+    class_category: "SPECIALIZED",
+    identity_scheme: "ACADEMIC_YEAR",
+    grade_mode: "GRADE",
+    grade_level: 6,
+    academic_year_start: 2026,
+  });
+  assert.equal(getClassPeriodLabel(academicYear), "Khối 6 · Năm học 2026–2027");
+});
+
+test("class info line combines grade, academic year and student count", () => {
+  const academicYear = makeClass("ay", "Lớp 6A1", "MONTHLY", 1, {
+    grade_mode: "GRADE",
+    grade_level: 6,
+    academic_year_start: 2026,
+    student_count: 12,
+  });
+  assert.equal(getClassGradeYearLabel(academicYear), "Khối 6 · Năm học 2026–2027");
+  assert.equal(getClassInfoLine(academicYear), "Khối 6 · Năm học 2026–2027 · 12 học viên");
+
+  const ielts = makeClass("ielts", "IELTS", "COURSE", 2, {
+    class_category: "IELTS",
+    identity_scheme: "INTAKE",
+    grade_mode: "NONE",
+    student_count: 8,
+  });
+  assert.equal(getClassGradeYearLabel(ielts), null);
+  assert.equal(getClassInfoLine(ielts), "8 học viên");
 });
 
 test("prepared search finds class metadata without rebuilding response-specific logic", () => {
@@ -178,6 +291,25 @@ test("prepared search finds class metadata without rebuilding response-specific 
   );
 });
 
+test("alphanumeric class search does not fall back to unrelated digits", () => {
+  const classes = [
+    makeClass("6c1", "6C1", "MONTHLY", 1, {
+      base_fee: 750_000,
+    }),
+    makeClass("6c2", "6C2", "MONTHLY", 1, {
+      base_fee: 1_610_000,
+    }),
+    makeClass("7c1", "7C1", "MONTHLY", 1, {
+      schedule: { slots: [{ day: "Thứ 6", start: "16:10", end: "17:40" }] },
+    }),
+  ];
+
+  assert.deepEqual(
+    filterAndSortClasses(classes, { search: "6c1" }).map((class_) => class_.id),
+    ["6c1"],
+  );
+});
+
 test("combined filters and semantic sorting match the classes-page behavior", () => {
   const classes = [
     makeClass("ielts", "IELTS Chuyên sâu", "COURSE", 6),
@@ -191,7 +323,7 @@ test("combined filters and semantic sorting match the classes-page behavior", ()
     ["6c1", "7c1", "hsg", "ielts"],
   );
   assert.deepEqual(
-    filterAndSortClasses(classes, { type: "COURSE", courseDuration: "3" }).map(
+    filterAndSortClasses(classes, { type: "COURSE", courseDuration: "12" }).map(
       (class_) => class_.id,
     ),
     ["hsg"],

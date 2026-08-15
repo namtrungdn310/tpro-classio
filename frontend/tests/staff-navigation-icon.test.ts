@@ -14,16 +14,16 @@ const navigationIconsSource = readFileSync(
 test("staff navigation uses an employee identity icon distinct from students", () => {
   assert.match(
     navigationIconsSource,
-    /href:\s*"\/staff",[\s\S]*?label:\s*"Nhân sự",[\s\S]*?icon:\s*IdCardLanyard,[\s\S]*?opticalSize:\s*19/,
+    /href:\s*"\/staff",[\s\S]*?label:\s*"Nhân sự",[\s\S]*?icon:\s*RiIdCardLine,[\s\S]*?opticalSize:\s*19/,
   );
   assert.match(
     navigationIconsSource,
-    /href:\s*"\/students",\s*label:\s*"Học viên",\s*icon:\s*UsersRound/,
+    /href:\s*"\/students",\s*label:\s*"Học viên",\s*icon:\s*RiTeamLine/,
   );
   assert.doesNotMatch(navigationIconsSource, /icon:\s*UserRoundCog/);
 });
 
-test("all sidebar icons use one shared Lucide renderer", () => {
+test("all sidebar icons use one shared Remix Icon renderer", () => {
   assert.match(
     tabNavSource,
     /<NavigationIcon icon=\{Icon\} opticalSize=\{tab\.opticalSize\} \/>/,
@@ -31,6 +31,6 @@ test("all sidebar icons use one shared Lucide renderer", () => {
   assert.doesNotMatch(tabNavSource, /<Icon className=/);
   assert.match(navigationIconsSource, /opticalSize = 18/);
   assert.match(navigationIconsSource, /size=\{opticalSize\}/);
-  assert.match(navigationIconsSource, /strokeWidth=\{1\.75\}/);
-  assert.match(navigationIconsSource, /absoluteStrokeWidth/);
+  assert.match(navigationIconsSource, /from "react-icons"/);
+  assert.match(navigationIconsSource, /className=\{`icon-system shrink-0/);
 });

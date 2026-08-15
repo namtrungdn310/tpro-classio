@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  contactSuggestionResponseSchema,
   enrollmentResponseSchema,
+  studentIdentityConflictSchema,
   studentResponseListSchema,
 } from "../src/lib/schemas/student";
+import { contactSuggestionResponseSchema } from "../src/lib/schemas/contact-suggestion";
 
 const enrollment = {
   id: "00000000-0000-4000-8000-000000000001",
@@ -114,5 +115,42 @@ test("contact suggestions are nullable but otherwise complete", () => {
   );
   assert.throws(() =>
     contactSuggestionResponseSchema.parse({ phone: "0912345678", zalo_name: "" }),
+  );
+});
+
+test("student identity conflicts expose only bounded masked candidates", () => {
+  const conflict = studentIdentityConflictSchema.parse({
+    code: "STUDENT_IDENTITY_CONFLICT",
+    message: "Có thể học viên này đã có hồ sơ trong hệ thống",
+    target_class_id: enrollment.class_id,
+    candidates: [
+      {
+        id: enrollment.student_id,
+        status: "inactive",
+        full_name: "Nguyễn Văn A",
+        birth_date: "2014-01-01",
+        school: "THCS Nguyễn Du",
+        masked_parent_phone: "******5678",
+        masked_student_phone: null,
+        previous_classes: [
+          {
+            name: "6C1",
+            enrollment_date: "2026-06-05",
+          },
+        ],
+        updated_at: "2026-07-01T08:00:00+07:00",
+        match_strength: "strong",
+        match_reason: "Trùng họ tên, ngày sinh và số điện thoại.",
+        already_in_target_class: false,
+      },
+    ],
+  });
+
+  assert.equal(conflict.candidates[0]?.masked_parent_phone, "******5678");
+  assert.throws(() =>
+    studentIdentityConflictSchema.parse({
+      ...conflict,
+      candidates: Array.from({ length: 6 }, () => conflict.candidates[0]),
+    }),
   );
 });

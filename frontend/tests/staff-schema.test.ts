@@ -46,12 +46,17 @@ test("staff response schemas reject malformed lists and incomplete contacts", ()
 test("teacher option schema rejects malformed entries instead of silently dropping them", () => {
   assert.equal(
     teacherOptionResponseListSchema.parse([
-      { id: validStaff.id, full_name: validStaff.full_name },
+      { id: validStaff.id, full_name: validStaff.full_name, staff_type: "TEACHER" },
     ]).length,
     1,
   );
   assert.throws(() =>
     teacherOptionResponseListSchema.parse([{ id: validStaff.id, full_name: "" }]),
+  );
+  assert.throws(() =>
+    teacherOptionResponseListSchema.parse([
+      { id: validStaff.id, full_name: validStaff.full_name, staff_type: "TUTOR" },
+    ]),
   );
 });
 
