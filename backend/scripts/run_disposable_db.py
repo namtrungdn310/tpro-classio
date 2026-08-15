@@ -151,7 +151,7 @@ def migrate_range(db, lower, upper):
 
 
 def migrate_round7_after_053(db, user="postgres"):
-    """Apply the fixture-sensitive 054..071 chain in canonical order.
+    """Apply the fixture-sensitive 054..073 chain in canonical order.
 
     055/056 intentionally require evidence fixtures before the migration, so a
     plain numeric glob is not an equivalent production-path test.
@@ -169,7 +169,7 @@ def migrate_round7_after_053(db, user="postgres"):
     steps.extend(
         (migration, migration.stem)
         for migration in sorted(MIGRATIONS.glob("*.sql"))
-        if 57 <= int(migration.name.split("_")[0]) <= 72
+        if 57 <= int(migration.name.split("_")[0]) <= 73
     )
     for path, label in steps:
         code, _ = psql_file(db, path, user=user)
@@ -260,6 +260,10 @@ def scenario_rollback_reapply():
     check_ok(code, "053 reapply failed")
     code, _ = psql_file(DB, SQL / "migration_053_assert.sql")
     check_ok(code, "053 assert-reapply failed")
+    # Keep rollback/reapply verification on the latest forward fee-operation
+    # actor-anonymization guard, matching the production schema contract.
+    code, _ = psql_file(DB, MIGRATIONS / "072_fee_operation_actor_anonymization.sql")
+    check_ok(code, "072 reapply failed")
     code, _ = psql_file(DB, SQL / "verify_security.sql")
     check_ok(code, "053 verify failed")
 
@@ -816,7 +820,7 @@ def main():
     }
     try:
         wait_ready()
-        phase("Scenario 1: clean chain 001..072", scenario_clean_chain)
+        phase("Scenario 1: clean chain 001..073", scenario_clean_chain)
         # Legacy 051/053 rollback/drift probes cannot run against the latest
         # schema: later forward migrations intentionally own objects that those
         # historical rollback scripts remove. Acceptance below exercises them

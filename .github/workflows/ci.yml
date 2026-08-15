@@ -139,6 +139,10 @@ jobs:
           psql -v ON_ERROR_STOP=1 -f tests/sql/pre_038_legacy_trigger_fixture.sql
           psql -v ON_ERROR_STOP=1 -f supabase/migrations/038_reconcile_fee_operation_append_only_guards.sql
           psql -v ON_ERROR_STOP=1 -f supabase/migrations/038_reconcile_fee_operation_append_only_guards.sql
+          # The 038 replay intentionally restores the legacy fee-operation
+          # guard. Reapply the latest forward migration before the final
+          # verification so the tested schema matches production.
+          psql -v ON_ERROR_STOP=1 -f supabase/migrations/072_fee_operation_actor_anonymization.sql
           psql -v ON_ERROR_STOP=1 -f tests/sql/verify_security.sql
       - name: Provision restricted application role
         env:

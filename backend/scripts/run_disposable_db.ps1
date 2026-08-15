@@ -167,6 +167,9 @@ try {
   Invoke-Sql (Join-Path $SqlRoot "migration_053_assert.sql") "s2-053-assert-reapply"
   Invoke-Sql (Join-Path $Migrations "063_service_credit_ledger.sql") "s2-063-reapply"
   Invoke-Sql (Join-Path $Migrations "069_contract_cleanup.sql") "s2-069-reapply"
+  # Reapply the latest forward fee-operation guard after rollback/reapply
+  # exercises, keeping the final verification on the production contract.
+  Invoke-Sql (Join-Path $Migrations "072_fee_operation_actor_anonymization.sql") "s2-072-reapply"
   Invoke-Sql (Join-Path $SqlRoot "verify_security.sql") "s2-053-verify"
 
   # ================= SCENARIO 3: DRIFT / RERUN ABORT =================

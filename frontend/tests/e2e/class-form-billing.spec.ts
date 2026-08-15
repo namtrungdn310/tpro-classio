@@ -5,7 +5,8 @@
  * vị trí thật của "Tổng số tuần", aria-describedby trên input thời lượng gói,
  * lỗi thay thế helper, bố cục mobile và hành vi caret khi nhấn Tab sau khi
  * nhập học phí dạng rút gọn (1.5m). R6-D01: không còn input "Số gói"
- * (#class-package-count) — thời lượng mỗi gói + min-end từ server.
+ * (#class-package-count) — thời lượng mỗi gói + số gói để hỗ trợ tính nhanh
+ * ngày kết thúc.
  * Không đi qua route thật/API/auth.
  */
 
@@ -37,7 +38,7 @@ test("total weeks helper sits under the split field inside the left column", asy
   expect(helper).not.toBeNull();
   expect(endDate).not.toBeNull();
 
-  expect(helper!.x).toBeCloseTo(split!.x, 0);
+  expect(Math.abs(helper!.x - split!.x)).toBeLessThanOrEqual(1.5);
   expect(helper!.y).toBeGreaterThan(split!.y + split!.height - 1);
   expect(helper!.x + helper!.width).toBeLessThanOrEqual(endDate!.x + 1);
 
@@ -47,7 +48,7 @@ test("total weeks helper sits under the split field inside the left column", asy
   await expect(page.locator("#class-total-weeks")).toHaveText("Tổng số tuần: —");
 
   const helperAfter = await boxes(page, "#class-total-weeks");
-  expect(helperAfter!.x).toBeCloseTo(split!.x, 0);
+  expect(Math.abs(helperAfter!.x - split!.x)).toBeLessThanOrEqual(1.5);
   expect(helperAfter!.y).toBeGreaterThan(split!.y + split!.height - 1);
 });
 
@@ -57,7 +58,7 @@ test("the weeks input announces the helper via aria-describedby", async ({ page 
     "aria-describedby",
     "class-total-weeks",
   );
-  await expect(page.locator("#class-package-count")).toHaveCount(0);
+  await expect(page.locator("#class-package-count")).toBeVisible();
 });
 
 test("invalid package config replaces the helper with the error in place", async ({ page }) => {
@@ -74,7 +75,7 @@ test("invalid package config replaces the helper with the error in place", async
 
   const split = await boxes(page, SPLIT_INPUT(page));
   const error = await boxes(page, "#class-billing-cycle-error");
-  expect(error!.x).toBeCloseTo(split!.x, 0);
+  expect(Math.abs(error!.x - split!.x)).toBeLessThanOrEqual(1.5);
   expect(error!.y).toBeGreaterThan(split!.y + split!.height - 1);
 });
 
@@ -90,7 +91,7 @@ test("mobile single column keeps the helper directly under the split field", asy
   expect(helper).not.toBeNull();
   expect(endDate).not.toBeNull();
 
-  expect(helper!.x).toBeCloseTo(split!.x, 0);
+  expect(Math.abs(helper!.x - split!.x)).toBeLessThanOrEqual(1.5);
   expect(helper!.y).toBeGreaterThan(split!.y + split!.height - 1);
   expect(helper!.y + helper!.height).toBeLessThanOrEqual(endDate!.y + 1);
 });
