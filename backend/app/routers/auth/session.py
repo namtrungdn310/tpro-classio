@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.dependencies import get_current_user
+from app.core.dependencies import Principal, get_current_user
 from app.core.device_sessions import (
     classify_device_type,
     hash_device_value,
@@ -325,21 +325,16 @@ async def refresh(
 
 
 @router.get("/me", response_model=UserMe)
-async def me(current_user: dict = Depends(get_current_user)) -> UserMe:
+async def me(principal: Principal = Depends(get_current_user)) -> UserMe:
     return UserMe(
-        id=str(current_user["id"] or ""),
-        email=str(current_user["email"] or ""),
-        role=str(current_user["role"] or "viewer"),
-        username=current_user.get("username")
-        if isinstance(current_user.get("username"), str)
-        else None,
-        full_name=current_user.get("full_name")
-        if isinstance(current_user.get("full_name"), str)
-        else None,
-        avatar_url=current_user.get("avatar_url")
-        if isinstance(current_user.get("avatar_url"), str)
-        else None,
-        is_owner=bool(current_user.get("is_owner")),
+        id=principal.user_id,
+        email=principal.email,
+        role=principal.effective_role,
+        username=principal.username,
+        full_name=principal.full_name,
+        avatar_url=principal.avatar_url,
+        is_owner=principal.is_owner,
+        staff_id=principal.staff_id,
     )
 
 
@@ -481,11 +476,11 @@ async def complete_password_reset(
 async def verify_current_password(
     payload: VerifyCurrentPasswordRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    principal: Principal = Depends(get_current_user),
 ) -> MessageResponse:
     ensure_supabase_auth_configured()
-    user_id = str(current_user["id"] or "")
-    email = normalize_email(str(current_user["email"] or ""))
+    user_id = principal.user_id
+    email = normalize_email(principal.email)
     await enforce_rate_limit(
         db,
         scope="current_password_verify",

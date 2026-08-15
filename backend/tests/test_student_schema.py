@@ -78,11 +78,21 @@ def test_student_create_accepts_complete_contact_pairs() -> None:
 
 @pytest.mark.parametrize(
     "field",
-    ["birth_date", "school", "parent_zalo", "parent_phone", "enrollment_date"],
+    ["birth_date", "school", "parent_zalo", "parent_phone"],
 )
 def test_student_create_requires_profile_and_parent_fields(field: str) -> None:
     with pytest.raises(ValidationError):
         make_student_create(**{field: None})
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["class_id", "enrollment_date", "custom_fee"],
+)
+def test_student_create_keeps_class_and_enrollment_optional(field: str) -> None:
+    """R6: profile creation is class-independent; enrollment is separate."""
+    payload = make_student_create(**{field: None})
+    assert getattr(payload, field) is None
 
 
 def test_student_create_keeps_student_contact_notes_and_custom_fee_optional() -> None:

@@ -156,12 +156,9 @@ async def test_staff_update_rejects_incomplete_contact_after_merging_patch() -> 
 async def test_archive_preserves_staff_row_when_no_active_assignment() -> None:
     staff = make_staff(staff_type="ASSISTANT")
     db = AsyncMock()
-    with (
-        patch(
-            "app.services.staff_service.get_staff_member",
-            new=AsyncMock(return_value=staff),
-        ),
-        patch("app.services.staff_service._clear_dependent_caches"),
+    with patch(
+        "app.services.staff_service.get_staff_member",
+        new=AsyncMock(return_value=staff),
     ):
         archived = await archive_staff_member(db, uuid4())
 

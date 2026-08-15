@@ -375,7 +375,7 @@ async def get_or_create_profile(
             )
             candidate = Profile(
                 id=user_id,
-                role="admin" if owner else "viewer",
+                role="admin" if owner else "teacher",
                 username=safe_username,
                 full_name=safe_username,
                 account_status="active" if owner else "pending",

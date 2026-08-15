@@ -28,7 +28,11 @@ def test_monthly_fee_remains_due_after_due_date_has_passed() -> None:
 def test_course_fee_uses_week_based_cycle() -> None:
     enrollment = SimpleNamespace(
         enrollment_date=date(2026, 1, 1),
-        class_=SimpleNamespace(type="COURSE", billing_cycle_months=3),
+        class_=SimpleNamespace(
+            type="COURSE",
+            billing_cycle_months=1,
+            billing_cycle_weeks=12,
+        ),
     )
 
     assert get_enrollment_due_date_in_month(
@@ -42,6 +46,10 @@ def test_course_cycle_supports_every_valid_month_value() -> None:
     assert get_course_weeks(3) == 12
     assert get_course_weeks(6) == 24
     assert get_course_weeks(12) == 48
+
+
+def test_course_cycle_prefers_exact_custom_week_value() -> None:
+    assert get_course_weeks(3, billing_cycle_weeks=10) == 10
 
 
 def test_fee_is_not_due_outside_the_class_date_range() -> None:

@@ -1,21 +1,22 @@
-from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_user, require_admin
-from app.core.search import matches_smart_search
+from app.core.dependencies import Principal, require_management
 from app.schemas.enrollment import (
     EnrollmentCreate,
     EnrollmentResponse,
     EnrollmentUpdate,
 )
 from app.schemas.student import (
-    ContactSuggestionResponse,
-    StudentCreate,
+    StudentArchiveRequest,
+    StudentCreateCommand,
+    StudentListState,
+    StudentReactivationRequest,
     StudentResponse,
+    StudentRestoreRequest,
     StudentStatus,
     StudentUpdate,
 )
@@ -26,13 +27,14 @@ from app.services.enrollment_service import (
     update_enrollment,
 )
 from app.services.student_service import (
+    archive_student,
     create_student,
-    delete_student,
     get_students,
-    lookup_contact_suggestion,
     redact_student_hidden_fields,
+    restore_student,
     update_student,
 )
+from app.services.student_reactivation_service import reactivate_student
 
 students_router = APIRouter(tags=["students"])
 enrollments_router = APIRouter(tags=["enrollments"])
@@ -40,75 +42,61 @@ enrollments_router = APIRouter(tags=["enrollments"])
 
 @students_router.get("", response_model=list[StudentResponse])
 async def list_students(
-    search: str | None = Query(default=None),
+    response: Response,
+    search: str | None = Query(default=None, max_length=120),
     class_id: UUID | None = Query(default=None),
     status: StudentStatus | None = Query(default=None),
+    list_state: StudentListState | None = Query(default=None),
+    cursor: UUID | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
-    current_user: dict[str, str | None] = Depends(get_current_user),
+    principal: Principal = Depends(require_management),
 ) -> list[StudentResponse]:
-    is_admin = current_user.get("role") == "admin"
-    students = await get_students(
+    is_admin = principal.effective_role in {"dev", "admin"}
+    students, has_more = await get_students(
         db,
         search=search if is_admin else None,
         class_id=class_id,
         status=status,
+        list_state=list_state,
+        cursor=cursor,
+        limit=limit,
     )
+    if has_more and students:
+        response.headers["X-Next-Cursor"] = str(students[-1].id)
+    response.headers["X-Has-More"] = "true" if has_more else "false"
     if is_admin:
         return students
 
-    visible_students = [redact_student_hidden_fields(student) for student in students]
-    if not search:
-        return visible_students
-
-    return [
-        student
-        for student in visible_students
-        if matches_smart_search(
-            search,
-            [
-                student.full_name,
-                student.school,
-                student.parent_phone,
-                student.parent_zalo,
-                student.student_phone,
-                student.student_zalo,
-                student.notes,
-                *[class_.name for class_ in student.classes],
-            ],
-        )
-    ]
-
-
-@students_router.get(
-    "/contact-suggestion", response_model=ContactSuggestionResponse | None
-)
-async def get_contact_suggestion(
-    owner: Literal["student", "parent"],
-    phone: str | None = Query(default=None, min_length=1, max_length=32),
-    zalo_name: str | None = Query(default=None, min_length=1, max_length=100),
-    db: AsyncSession = Depends(get_db),
-    current_user: dict[str, str | None] = Depends(require_admin),
-) -> ContactSuggestionResponse | None:
-    if (phone is None) == (zalo_name is None):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Provide exactly one contact lookup value",
-        )
-    return await lookup_contact_suggestion(
-        db,
-        owner=owner,
-        phone=phone,
-        zalo_name=zalo_name,
-    )
+    return [redact_student_hidden_fields(student) for student in students]
 
 
 @students_router.post("", response_model=StudentResponse)
 async def create_student_route(
-    payload: StudentCreate,
+    payload: StudentCreateCommand,
     db: AsyncSession = Depends(get_db),
-    current_user: dict[str, str | None] = Depends(require_admin),
+    principal: Principal = Depends(require_management),
 ) -> StudentResponse:
-    return await create_student(db, payload)
+    return await create_student(
+        db,
+        payload,
+        actor_user_id=principal.user_id,
+    )
+
+
+@students_router.post("/{id}/reactivate", response_model=StudentResponse)
+async def reactivate_student_route(
+    id: UUID,
+    payload: StudentReactivationRequest,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> StudentResponse:
+    return await reactivate_student(
+        db,
+        id,
+        payload,
+        actor_user_id=principal.user_id,
+    )
 
 
 @students_router.patch("/{id}", response_model=StudentResponse)
@@ -116,7 +104,7 @@ async def update_student_route(
     id: UUID,
     payload: StudentUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: dict[str, str | None] = Depends(require_admin),
+    principal: Principal = Depends(require_management),
 ) -> StudentResponse:
     student = await update_student(db, id, payload)
     if student is None:
@@ -128,27 +116,53 @@ async def update_student_route(
     return student
 
 
-@students_router.delete("/{id}")
-async def delete_student_route(
+@students_router.post("/{id}/archive", response_model=StudentResponse)
+async def archive_student_route(
     id: UUID,
+    payload: StudentArchiveRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: dict[str, str | None] = Depends(require_admin),
-) -> dict[str, str]:
-    student = await delete_student(db, id)
+    principal: Principal = Depends(require_management),
+) -> StudentResponse:
+    student = await archive_student(
+        db,
+        id,
+        payload,
+        actor_user_id=principal.user_id,
+    )
     if student is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Không tìm thấy học viên",
         )
+    return student
 
-    return {"message": "Đã xoá học viên"}
+
+@students_router.post("/{id}/restore", response_model=StudentResponse)
+async def restore_student_route(
+    id: UUID,
+    payload: StudentRestoreRequest,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> StudentResponse:
+    student = await restore_student(
+        db,
+        id,
+        payload,
+        actor_user_id=principal.user_id,
+    )
+    if student is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Không tìm thấy học viên",
+        )
+    return student
 
 
 @students_router.get("/{id}/enrollments", response_model=list[EnrollmentResponse])
 async def list_student_enrollments(
     id: UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: dict[str, str | None] = Depends(require_admin),
+    principal: Principal = Depends(require_management),
 ) -> list[EnrollmentResponse]:
     return await get_student_enrollments(db, id)
 
@@ -157,7 +171,7 @@ async def list_student_enrollments(
 async def create_enrollment_route(
     payload: EnrollmentCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: dict[str, str | None] = Depends(require_admin),
+    principal: Principal = Depends(require_management),
 ) -> EnrollmentResponse:
     return await create_enrollment(db, payload)
 
@@ -167,7 +181,7 @@ async def update_enrollment_route(
     id: UUID,
     payload: EnrollmentUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: dict[str, str | None] = Depends(require_admin),
+    principal: Principal = Depends(require_management),
 ) -> EnrollmentResponse:
     enrollment = await update_enrollment(db, id, payload)
     if enrollment is None:
@@ -183,9 +197,13 @@ async def update_enrollment_route(
 async def drop_enrollment_route(
     id: UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: dict[str, str | None] = Depends(require_admin),
+    principal: Principal = Depends(require_management),
 ) -> EnrollmentResponse:
-    enrollment = await drop_enrollment(db, id)
+    enrollment = await drop_enrollment(
+        db,
+        id,
+        actor_user_id=principal.user_id,
+    )
     if enrollment is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

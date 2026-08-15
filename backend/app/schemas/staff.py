@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 import re
 from typing import Literal
 from uuid import UUID
@@ -15,6 +15,77 @@ from app.core.contact import validate_complete_contact_pair
 from app.core.phone import is_valid_vietnam_mobile_phone, normalize_vietnam_phone
 
 StaffType = Literal["TEACHER", "ASSISTANT"]
+
+
+class StaffCompensationRateCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    rate_amount: int = Field(gt=0, le=999_999_999)
+    effective_from: date
+    effective_to: date | None = None
+    reason: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_interval(self) -> "StaffCompensationRateCreate":
+        if self.effective_to is not None and self.effective_to <= self.effective_from:
+            raise ValueError("Ngày kết thúc hiệu lực phải sau ngày bắt đầu")
+        return self
+
+
+class StaffCompensationRateResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    rate_amount: int
+    effective_from: date
+    effective_to: date | None
+    version: int
+
+
+class StaffPayrollSettlementCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    request_id: UUID
+    method: Literal["bank_transfer", "cash"]
+    reference: str | None = Field(default=None, max_length=120)
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class StaffPayrollSettlementResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    total_amount: int
+    cutoff_at: datetime
+    method: str
+    reference: str | None
+    created_at: datetime
+    reversed_at: datetime | None = None
+
+
+class StaffPayrollSettlementReversalCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    request_id: UUID
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class StaffPayrollSettlementReversalResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    settlement_id: UUID
+    staff_id: UUID
+    request_id: UUID
+    reason: str
+    created_at: datetime
+
+
+class StaffPayrollSummaryResponse(BaseModel):
+    staff_id: UUID
+    balance: int
+    rates: list[StaffCompensationRateResponse]
+    settlements: list[StaffPayrollSettlementResponse]
 
 
 class StaffBase(BaseModel):
@@ -103,6 +174,7 @@ class StaffResponse(StaffBase):
 class TeacherOptionResponse(BaseModel):
     id: UUID
     full_name: str
+    staff_type: Literal["TEACHER", "ASSISTANT"]
 
 
 def _normalize_and_validate_phone(value: str | None) -> str | None:

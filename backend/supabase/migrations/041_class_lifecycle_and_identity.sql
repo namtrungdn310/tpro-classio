@@ -1,0 +1,6 @@
+-- HISTORICAL MIGRATION MARKER — already applied manually to the development
+-- Supabase project before this repository recorded its final source form.
+--
+-- Do not run this file manually and do not alter the applied remote migration.
+-- Migration 042 is forward-only and establishes the complete, reproducible
+-- lifecycle/identity schema for new environments while converging this project.

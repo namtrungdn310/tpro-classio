@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Literal, Self
 from urllib.parse import parse_qsl, unquote, urlparse
 
-from pydantic import EmailStr, Field
+from pydantic import EmailStr, Field, SecretStr
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -17,6 +17,13 @@ class Settings(BaseSettings):
     database_url: str
     database_ssl_mode: Literal["disable", "require", "verify-full"] = "require"
     database_ssl_root_cert: str = ""
+    # Operator-only credential used by local backup/migration tooling. Runtime
+    # business code must never consume or serialize it.
+    supabase_db_owner_password: SecretStr | None = Field(
+        default=None,
+        exclude=True,
+        repr=False,
+    )
     secret_key: str = Field(min_length=32)
     algorithm: Literal["HS256"] = "HS256"
     internal_token_issuer: str = "tpro-classio-api"
@@ -30,6 +37,15 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_anon_key: str = ""
     owner_admin_email: EmailStr
+    # R6-D13: owner capability là UUID bất biến; email chỉ bootstrap cross-check.
+    owner_user_id: str = ""
+    # R6-D13/D16: feature kill-switches — mặc định OFF.
+    teacher_access_enabled: bool = False
+    staff_payroll_enabled: bool = False
+    # R6-D17: payment automation — provider-neutral, mặc định OFF.
+    payment_provider: str = "disabled"
+    payment_webhook_ingress_enabled: bool = False
+    payment_auto_post_enabled: bool = False
     # Google OAuth — cần thiết lập trong Google Cloud Console
     google_client_id: str = ""
     google_client_secret: str = ""
@@ -95,6 +111,14 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_production_auth_configuration(self) -> Self:
         """Fail closed before serving traffic with placeholder auth secrets."""
+        if (
+            self.app_environment in {"staging", "production"}
+            and self.supabase_db_owner_password is not None
+        ):
+            raise ValueError(
+                "SUPABASE_DB_OWNER_PASSWORD is operator-only and must not be "
+                "injected into staging/production application runtimes"
+            )
         database = urlparse(self.database_url)
         remote_database_host = (database.hostname or "").casefold()
         if (
@@ -152,6 +176,13 @@ class Settings(BaseSettings):
         if hmac_compare(self.supabase_anon_key, self.supabase_service_role_key):
             raise ValueError(
                 "SUPABASE_SERVICE_ROLE_KEY must differ from SUPABASE_ANON_KEY"
+            )
+        if self.payment_auto_post_enabled and not (
+            self.payment_webhook_ingress_enabled
+            and self.payment_provider not in {"", "disabled"}
+        ):
+            raise ValueError(
+                "PAYMENT_AUTO_POST_ENABLED requires ingress enabled and a valid provider"
             )
         if not self.auth_cookie_secure:
             raise ValueError("AUTH_COOKIE_SECURE must be true outside local/test")

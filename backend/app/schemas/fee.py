@@ -30,6 +30,7 @@ class FeeRecordResponse(BaseModel):
     class_name: str
     class_type: str
     billing_cycle_months: int
+    billing_cycle_weeks: int | None = None
     student_phone: str | None
     student_zalo: str | None
     student_contact_hidden: bool
@@ -39,6 +40,12 @@ class FeeRecordResponse(BaseModel):
     period: str
     enrollment_date: date | None
     due_date: date | None
+    cycle_no: int | None = None
+    base_due_date: date | None = None
+    adjusted_due_date: date | None = None
+    coverage_start: date | None = None
+    coverage_end: date | None = None
+    origin: str | None = None
     base_amount: int
     discount_amount: int
     final_amount: int

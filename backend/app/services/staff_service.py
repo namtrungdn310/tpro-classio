@@ -10,6 +10,7 @@ from sqlalchemy.orm import raiseload
 from app.core.contact import validate_complete_contact_pair
 from app.core.performance import log_timing
 from app.models.class_ import Class
+from app.core.class_lifecycle import operational_class_predicate
 from app.models.class_teacher import ClassTeacher
 from app.models.staff import StaffMember
 from app.schemas.staff import (
@@ -23,12 +24,6 @@ from app.schemas.staff import (
 
 class StaffConflictError(ValueError):
     """Raised when a staff mutation conflicts with persisted business state."""
-
-
-def _clear_dependent_caches() -> None:
-    from app.services.class_service import clear_classes_cache
-
-    clear_classes_cache()
 
 
 def _staff_projection_statement():
@@ -54,7 +49,7 @@ def _staff_projection_statement():
             StaffMember.updated_at.label("updated_at"),
             Class.id.label("class_id"),
             Class.name.label("class_name"),
-            Class.is_active.label("class_is_active"),
+            operational_class_predicate().label("class_is_active"),
         )
         .select_from(StaffMember)
         .outerjoin(
@@ -156,15 +151,19 @@ async def get_active_teacher_options(
     db: AsyncSession,
 ) -> list[TeacherOptionResponse]:
     result = await db.execute(
-        select(StaffMember.id, StaffMember.full_name)
+        select(StaffMember.id, StaffMember.full_name, StaffMember.staff_type)
         .where(
-            StaffMember.staff_type == "TEACHER",
+            StaffMember.staff_type.in_(["TEACHER", "ASSISTANT"]),
             StaffMember.is_active.is_(True),
         )
         .order_by(StaffMember.full_name.asc(), StaffMember.id.asc())
     )
     return [
-        TeacherOptionResponse(id=row.id, full_name=row.full_name)
+        TeacherOptionResponse(
+            id=row.id,
+            full_name=row.full_name,
+            staff_type=row.staff_type,
+        )
         for row in result.all()
     ]
 
@@ -218,7 +217,7 @@ async def _read_assigned_classes(
         .order_by(Class.is_active.desc(), Class.name.asc(), Class.id.asc())
     )
     if active_only:
-        statement = statement.where(Class.is_active.is_(True))
+        statement = statement.where(operational_class_predicate())
     result = await db.execute(statement)
     return [
         StaffClassResponse(id=row.id, name=row.name, is_active=row.is_active)
@@ -266,7 +265,6 @@ async def create_staff_member(db: AsyncSession, data: StaffCreate) -> StaffMembe
     staff = StaffMember(**payload)
     db.add(staff)
     await _commit_staff_changes(db)
-    _clear_dependent_caches()
     return staff
 
 
@@ -321,7 +319,6 @@ async def update_staff_member(
         setattr(staff, field, value)
 
     await _commit_staff_changes(db)
-    _clear_dependent_caches()
     return staff
 
 
@@ -348,5 +345,4 @@ async def archive_staff_member(db: AsyncSession, id: UUID) -> StaffMember | None
 
     staff.is_active = False
     await _commit_staff_changes(db)
-    _clear_dependent_caches()
     return staff

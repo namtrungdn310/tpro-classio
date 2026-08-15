@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, ForeignKey, Numeric, func, text
+from sqlalchemy import Date, DateTime, ForeignKey, Numeric, Text, func, text
 from sqlalchemy.dialects.postgresql import ENUM, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -29,10 +29,19 @@ class Enrollment(Base):
     enrollment_date: Mapped[date | None] = mapped_column(Date)
     custom_fee: Mapped[Decimal | None] = mapped_column(Numeric(12, 0))
     status: Mapped[str] = mapped_column(
-        ENUM("active", "dropped", name="enrollment_status", create_type=False),
+        ENUM(
+            "active",
+            "dropped",
+            "completed",
+            "cancelled",
+            name="enrollment_status",
+            create_type=False,
+        ),
         nullable=False,
         default="active",
     )
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    end_reason: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -46,4 +55,11 @@ class Enrollment(Base):
         back_populates="enrollment",
         cascade="all, delete-orphan",
         passive_deletes=True,
+    )
+    slot_selections = relationship(
+        "EnrollmentSlotSelection",
+        back_populates="enrollment",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        lazy="selectin",
     )

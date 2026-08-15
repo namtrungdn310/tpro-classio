@@ -134,6 +134,7 @@ class UserMe(BaseModel):
     full_name: str | None = None
     avatar_url: str | None = None
     is_owner: bool = False
+    staff_id: str | None = None
 
 
 class UserAccount(BaseModel):
@@ -143,12 +144,13 @@ class UserAccount(BaseModel):
     username: str | None = None
     full_name: str | None = None
     is_owner: bool = False
+    staff_id: str | None = None
     account_status: Literal["pending", "active", "disabled"]
     created_at: str | None = None
 
 
 class UpdateUserRoleRequest(BaseModel):
-    role: Literal["admin", "viewer"]
+    role: Literal["admin", "teacher"]
 
 
 class UpdateUserStatusRequest(BaseModel):
@@ -165,12 +167,15 @@ class UpdateUsernameRequest(BaseModel):
 
 class InvitationCreate(BaseModel):
     email: EmailStr
+    role: Literal["admin", "teacher"] = "teacher"
+    staff_id: str | None = None
 
 
 class InvitationSummary(BaseModel):
     id: str
     email: str
     role: str
+    staff_id: str | None = None
     expires_at: str
     consumed: bool
     revoked: bool

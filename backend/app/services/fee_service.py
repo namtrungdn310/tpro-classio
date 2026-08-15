@@ -8,13 +8,15 @@ from fastapi import HTTPException, status
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import contains_eager
+from sqlalchemy.orm import contains_eager, raiseload
 
 from app.core.billing import (
     get_enrollment_due_date_in_month,
     get_enrollment_fee_amount,
 )
+from app.core.billing_schedule import month_end
 from app.core.business_time import business_today
+from app.core.class_lifecycle import active_class_today_predicate, is_active_class_today
 from app.core.performance import log_timing
 from app.models.class_ import Class
 from app.models.enrollment import Enrollment
@@ -38,12 +40,13 @@ from app.schemas.fee import (
     FeeTransactionBatchResponse,
     FeeTransactionResponse,
 )
+from app.services.fee_cycle_service import ensure_enrollment_cycles
 from app.services.fee_reconciliation import (
     is_fee_record_protected,
     lock_fee_period,
-    reconcile_fee_record_for_period,
 )
 from app.services.fee_operation_service import (
+    FeeOperationActorSnapshot,
     append_fee_operation,
     snapshot_fee_record,
 )
@@ -62,6 +65,7 @@ async def sync_fee_records_for_period(
     period: str,
     *,
     actor_id: str | None = None,
+    actor_snapshot: FeeOperationActorSnapshot | None = None,
 ) -> None:
     with log_timing(
         "fee_service.sync_fee_records_for_period", threshold_ms=50, period=period
@@ -75,7 +79,6 @@ async def sync_fee_records_for_period(
                     "Dữ liệu lịch sử được giữ nguyên để bảo toàn đối soát."
                 ),
             )
-        has_changes = False
         await lock_fee_period(db, period)
 
         with log_timing(
@@ -87,15 +90,27 @@ async def sync_fee_records_for_period(
                 select(Enrollment)
                 .join(Class, Class.id == Enrollment.class_id)
                 .join(Student, Student.id == Enrollment.student_id)
-                .options(contains_eager(Enrollment.class_))
+                .options(contains_eager(Enrollment.class_), raiseload("*"))
                 .where(
                     Enrollment.status == "active",
-                    Class.is_active.is_(True),
+                    active_class_today_predicate(reference_date),
                     Student.status == "active",
                 ),
             )
         enrollments = enrollment_result.scalars().unique().all()
 
+        # R6: lazily materialize missing future cycles for the period window;
+        # existing records are never rewritten.
+        created_any = False
+        for enrollment in enrollments:
+            created = await ensure_enrollment_cycles(
+                db,
+                enrollment,
+                up_to=month_end(reference_date),
+            )
+            created_any = created_any or bool(created)
+
+        # R6: VOID (không DELETE) các draft ngoài phạm vi; protected giữ nguyên.
         with log_timing(
             "fee_service.sync_fee_records_for_period.records",
             threshold_ms=35,
@@ -113,76 +128,40 @@ async def sync_fee_records_for_period(
                     contains_eager(FeeRecord.enrollment).contains_eager(
                         Enrollment.class_
                     ),
+                    raiseload("*"),
                 )
                 .where(FeeRecord.period == period)
                 .with_for_update(of=FeeRecord),
             )
         existing_records = existing_result.scalars().unique().all()
-        before_by_id = {
-            record.id: snapshot_fee_record(record) for record in existing_records
-        }
-        records_by_enrollment: dict[str, list[FeeRecord]] = defaultdict(list)
-        for record in existing_records:
-            records_by_enrollment[record.enrollment_id].append(record)
-
         active_enrollment_ids = {enrollment.id for enrollment in enrollments}
-        for enrollment in enrollments:
-            existing_records = records_by_enrollment.get(enrollment.id, [])
-            current_record = existing_records[0] if existing_records else None
-            has_changes = (
-                await reconcile_fee_record_for_period(
-                    db,
-                    enrollment,
-                    period,
-                    reference_date,
-                    existing_record=current_record,
-                )
-                or has_changes
-            )
-
-        # Remove only draft obligations that no longer belong to an active
-        # student/class/enrollment. Notified and paid history is retained.
-        for enrollment_id, records in records_by_enrollment.items():
-            if enrollment_id in active_enrollment_ids:
+        voided: list[FeeRecord] = []
+        for record in existing_records:
+            if record.enrollment_id in active_enrollment_ids:
                 continue
-            for record in records:
-                if not is_fee_record_protected(record):
-                    await db.delete(record)
-                    has_changes = True
+            if is_fee_record_protected(record):
+                continue
+            if record.status in ("VOID", "SUPERSEDED"):
+                continue
+            record.status = "VOID"
+            record.voided_at = datetime.now(timezone.utc)
+            voided.append(record)
 
-        if not has_changes:
+        if not created_any and not voided:
             await db.rollback()
             return
 
         await db.flush()
-        after_result = await db.execute(
-            select(FeeRecord)
-            .join(Enrollment, Enrollment.id == FeeRecord.enrollment_id)
-            .join(Student, Student.id == Enrollment.student_id)
-            .join(Class, Class.id == Enrollment.class_id)
-            .options(
-                contains_eager(FeeRecord.enrollment).contains_eager(Enrollment.student),
-                contains_eager(FeeRecord.enrollment).contains_eager(Enrollment.class_),
+        if voided:
+            await append_fee_operation(
+                db,
+                action="sync_void",
+                before=[snapshot_fee_record(record) for record in voided],
+                after=[snapshot_fee_record(record) for record in voided],
+                actor_id=actor_id,
+                amount_deltas=[0] * len(voided),
+                actor_snapshot=actor_snapshot,
             )
-            .where(FeeRecord.period == period)
-        )
-        after_records = after_result.scalars().unique().all()
-        after_by_id = {
-            record.id: snapshot_fee_record(record) for record in after_records
-        }
-        changed_ids = sorted(
-            record_id
-            for record_id in set(before_by_id) | set(after_by_id)
-            if before_by_id.get(record_id) != after_by_id.get(record_id)
-        )
-        await append_fee_operation(
-            db,
-            action="sync",
-            before=[before_by_id.get(record_id) for record_id in changed_ids],
-            after=[after_by_id.get(record_id) for record_id in changed_ids],
-            actor_id=actor_id,
-            amount_deltas=[0] * len(changed_ids),
-        )
         await db.commit()
 
 
@@ -208,8 +187,12 @@ async def get_fee_records(
             .options(
                 contains_eager(FeeRecord.enrollment).contains_eager(Enrollment.student),
                 contains_eager(FeeRecord.enrollment).contains_eager(Enrollment.class_),
+                raiseload("*"),
             )
             .where(FeeRecord.period == period)
+            # R6: VOID/SUPERSEDED là terminal lifecycle markers — không hiển thị
+            # trong danh sách nghĩa vụ; lịch sử vẫn truy vấn được qua report.
+            .where(FeeRecord.status.notin_(("VOID", "SUPERSEDED")))
         )
 
         if class_id is not None:
@@ -262,8 +245,16 @@ async def mark_fee_notified(
     message: str | None,
     channel: str,
     actor_id: str | None = None,
+    actor_snapshot: FeeOperationActorSnapshot | None = None,
 ) -> FeeRecordResponse | None:
-    result = await mark_fees_notified(db, [id], message, channel, actor_id=actor_id)
+    result = await mark_fees_notified(
+        db,
+        [id],
+        message,
+        channel,
+        actor_id=actor_id,
+        actor_snapshot=actor_snapshot,
+    )
     return result.records[0] if result.records else None
 
 
@@ -272,12 +263,14 @@ async def mark_fee_paid(
     id: UUID,
     actor_id: str | None = None,
     payment_method: str = "bank_transfer",
+    actor_snapshot: FeeOperationActorSnapshot | None = None,
 ) -> FeeRecordResponse | None:
     result = await mark_fees_paid(
         db,
         [id],
         actor_id=actor_id,
         payment_method=payment_method,
+        actor_snapshot=actor_snapshot,
     )
     return result.records[0] if result.records else None
 
@@ -287,12 +280,14 @@ async def mark_fee_unpaid(
     id: UUID,
     actor_id: str | None = None,
     target_notification_state: FeeUnpayTargetState = "NOTIFIED_UNPAID",
+    actor_snapshot: FeeOperationActorSnapshot | None = None,
 ) -> FeeRecordResponse | None:
     result = await mark_fees_unpaid(
         db,
         [id],
         actor_id=actor_id,
         target_notification_state=target_notification_state,
+        actor_snapshot=actor_snapshot,
     )
     return result.records[0] if result.records else None
 
@@ -305,6 +300,7 @@ async def mark_fees_notified(
     *,
     actor_id: str | None = None,
     request_id: UUID | None = None,
+    actor_snapshot: FeeOperationActorSnapshot | None = None,
 ) -> FeeBatchResponse:
     return await _transition_fee_records(
         db,
@@ -314,6 +310,7 @@ async def mark_fees_notified(
         message=message,
         channel=channel,
         request_id=request_id,
+        actor_snapshot=actor_snapshot,
     )
 
 
@@ -324,6 +321,7 @@ async def mark_fees_paid(
     actor_id: str | None = None,
     payment_method: str = "bank_transfer",
     request_id: UUID | None = None,
+    actor_snapshot: FeeOperationActorSnapshot | None = None,
 ) -> FeeBatchResponse:
     return await _transition_fee_records(
         db,
@@ -332,6 +330,7 @@ async def mark_fees_paid(
         actor_id=actor_id,
         payment_method=payment_method,
         request_id=request_id,
+        actor_snapshot=actor_snapshot,
     )
 
 
@@ -342,6 +341,7 @@ async def mark_fees_unpaid(
     actor_id: str | None = None,
     target_notification_state: FeeUnpayTargetState = "NOTIFIED_UNPAID",
     request_id: UUID | None = None,
+    actor_snapshot: FeeOperationActorSnapshot | None = None,
 ) -> FeeBatchResponse:
     return await _transition_fee_records(
         db,
@@ -350,6 +350,7 @@ async def mark_fees_unpaid(
         actor_id=actor_id,
         target_notification_state=target_notification_state,
         request_id=request_id,
+        actor_snapshot=actor_snapshot,
     )
 
 
@@ -359,6 +360,7 @@ async def mark_fees_unnotified(
     *,
     actor_id: str | None = None,
     request_id: UUID | None = None,
+    actor_snapshot: FeeOperationActorSnapshot | None = None,
 ) -> FeeBatchResponse:
     return await _transition_fee_records(
         db,
@@ -366,6 +368,7 @@ async def mark_fees_unnotified(
         action="unnotify",
         actor_id=actor_id,
         request_id=request_id,
+        actor_snapshot=actor_snapshot,
     )
 
 
@@ -374,6 +377,7 @@ async def refund_fee_records(
     payload: FeeBatchRefundRequest,
     *,
     actor_id: str,
+    actor_snapshot: FeeOperationActorSnapshot | None = None,
 ) -> FeeRefundBatchResponse:
     """Append an atomic, idempotent refund across one student's fee records."""
 
@@ -469,6 +473,7 @@ async def refund_fee_records(
             payments=refund_entries,
             amount_deltas=[-item.amount for item in payload.items],
             reason=payload.reason or None,
+            actor_snapshot=actor_snapshot,
         )
         response = _build_refund_response(
             payload,
@@ -491,6 +496,7 @@ async def reverse_fee_refund(
     payload: FeeRefundReversalRequest,
     *,
     actor_id: str,
+    actor_snapshot: FeeOperationActorSnapshot | None = None,
 ) -> FeeRefundReversalResponse:
     """Append a correction that exactly reverses one erroneous refund entry."""
 
@@ -566,6 +572,7 @@ async def reverse_fee_refund(
             payments=[entry],
             amount_deltas=[_to_int(entry.amount)],
             reason=payload.reason,
+            actor_snapshot=actor_snapshot,
         )
         transaction = await _get_fee_transaction_response(db, entry.id)
         if transaction is None:
@@ -663,12 +670,15 @@ async def _transition_fee_records(
     payment_method: str = "bank_transfer",
     target_notification_state: FeeUnpayTargetState = "NOTIFIED_UNPAID",
     request_id: UUID | None = None,
+    actor_snapshot: FeeOperationActorSnapshot | None = None,
 ) -> FeeBatchResponse:
     """Apply one state transition to every requested record atomically.
 
-    Every path uses the same period-lock -> row-lock order as reconciliation.
-    All preconditions are checked before the first record is changed, so a
-    multi-class student can never be left half updated.
+    Existing fee obligations are serialized by row lock. Reconciliation takes
+    the period lock before acquiring those same row locks; a transition never
+    needs the period lock because it cannot create a record. Avoiding that
+    redundant lock and lookup removes two remote database round trips while
+    preserving atomicity and preventing half-updated multi-class students.
     """
 
     if action not in {"notify", "pay", "unpay", "unnotify"}:
@@ -700,22 +710,6 @@ async def _transition_fee_records(
             detail=(
                 "Cần hoàn tác ghi nhận đã nộp trước khi chuyển khoản học phí "
                 "về trạng thái chưa báo"
-            ),
-        )
-
-    if (
-        action == "unpay"
-        and target_notification_state == "NOTIFIED_UNPAID"
-        and any(
-            record.status == "PAID" and record.notified_at is None for record in records
-        )
-    ):
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                "Khoản học phí chưa từng được đánh dấu đã báo nên chỉ có thể "
-                "hoàn tác về trạng thái chưa báo"
             ),
         )
 
@@ -770,6 +764,8 @@ async def _transition_fee_records(
         )
 
     changed = False
+    # Response contract meaning: remove these rows from the active projection.
+    # The underlying financial records remain append-only and are marked VOID.
     deleted_ids: list[UUID] = []
     notification_time = datetime.now(timezone.utc)
     changed_records: list[FeeRecord] = []
@@ -824,6 +820,19 @@ async def _transition_fee_records(
                 record.notification_channel = None
                 record.notified_at = None
                 record.notification_message = None
+            else:
+                # The operator explicitly chose the "Đã báo" target. If the
+                # payment was originally recorded without a notification, make
+                # that choice a complete, auditable notification snapshot rather
+                # than leaving an impossible NOTIFIED_UNPAID state with null
+                # notification metadata. This does not send a message; it only
+                # records the selected accounting state and the canonical message
+                # that would be used for the notification.
+                if record.notified_at is None:
+                    _freeze_business_identity(record)
+                    record.notified_at = notification_time
+                    record.notification_channel = "zalo_manual"
+                    record.notification_message = build_zalo_fee_message(record)
             target_note = (
                 "chưa báo"
                 if target_notification_state == "UNNOTIFIED"
@@ -865,7 +874,8 @@ async def _transition_fee_records(
             changed = True
 
             if record.period == current_period and _reconcile_unnotified_record(record):
-                await db.delete(record)
+                record.status = "VOID"
+                record.voided_at = notification_time
                 deleted_ids.append(UUID(record.id))
 
     if not changed:
@@ -876,8 +886,22 @@ async def _transition_fee_records(
         await db.rollback()
         return response
 
+    # PostgreSQL expires generated columns such as ``final_amount`` when an
+    # UPDATE is flushed. Capture transitions whose response is fully derived
+    # from the already locked in-memory rows before that flush; otherwise
+    # serializing the response can accidentally trigger async lazy I/O and
+    # raise MissingGreenlet. Unnotify is excluded because it may recalculate
+    # or delete current-period drafts and therefore still requires a reload.
+    immediate_response = (
+        FeeBatchResponse(
+            records=[_to_response(record) for record in records],
+            deleted_ids=[],
+        )
+        if action in {"notify", "pay", "unpay"}
+        else None
+    )
+
     await db.flush()
-    deleted_id_strings = {str(id_) for id_ in deleted_ids}
     await append_fee_operation(
         db,
         action={
@@ -887,18 +911,20 @@ async def _transition_fee_records(
             "unnotify": "unnotify",
         }[action],
         before=[before_by_id[record.id] for record in changed_records],
-        after=[
-            None if record.id in deleted_id_strings else snapshot_fee_record(record)
-            for record in changed_records
-        ],
+        after=[snapshot_fee_record(record) for record in changed_records],
         actor_id=actor_id,
         request_id=request_id,
         payments=operation_payments,
         amount_deltas=operation_deltas,
+        actor_snapshot=actor_snapshot,
     )
-    await db.commit()
+
+    if immediate_response is not None:
+        await db.commit()
+        return immediate_response
 
     remaining_ids = [id_ for id_ in ordered_ids if UUID(id_) not in deleted_ids]
+    await db.commit()
     updated_records = await _get_fee_records_by_ids(db, remaining_ids)
     return FeeBatchResponse(
         records=[_to_response(record) for record in updated_records],
@@ -910,28 +936,12 @@ async def _load_locked_fee_records(
     db: AsyncSession,
     ordered_ids: list[str],
 ) -> list[FeeRecord]:
-    period_result = await db.execute(
-        select(FeeRecord.id, FeeRecord.period).where(FeeRecord.id.in_(ordered_ids))
-    )
-    id_period_rows = period_result.all()
-    found_ids = {row[0] for row in id_period_rows}
-    missing_ids = [id_ for id_ in ordered_ids if id_ not in found_ids]
-    if missing_ids:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Không tìm thấy một hoặc nhiều khoản học phí",
-        )
-
-    for period in sorted({row[1] for row in id_period_rows}):
-        await lock_fee_period(db, period)
-
     records = await _get_fee_records_by_ids(db, ordered_ids, for_update=True)
     if len(records) != len(ordered_ids):
         await db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Dữ liệu học phí vừa thay đổi. Vui lòng tải lại và thử lại.",
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Không tìm thấy một hoặc nhiều khoản học phí",
         )
     return records
 
@@ -1157,6 +1167,7 @@ async def _get_fee_records_by_ids(
         .options(
             contains_eager(FeeRecord.enrollment).contains_eager(Enrollment.student),
             contains_eager(FeeRecord.enrollment).contains_eager(Enrollment.class_),
+            raiseload("*"),
         )
     )
     if for_update:
@@ -1170,8 +1181,9 @@ async def _get_fee_records_by_ids(
 def _reconcile_unnotified_record(record: FeeRecord) -> bool:
     """Refresh a current-period draft after its notification is undone.
 
-    Returns ``True`` when the record is no longer chargeable and must be
-    deleted. Historical snapshots are intentionally left untouched.
+    Returns ``True`` when the record is no longer chargeable and must leave the
+    active projection. The caller marks it VOID; financial rows are never
+    physically deleted.
     """
 
     enrollment = record.enrollment
@@ -1181,7 +1193,7 @@ def _reconcile_unnotified_record(record: FeeRecord) -> bool:
         enrollment
         and enrollment.status == "active"
         and class_
-        and class_.is_active
+        and is_active_class_today(class_)
         and student
         and student.status == "active"
     )
@@ -1276,6 +1288,11 @@ def _to_response(
         if protected_identity and record.billing_cycle_months_snapshot
         else (class_.billing_cycle_months if class_ else 1)
     )
+    billing_cycle_weeks = (
+        record.billing_cycle_weeks_snapshot
+        if protected_identity and record.billing_cycle_weeks_snapshot
+        else (class_.billing_cycle_weeks if class_ else None)
+    )
     paid_amount = (
         _to_int(record.paid_amount) if record.paid_amount is not None else None
     )
@@ -1291,6 +1308,7 @@ def _to_response(
         class_name=class_name,
         class_type=class_type,
         billing_cycle_months=billing_cycle_months,
+        billing_cycle_weeks=billing_cycle_weeks,
         student_phone=(student.student_phone if has_complete_student_contact else None),
         student_zalo=(student.student_zalo if has_complete_student_contact else None),
         student_contact_hidden=student_contact_hidden,
@@ -1303,6 +1321,12 @@ def _to_response(
             or (enrollment.enrollment_date if enrollment else None)
         ),
         due_date=due_date,
+        cycle_no=record.cycle_no,
+        base_due_date=record.base_due_date,
+        adjusted_due_date=record.adjusted_due_date,
+        coverage_start=record.coverage_start,
+        coverage_end=record.coverage_end,
+        origin=record.origin,
         base_amount=_to_int(record.base_amount),
         discount_amount=_to_int(record.discount_amount),
         final_amount=_to_int(record.final_amount),
@@ -1330,6 +1354,7 @@ def _freeze_business_identity(record: FeeRecord) -> None:
         record.class_name_snapshot = class_.name
         record.class_type_snapshot = class_.type
         record.billing_cycle_months_snapshot = class_.billing_cycle_months
+        record.billing_cycle_weeks_snapshot = class_.billing_cycle_weeks
 
 
 def _get_notification_state(record: FeeRecord) -> str:
@@ -1378,7 +1403,7 @@ def _period_to_date(period: str) -> date:
         return date(int(year_text), int(month_text), 1)
     except (TypeError, ValueError):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Kỳ học phí không hợp lệ",
         ) from None
 

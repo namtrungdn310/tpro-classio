@@ -11,7 +11,11 @@ class AccountInvitation(Base):
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True)
     email: Mapped[str] = mapped_column(Text, nullable=False)
     token_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
-    role: Mapped[str] = mapped_column(Text, nullable=False, default="viewer")
+    role: Mapped[str] = mapped_column(Text, nullable=False, default="teacher")
+    staff_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("staff_members.id", ondelete="RESTRICT"),
+    )
     invited_by: Mapped[str] = mapped_column(
         UUID(as_uuid=False),
         ForeignKey("profiles.id", ondelete="RESTRICT"),

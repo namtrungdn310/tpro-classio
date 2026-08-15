@@ -19,8 +19,15 @@ begin
         ('auth_recovery_codes'),
         ('auth_totp_factors'),
         ('account_security_events'),
+        ('class_lifecycle_events'),
+        ('class_teacher_events'),
         ('class_teachers'),
         ('classes'),
+        ('class_schedule_adjustments'),
+        ('class_session_exceptions'),
+        ('class_session_staff_snapshots'),
+        ('class_session_student_snapshots'),
+        ('class_schedule_adjustment_events'),
         ('enrollments'),
         ('fee_records'),
         ('fee_message_templates'),
@@ -30,6 +37,7 @@ begin
         ('payments'),
         ('profiles'),
         ('staff_members'),
+        ('student_lifecycle_events'),
         ('students'),
         ('user_device_sessions')
     ) as required_table(table_name)
@@ -57,21 +65,43 @@ begin
     raise exception 'avatar bucket is missing or not private/restricted';
   end if;
 
-  if has_table_privilege('anon', 'storage.buckets', 'select')
-     or has_table_privilege('authenticated', 'storage.buckets', 'select')
-     or has_table_privilege('anon', 'storage.objects', 'select')
-     or has_table_privilege('authenticated', 'storage.objects', 'select') then
-    raise exception 'browser roles must not read avatar storage directly';
-  end if;
   if exists (
     select 1
-    from information_schema.column_privileges
-    where table_schema = 'storage'
-      and table_name in ('buckets', 'objects')
-      and grantee in ('PUBLIC', 'anon', 'authenticated')
-      and privilege_type in ('SELECT', 'INSERT', 'UPDATE', 'REFERENCES')
+    from pg_class class_
+    join pg_namespace namespace_ on namespace_.oid = class_.relnamespace
+    where namespace_.nspname = 'storage'
+      and class_.relname in ('buckets', 'objects')
+      and not class_.relrowsecurity
   ) then
-    raise exception 'browser storage column grants must remain revoked';
+    raise exception 'avatar storage RLS must remain enabled';
+  end if;
+  if exists (
+    with recursive browser_roles(role_oid) as (
+      select role_.oid
+      from pg_roles role_
+      where role_.rolname in ('anon', 'authenticated')
+
+      union
+
+      select membership.roleid
+      from pg_auth_members membership
+      join browser_roles browser
+        on browser.role_oid = membership.member
+    )
+    select 1
+    from pg_policy policy_
+    join pg_class class_ on class_.oid = policy_.polrelid
+    join pg_namespace namespace_ on namespace_.oid = class_.relnamespace
+    where namespace_.nspname = 'storage'
+      and class_.relname in ('buckets', 'objects')
+      and (
+        0 = any(policy_.polroles)
+        or policy_.polroles && array(
+          select browser.role_oid from browser_roles browser
+        )
+      )
+  ) then
+    raise exception 'browser-accessible avatar storage policies must not exist';
   end if;
 
   if exists (
@@ -323,6 +353,170 @@ begin
 
   if not exists (
     select 1
+    from pg_trigger as trigger_
+    where trigger_.tgrelid = 'public.student_lifecycle_events'::regclass
+      and trigger_.tgname = 'trg_student_lifecycle_events_append_only'
+      and not trigger_.tgisinternal
+      and trigger_.tgenabled <> 'D'
+  ) or not exists (
+    select 1
+    from pg_trigger as trigger_
+    where trigger_.tgrelid = 'public.student_lifecycle_events'::regclass
+      and trigger_.tgname = 'trg_student_lifecycle_events_truncate'
+      and not trigger_.tgisinternal
+      and trigger_.tgenabled <> 'D'
+  ) then
+    raise exception 'student lifecycle events must be append-only';
+  end if;
+
+  if not exists (
+    select 1
+    from pg_trigger as trigger_
+    where trigger_.tgrelid = 'public.class_lifecycle_events'::regclass
+      and trigger_.tgname = 'class_lifecycle_events_block_update'
+      and not trigger_.tgisinternal
+      and trigger_.tgenabled <> 'D'
+  ) or not exists (
+    select 1
+    from pg_trigger as trigger_
+    where trigger_.tgrelid = 'public.class_lifecycle_events'::regclass
+      and trigger_.tgname = 'class_lifecycle_events_block_truncate'
+      and not trigger_.tgisinternal
+      and trigger_.tgenabled <> 'D'
+  ) then
+    raise exception 'class lifecycle events must be append-only';
+  end if;
+
+  if not exists (
+    select 1
+    from pg_trigger as trigger_
+    where trigger_.tgrelid = 'public.class_teacher_events'::regclass
+      and trigger_.tgname = 'trg_class_teacher_events_append_only'
+      and not trigger_.tgisinternal
+      and trigger_.tgenabled <> 'D'
+  ) or not exists (
+    select 1
+    from pg_trigger as trigger_
+    where trigger_.tgrelid = 'public.class_teacher_events'::regclass
+      and trigger_.tgname = 'trg_class_teacher_events_truncate'
+      and not trigger_.tgisinternal
+      and trigger_.tgenabled <> 'D'
+  ) then
+    raise exception 'class teacher history must be append-only';
+  end if;
+
+  if not exists (
+    select 1
+    from pg_trigger as trigger_
+    where trigger_.tgrelid = 'public.classes'::regclass
+      and trigger_.tgname = 'classes_enforce_lifecycle_integrity'
+      and not trigger_.tgisinternal
+      and trigger_.tgenabled <> 'D'
+  ) or not exists (
+    select 1
+    from pg_trigger as trigger_
+    where trigger_.tgrelid = 'public.classes'::regclass
+      and trigger_.tgname = 'classes_block_hard_delete'
+      and not trigger_.tgisinternal
+      and trigger_.tgenabled <> 'D'
+  ) then
+    raise exception 'class lifecycle protection triggers are missing';
+  end if;
+
+  if (
+    select count(*)
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'classes'
+      and column_name in ('class_category', 'grade_mode')
+  ) <> 2 then
+    raise exception 'canonical class category columns are missing';
+  end if;
+
+  if exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'classes'
+      and column_name in ('archived_at', 'archived_by', 'archive_reason', 'archived_by_name_snapshot')
+  ) then
+    raise exception 'class archive columns must be removed after migration 048';
+  end if;
+
+  if (
+    select count(*)
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'enrollments'
+      and column_name in ('ended_at', 'end_reason')
+  ) <> 2 then
+    raise exception 'membership history columns are missing';
+  end if;
+
+  if not exists (
+    select 1
+    from pg_trigger as trigger_
+    where trigger_.tgrelid = 'public.enrollments'::regclass
+      and trigger_.tgname = 'enrollments_enforce_class_date_range'
+      and not trigger_.tgisinternal
+      and trigger_.tgenabled <> 'D'
+  ) then
+    raise exception 'enrollment date range protection trigger is missing';
+  end if;
+
+  if not exists (
+    select 1
+    from pg_constraint constraint_
+    where constraint_.conrelid = 'public.classes'::regclass
+      and constraint_.conname = 'classes_weekly_schedule_limit_check'
+      and constraint_.contype = 'c'
+  ) then
+    raise exception 'class weekly schedule limit constraint is missing';
+  end if;
+
+  if exists (
+    select required_index.index_name
+    from (
+      values
+        ('classes_academic_identity_unique_idx'),
+        ('classes_intake_identity_unique_idx'),
+        ('classes_unclassified_academic_identity_unique_idx'),
+        ('classes_unclassified_intake_identity_unique_idx'),
+        ('classes_category_operational_idx'),
+        ('enrollments_class_status_date_idx'),
+        ('enrollments_one_active_period_idx')
+    ) as required_index(index_name)
+    where to_regclass('public.' || quote_ident(required_index.index_name)) is null
+  ) then
+    raise exception 'class category or enrollment date indexes are missing';
+  end if;
+
+  if has_function_privilege(
+    'anon',
+    'public.enforce_enrollment_class_date_range()',
+    'execute'
+  ) or has_function_privilege(
+    'authenticated',
+    'public.enforce_enrollment_class_date_range()',
+    'execute'
+  ) then
+    raise exception 'class enrollment integrity trigger function is publicly executable';
+  end if;
+
+  if has_function_privilege(
+    'anon',
+    'public.enforce_class_lifecycle_integrity()',
+    'execute'
+  ) or has_function_privilege(
+    'authenticated',
+    'public.enforce_class_lifecycle_integrity()',
+    'execute'
+  ) then
+    raise exception 'class lifecycle integrity trigger function is publicly executable';
+  end if;
+
+  if not exists (
+    select 1
     from pg_trigger trigger_
     where trigger_.tgrelid = 'public.account_security_events'::regclass
       and trigger_.tgname = 'account_security_events_snapshot_insert'
@@ -330,6 +524,15 @@ begin
       and trigger_.tgenabled <> 'D'
   ) then
     raise exception 'account security events must capture immutable identity snapshots on insert';
+  end if;
+
+  if position(
+    'to_jsonb(new) - ''actor_user_id'''
+    in pg_get_functiondef(
+      'public.block_fee_operation_mutation()'::regprocedure
+    )
+  ) = 0 then
+    raise exception 'migration 072 is required: fee ledger actor anonymization guard is stale';
   end if;
 
   -- Exercise the real cascade chain without leaving probe data behind. The
@@ -343,9 +546,10 @@ begin
       '{"username":"security-delete-probe"}'::jsonb
     );
 
-    insert into public.profiles (id, username, full_name)
+    insert into public.profiles (id, role, username, full_name)
     values (
       account_delete_user_id,
+      'admin',
       'security-delete-probe',
       'Security Delete Probe'
     );
@@ -1128,13 +1332,14 @@ begin
   ) <> 6 then
     raise exception 'refund idempotency, relation or lookup indexes are missing';
   end if;
+  -- R6-D19: contract đã drop period-unique; identity là (enrollment, cycle_no).
   if not exists (
     select 1
     from pg_indexes
     where schemaname = 'public'
-      and indexname = 'ux_fee_records_enrollment_period'
+      and indexname = 'ux_fee_records_enrollment_cycle'
   ) then
-    raise exception 'fee records must be unique per enrollment and period';
+    raise exception 'fee cycle identity index is missing';
   end if;
 
   if exists (
@@ -1214,9 +1419,12 @@ begin
     -- back so this verifier remains side-effect free on staging.
     begin
       insert into public.fee_records (
-        enrollment_id, period, base_amount, discount_amount, status
+        enrollment_id, period, base_amount, discount_amount, status,
+        cycle_no, origin, coverage_start, coverage_end, base_due_date,
+        adjusted_due_date
       ) values (
-        sample_enrollment_id, '2099-13', 100000, 0, 'UNPAID'
+        sample_enrollment_id, '2099-13', 100000, 0, 'UNPAID',
+        99, 'CYCLE_GENERATOR', '2099-01-01', '2099-02-01', '2099-01-01', '2099-01-01'
       );
       raise exception 'fee period constraint accepted an invalid month';
     exception
@@ -1225,9 +1433,12 @@ begin
 
     begin
       insert into public.fee_records (
-        enrollment_id, period, base_amount, discount_amount, status
+        enrollment_id, period, base_amount, discount_amount, status,
+        cycle_no, origin, coverage_start, coverage_end, base_due_date,
+        adjusted_due_date
       ) values (
-        sample_enrollment_id, '9999-11', -1, 0, 'UNPAID'
+        sample_enrollment_id, '9999-11', -1, 0, 'UNPAID',
+        99, 'CYCLE_GENERATOR', '2099-01-01', '2099-02-01', '2099-01-01', '2099-01-01'
       );
       raise exception 'fee amount constraint accepted a negative base amount';
     exception
@@ -1242,7 +1453,13 @@ begin
         discount_amount,
         status,
         paid_amount,
-        paid_date
+        paid_date,
+        cycle_no,
+        origin,
+        coverage_start,
+        coverage_end,
+        base_due_date,
+        adjusted_due_date
       ) values (
         sample_enrollment_id,
         '9999-10',
@@ -1250,7 +1467,13 @@ begin
         0,
         'PAID',
         100000,
-        current_date
+        current_date,
+        99,
+        'CYCLE_GENERATOR',
+        '2099-01-01',
+        '2099-02-01',
+        '2099-01-01',
+        '2099-01-01'
       );
       raise exception 'rollback successful direct-payment probe'
         using errcode = 'P9002';
@@ -1266,7 +1489,13 @@ begin
         discount_amount,
         status,
         notified_at,
-        notification_channel
+        notification_channel,
+        cycle_no,
+        origin,
+        coverage_start,
+        coverage_end,
+        base_due_date,
+        adjusted_due_date
       ) values (
         sample_enrollment_id,
         '9999-09',
@@ -1274,7 +1503,13 @@ begin
         0,
         'UNPAID',
         now(),
-        'zalo_manual'
+        'zalo_manual',
+        99,
+        'CYCLE_GENERATOR',
+        '2099-01-01',
+        '2099-02-01',
+        '2099-01-01',
+        '2099-01-01'
       );
       raise exception 'notification constraint accepted a missing message';
     exception
@@ -1354,6 +1589,498 @@ begin
     exception
       when raise_exception then null;
     end;
+  end if;
+
+  -- ---------------------------------------------------------------------
+  -- Migration 051: canonical schedule invariant, backup ACL, index policy,
+  -- and TEACHER/ASSISTANT link separation probes.
+  -- ---------------------------------------------------------------------
+
+  -- 051 canonical invariant: no stored slot may be missing/empty teacher_ids.
+  if exists (
+    select 1
+      from public.classes c,
+           jsonb_array_elements(
+             case
+               when jsonb_typeof(c.schedule -> 'slots') = 'array'
+               then c.schedule -> 'slots'
+               else '[]'::jsonb
+             end
+           ) as slot
+     where c.schedule is not null
+       and (
+         not (slot ? 'teacher_ids')
+         or jsonb_array_length(coalesce(slot -> 'teacher_ids', '[]'::jsonb)) = 0
+       )
+  ) then
+    raise exception 'migration 051 did not canonicalize teacher_ids for every slot';
+  end if;
+
+  -- 051 backup table must exist, stay RLS-enabled (FORCE) and be unreadable/
+  -- unwritable by browser/runtime roles, with drift markers present.
+  if to_regclass('public._migration_051_class_schedule_backup') is null then
+    raise exception 'migration 051 backup table is missing';
+  end if;
+  if not exists (
+    select 1
+      from pg_class
+     where oid = 'public._migration_051_class_schedule_backup'::regclass
+       and relrowsecurity
+       and relforcerowsecurity
+  ) then
+    raise exception 'migration 051 backup table must keep RLS and FORCE RLS enabled';
+  end if;
+  if not exists (
+    select 1
+      from information_schema.columns
+     where table_schema = 'public'
+       and table_name = '_migration_051_class_schedule_backup'
+       and column_name in ('schedule_before', 'version_before', 'updated_at_before',
+                           'schedule_after', 'version_after', 'updated_at_after')
+     group by table_name
+    having count(*) = 6
+  ) then
+    raise exception 'migration 051 backup table must carry full drift markers';
+  end if;
+  if has_table_privilege('anon', 'public._migration_051_class_schedule_backup', 'SELECT')
+     or has_table_privilege('authenticated', 'public._migration_051_class_schedule_backup', 'SELECT')
+     or has_table_privilege('service_role', 'public._migration_051_class_schedule_backup', 'SELECT')
+     or has_table_privilege('anon', 'public._migration_051_class_schedule_backup', 'INSERT')
+     or has_table_privilege('authenticated', 'public._migration_051_class_schedule_backup', 'INSERT')
+     or has_table_privilege('service_role', 'public._migration_051_class_schedule_backup', 'INSERT')
+  then
+    raise exception 'migration 051 backup must not be accessible to browser/runtime roles';
+  end if;
+  if exists (
+    select 1
+      from pg_policies
+     where schemaname = 'public'
+       and tablename = '_migration_051_class_schedule_backup'
+       and cmd in ('SELECT', 'INSERT', 'UPDATE', 'DELETE', 'ALL')
+       and permissive = 'PERMISSIVE'
+       and (roles = '{anon,authenticated,service_role}'::name[]
+            or roles && array['anon'::name, 'authenticated'::name, 'service_role'::name])
+  ) then
+    raise exception 'migration 051 backup must not expose a permissive policy to browser roles';
+  end if;
+
+  -- Canonical assignment: explicit teacher/assistant ids của mọi slot phải là
+  -- subset đúng role của junction. Chỉ fail khi DB có dữ liệu (fixture).
+  if exists (
+    select 1 from public.classes c where c.schedule is not null
+  ) then
+    if exists (
+      select 1
+        from public.classes c,
+             jsonb_array_elements(c.schedule -> 'slots') as slot,
+             jsonb_array_elements_text(
+               coalesce(slot -> 'teacher_ids', '[]'::jsonb)
+             ) as tid
+       where c.schedule is not null
+         and not exists (
+           select 1
+             from public.class_teachers ct
+             join public.staff_members sm on sm.id = ct.teacher_id
+            where ct.class_id = c.id
+              and ct.teacher_id = tid::uuid
+              and sm.staff_type = 'TEACHER'
+         )
+    ) then
+      raise exception 'canonical teacher assignment is not a TEACHER junction subset';
+    end if;
+    if exists (
+      select 1
+        from public.classes c,
+             jsonb_array_elements(c.schedule -> 'slots') as slot,
+             jsonb_array_elements_text(
+               coalesce(slot -> 'assistant_ids', '[]'::jsonb)
+             ) as aid
+       where c.schedule is not null
+         and not exists (
+           select 1
+             from public.class_teachers ct
+             join public.staff_members sm on sm.id = ct.teacher_id
+            where ct.class_id = c.id
+              and ct.teacher_id = aid::uuid
+              and sm.staff_type = 'ASSISTANT'
+         )
+    ) then
+      raise exception 'canonical assistant assignment is not an ASSISTANT junction subset';
+    end if;
+  end if;
+
+  -- Index policy: classes_operational_dates_idx (042) phải tồn tại với cột
+  -- date; index trùng của 051 không được giữ lại.
+  if not exists (
+    select 1
+      from pg_indexes
+     where schemaname = 'public'
+       and tablename = 'classes'
+       and indexname = 'classes_operational_dates_idx'
+  ) then
+    raise exception 'classes_operational_dates_idx must exist for date-range queries';
+  end if;
+  declare
+    _operational_dates_idxdef text;
+  begin
+    select indexdef into _operational_dates_idxdef
+      from pg_indexes
+     where schemaname = 'public'
+       and tablename = 'classes'
+       and indexname = 'classes_operational_dates_idx';
+    if _operational_dates_idxdef is null
+       or _operational_dates_idxdef not like '%cancelled_at%'
+       or _operational_dates_idxdef not like '%end_date%'
+    then
+      raise exception 'classes_operational_dates_idx must cover cancelled_at and end_date';
+    end if;
+  end;
+  if exists (
+    select 1
+      from pg_indexes
+     where schemaname = 'public'
+       and tablename = 'classes'
+       and indexname = 'idx_classes_lifecycle_date_range'
+  ) then
+    raise exception 'redundant migration 051 lifecycle index must not exist';
+  end if;
+
+  -- Probe TEACHER/ASSISTANT link separation: xóa teacher link không được xóa
+  -- assistant link của cùng class. Chạy trong subtransaction để không để lại
+  -- dữ liệu; chỉ chạy khi tìm được một class có đủ teacher + assistant.
+  declare
+    probe_class_id uuid;
+    probe_teacher_id uuid;
+    probe_assistant_id uuid;
+    assistant_survived boolean := false;
+  begin
+    select c.id, l1.teacher_id, l2.teacher_id
+      into probe_class_id, probe_teacher_id, probe_assistant_id
+      from public.classes c
+      join public.class_teachers l1
+        on l1.class_id = c.id
+       and l1.teacher_id in (
+         select sm.id from public.staff_members sm where sm.staff_type = 'TEACHER'
+       )
+      join public.class_teachers l2
+        on l2.class_id = c.id
+       and l2.teacher_id in (
+         select sm.id from public.staff_members sm where sm.staff_type = 'ASSISTANT'
+       )
+     limit 1;
+
+    if probe_class_id is not null then
+      delete from public.class_teachers
+       where class_id = probe_class_id
+         and teacher_id = probe_teacher_id;
+      select exists (
+        select 1
+          from public.class_teachers
+         where class_id = probe_class_id
+           and teacher_id = probe_assistant_id
+      ) into assistant_survived;
+      if not assistant_survived then
+        raise exception 'removing a teacher link removed the assistant link';
+      end if;
+      raise exception 'rollback successful teacher/assistant link probe'
+        using errcode = 'P9003';
+    end if;
+  exception
+    when sqlstate 'P9003' then null;
+  end;
+
+  -- ---------------------------------------------------------------------
+  -- Migration 052: role snapshot + symmetric role-change guard probes.
+  -- ---------------------------------------------------------------------
+
+  -- staff_type_snapshot phải tồn tại, NOT NULL, check TEACHER|ASSISTANT.
+  if not exists (
+    select 1
+      from information_schema.columns
+     where table_schema = 'public'
+       and table_name = 'class_teacher_events'
+       and column_name = 'staff_type_snapshot'
+       and is_nullable = 'NO'
+  ) then
+    raise exception 'class_teacher_events.staff_type_snapshot must exist and be NOT NULL';
+  end if;
+  if not exists (
+    select 1
+      from pg_constraint
+     where conrelid = 'public.class_teacher_events'::regclass
+       and contype = 'c'
+       and pg_get_constraintdef(oid) like '%TEACHER%'
+       and pg_get_constraintdef(oid) like '%ASSISTANT%'
+  ) then
+    raise exception 'class_teacher_events.staff_type_snapshot must have a TEACHER|ASSISTANT check';
+  end if;
+  -- Không được còn event thiếu snapshot (backfill triệt để).
+  if exists (
+    select 1 from public.class_teacher_events
+     where staff_type_snapshot is null
+  ) then
+    raise exception 'class_teacher_events contains rows without staff_type_snapshot';
+  end if;
+
+  -- Probe role-change đối xứng: staff đang có link class_teachers không đổi
+  -- role theo bất kỳ chiều nào. Chạy trong subtransaction, cleanup bằng rollback.
+  declare
+    probe_staff_teacher uuid;
+    probe_staff_assistant uuid;
+    probe_link_class uuid;
+    probe_role_changed boolean;
+  begin
+    -- Tìm một teacher và một assistant đang có ít nhất một link bất kỳ.
+    select sm.id, link.class_id
+      into probe_staff_teacher, probe_link_class
+      from public.staff_members sm
+      join public.class_teachers link on link.teacher_id = sm.id
+     where sm.staff_type = 'TEACHER'
+     limit 1;
+
+    if probe_staff_teacher is not null then
+      begin
+        update public.staff_members
+           set staff_type = 'ASSISTANT'
+         where id = probe_staff_teacher;
+        raise exception 'teacher with a class link changed role to ASSISTANT';
+      exception
+        when raise_exception then null;
+      end;
+    end if;
+
+    select sm.id, link.class_id
+      into probe_staff_assistant, probe_link_class
+      from public.staff_members sm
+      join public.class_teachers link on link.teacher_id = sm.id
+     where sm.staff_type = 'ASSISTANT'
+     limit 1;
+
+    if probe_staff_assistant is not null then
+      begin
+        update public.staff_members
+           set staff_type = 'TEACHER'
+         where id = probe_staff_assistant;
+        raise exception 'assistant with a class link changed role to TEACHER';
+      exception
+        when raise_exception then null;
+      end;
+    end if;
+
+    raise exception 'rollback successful symmetric role-change probes'
+      using errcode = 'P9004';
+  exception
+    when sqlstate 'P9004' then null;
+  end;
+
+  -- ---------------------------------------------------------------------
+  -- Migration 053: schedule adjustments, session exceptions, snapshots and
+  -- append-only events.
+  -- ---------------------------------------------------------------------
+
+  -- R6-D03/D19: operational_end_date đã bị contract-drop; lifecycle chỉ theo
+  -- planned end (không FINALIZING, makeup không kéo dài class).
+  if exists (
+    select 1
+      from information_schema.columns
+     where table_schema = 'public'
+       and table_name = 'classes'
+       and column_name = 'operational_end_date'
+  ) then
+    raise exception 'classes.operational_end_date must be dropped (R6 contract)';
+  end if;
+
+  -- Exception state machine constraints.
+  if not exists (
+    select 1
+      from pg_constraint
+     where conrelid = 'public.class_session_exceptions'::regclass
+       and conname = 'class_session_exceptions_replacement_duration_check'
+       and contype = 'c' and convalidated
+  ) then
+    raise exception 'make-up duration must equal original duration at DB level';
+  end if;
+  if not exists (
+    select 1
+      from pg_constraint
+     where conrelid = 'public.class_session_exceptions'::regclass
+       and conname = 'class_session_exceptions_replacement_after_original_check'
+       and contype = 'c' and convalidated
+  ) then
+    raise exception 'make-up must be scheduled after the original at DB level';
+  end if;
+  if not exists (
+    select 1
+      from pg_constraint
+     where conrelid = 'public.class_session_exceptions'::regclass
+       and conname = 'class_session_exceptions_state_shape_check'
+       and contype = 'c' and convalidated
+  ) then
+    raise exception 'exception state-specific nullability must be enforced';
+  end if;
+
+  -- Tối đa một active exception + completed fact unique.
+  if to_regclass('public.ux_class_session_exceptions_active_original') is null then
+    raise exception 'one active exception per original occurrence must be unique';
+  end if;
+  if to_regclass('public.ux_class_session_exceptions_completed_original') is null then
+    raise exception 'completed make-up facts must be unique per original';
+  end if;
+
+  -- Replacement conflict lookup index + unresolved lookup index.
+  if to_regclass('public.idx_class_session_exceptions_replacement') is null then
+    raise exception 'replacement conflict lookup index is missing';
+  end if;
+  if to_regclass('public.idx_class_session_exceptions_unresolved_class') is null then
+    raise exception 'unresolved make-up lookup index is missing';
+  end if;
+
+  -- Append-only events: triggers + runtime cannot update/delete/truncate.
+  if not exists (
+    select 1
+      from pg_trigger t
+     where t.tgrelid = 'public.class_schedule_adjustment_events'::regclass
+       and t.tgname = 'trg_class_schedule_adjustment_events_append_only'
+       and not t.tgisinternal and t.tgenabled <> 'D'
+  ) or not exists (
+    select 1
+      from pg_trigger t
+     where t.tgrelid = 'public.class_schedule_adjustment_events'::regclass
+       and t.tgname = 'trg_class_schedule_adjustment_events_truncate'
+       and not t.tgisinternal and t.tgenabled <> 'D'
+  ) then
+    raise exception 'class schedule adjustment events must be append-only';
+  end if;
+  if has_function_privilege(
+    'anon', 'public.block_class_schedule_adjustment_event_mutation()', 'execute'
+  ) or has_function_privilege(
+    'authenticated', 'public.block_class_schedule_adjustment_event_mutation()', 'execute'
+  ) then
+    raise exception 'adjustment event guard function must not be browser executable';
+  end if;
+
+  if exists (select 1 from public.class_schedule_adjustment_events) then
+    begin
+      update public.class_schedule_adjustment_events
+         set new_payload = '{}'::jsonb
+       where id = (select id from public.class_schedule_adjustment_events limit 1);
+      raise exception 'adjustment event ledger accepted a mutation';
+    exception
+      when insufficient_privilege then null;
+    end;
+    begin
+      delete from public.class_schedule_adjustment_events
+       where id = (select id from public.class_schedule_adjustment_events limit 1);
+      raise exception 'adjustment event ledger accepted a deletion';
+    exception
+      when insufficient_privilege then null;
+    end;
+  end if;
+  begin
+    truncate table public.class_schedule_adjustment_events;
+    raise exception 'adjustment event ledger accepted truncation';
+  exception
+    when insufficient_privilege then null;
+  end;
+
+  -- Browser roles: không đọc/ghi trực tiếp các bảng mới.
+  if has_table_privilege('anon', 'public.class_schedule_adjustments', 'select')
+     or has_table_privilege('anon', 'public.class_schedule_adjustments', 'insert')
+     or has_table_privilege('authenticated', 'public.class_schedule_adjustments', 'select')
+     or has_table_privilege('authenticated', 'public.class_schedule_adjustments', 'insert')
+     or has_table_privilege('anon', 'public.class_session_exceptions', 'select')
+     or has_table_privilege('authenticated', 'public.class_session_exceptions', 'select')
+     or has_table_privilege('authenticated', 'public.class_session_exceptions', 'insert')
+     or has_table_privilege('anon', 'public.class_session_staff_snapshots', 'select')
+     or has_table_privilege('authenticated', 'public.class_session_staff_snapshots', 'select')
+     or has_table_privilege('anon', 'public.class_session_student_snapshots', 'select')
+     or has_table_privilege('authenticated', 'public.class_session_student_snapshots', 'select')
+     or has_table_privilege('anon', 'public.class_schedule_adjustment_events', 'select')
+     or has_table_privilege('authenticated', 'public.class_schedule_adjustment_events', 'select')
+     or has_table_privilege('authenticated', 'public.class_schedule_adjustment_events', 'insert')
+  then
+    raise exception 'browser roles must not access schedule adjustment tables directly';
+  end if;
+
+  -- Snapshots chỉ chứa trường entitlement/display — không contact/private note.
+  if exists (
+    select 1
+      from information_schema.columns
+     where table_schema = 'public'
+       and table_name in (
+         'class_session_staff_snapshots', 'class_session_student_snapshots'
+       )
+       and column_name in (
+         'phone', 'zalo_name', 'parent_phone', 'student_phone', 'notes'
+       )
+  ) then
+    raise exception 'make-up snapshots must not store contact or private data';
+  end if;
+
+  -- ---------------------------------------------------------------------
+  -- Migrations 070/071: retired viewer invitations and payroll integrity.
+  -- ---------------------------------------------------------------------
+  if not exists (
+    select 1 from pg_constraint
+     where conrelid = 'public.account_invitations'::regclass
+       and conname = 'account_invitations_role_staff_check'
+       and contype = 'c' and convalidated
+  ) then
+    raise exception 'account invitation role/staff invariant must be validated';
+  end if;
+  if to_regclass('public.account_invitations_active_teacher_staff_uniq') is null then
+    raise exception 'active teacher invitation reservation index is missing';
+  end if;
+  if exists (
+    select 1 from public.account_invitations
+     where role = 'viewer' and consumed_at is null and revoked_at is null
+  ) then
+    raise exception 'active viewer invitations are forbidden';
+  end if;
+  if has_table_privilege('anon', 'public.account_invitations', 'select')
+     or has_table_privilege('authenticated', 'public.account_invitations', 'select')
+  then
+    raise exception 'browser roles must not access account invitations directly';
+  end if;
+
+  if not exists (
+    select 1 from pg_constraint
+     where conrelid = 'public.staff_compensation_rates'::regclass
+       and conname = 'staff_compensation_rates_range'
+       and contype = 'c' and convalidated
+  ) then
+    raise exception 'staff compensation half-open range constraint is missing';
+  end if;
+  if not exists (
+    select 1 from pg_trigger
+     where tgrelid = 'public.staff_compensation_rates'::regclass
+       and tgname = 'trg_staff_compensation_rates_no_overlap'
+       and not tgisinternal and tgenabled <> 'D'
+  ) then
+    raise exception 'staff compensation overlap trigger must be enabled';
+  end if;
+  if to_regclass('public.staff_earning_primary_uniq') is null
+     or to_regclass('public.staff_earning_request_uniq') is null
+     or to_regclass('public.staff_payroll_settlements_request_uniq') is null
+     or to_regclass('public.staff_payroll_settlement_items_settlement_ledger_uniq') is null
+  then
+    raise exception 'payroll idempotency/exactly-once indexes are incomplete';
+  end if;
+  if has_table_privilege('anon', 'public.staff_earning_ledger', 'select')
+     or has_table_privilege('authenticated', 'public.staff_earning_ledger', 'select')
+     or has_table_privilege('anon', 'public.staff_payroll_settlements', 'select')
+     or has_table_privilege('authenticated', 'public.staff_payroll_settlements', 'select')
+     or has_table_privilege('anon', 'public.staff_payroll_settlement_reversals', 'select')
+     or has_table_privilege('authenticated', 'public.staff_payroll_settlement_reversals', 'select')
+  then
+    raise exception 'browser roles must not access payroll ledgers directly';
+  end if;
+
+  if to_regclass('public.staff_payroll_settlement_reversals') is null
+     or not (select relrowsecurity and relforcerowsecurity
+             from pg_class where oid = 'public.staff_payroll_settlement_reversals'::regclass)
+  then
+    raise exception 'payroll settlement reversal ledger security is incomplete';
   end if;
 
 end $$;

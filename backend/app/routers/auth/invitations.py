@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.dependencies import require_owner
+from app.core.dependencies import Principal, require_dev
 from app.schemas.auth import (
     InvitationCreate,
     InvitationResponse,
@@ -29,13 +29,17 @@ logger = logging.getLogger("tpro_classio.auth.invitations")
 async def create_account_invitation(
     payload: InvitationCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(require_owner),
+    principal: Principal = Depends(require_dev),
 ) -> InvitationResponse:
-    """Create an invitation link for a new viewer account."""
-    invited_by = str(current_user["id"] or "")
+    """Create an invitation link for a new admin or teacher account."""
+    invited_by = principal.user_id
 
     raw_token, invitation = await create_invitation(
-        db, email=payload.email.strip().lower(), invited_by=invited_by
+        db,
+        email=payload.email.strip().lower(),
+        invited_by=invited_by,
+        role=payload.role,
+        staff_id=payload.staff_id,
     )
 
     # Build full invitation URL for the frontend
@@ -48,6 +52,7 @@ async def create_account_invitation(
         id=str(invitation.id),
         email=invitation.email,
         role=invitation.role,
+        staff_id=str(invitation.staff_id) if invitation.staff_id else None,
         invite_url=invite_url,
         expires_at=invitation.expires_at.isoformat(),
         consumed=invitation.consumed_at is not None,
@@ -59,15 +64,16 @@ async def create_account_invitation(
 @router.get("/invitations", response_model=list[InvitationSummary])
 async def list_account_invitations(
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(require_owner),
+    principal: Principal = Depends(require_dev),
 ) -> list[InvitationSummary]:
-    invited_by = str(current_user["id"] or "")
+    invited_by = principal.user_id
     invitations = await list_invitations(db, invited_by=invited_by)
     return [
         InvitationSummary(
             id=str(inv.id),
             email=inv.email,
             role=inv.role,
+            staff_id=str(inv.staff_id) if inv.staff_id else None,
             expires_at=inv.expires_at.isoformat(),
             consumed=inv.consumed_at is not None,
             revoked=inv.revoked_at is not None,
@@ -81,7 +87,7 @@ async def list_account_invitations(
 async def revoke_account_invitation(
     invitation_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(require_owner),
+    principal: Principal = Depends(require_dev),
 ) -> MessageResponse:
     await revoke_invitation(db, invitation_id)
     return MessageResponse(message="Lời mời đã bị thu hồi.")

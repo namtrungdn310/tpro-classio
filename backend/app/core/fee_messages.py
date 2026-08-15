@@ -23,9 +23,11 @@ FEE_MESSAGE_COMMON_TOKENS = frozenset(
 )
 FEE_MESSAGE_TOKEN_PATTERN = re.compile(r"{{([a-z_]+)}}")
 MAX_FEE_MESSAGE_TEMPLATE_LENGTH = 1400
-LEGACY_OVERDUE_TOKEN = "{{nhac_qua_han}}"
-DUE_DATE_TOKEN = "{{ngay_den_han}}"
-CLASS_AMOUNT_TOKEN = "{{chi_tiet_hoc_phi}}"
+# Template placeholders, not credentials.  Bandit B105 heuristically treats
+# their names as passwords, so keep the suppression local and documented.
+LEGACY_OVERDUE_TOKEN = "{{nhac_qua_han}}"  # nosec B105
+DUE_DATE_TOKEN = "{{ngay_den_han}}"  # nosec B105
+CLASS_AMOUNT_TOKEN = "{{chi_tiet_hoc_phi}}"  # nosec B105
 
 
 def normalize_fee_message_template(value: str) -> str:

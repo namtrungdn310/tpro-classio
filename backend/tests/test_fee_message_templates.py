@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from fastapi.routing import APIRoute
 from pydantic import ValidationError
 
-from app.core.dependencies import require_admin
+from app.core.dependencies import require_management
 from app.core.fee_messages import (
     DEFAULT_FEE_RECEIPT_TEMPLATE,
     DEFAULT_FEE_REMINDER_TEMPLATE,
@@ -22,7 +22,7 @@ from app.services.fee_template_service import (
 )
 
 
-def test_fee_message_template_endpoints_are_admin_only() -> None:
+def test_fee_message_template_endpoints_are_management_only() -> None:
     routes = [
         route
         for route in fees_router.routes
@@ -31,7 +31,7 @@ def test_fee_message_template_endpoints_are_admin_only() -> None:
 
     assert {method for route in routes for method in route.methods} == {"GET", "PUT"}
     assert all(
-        require_admin
+        require_management
         in {dependency.call for dependency in route.dependant.dependencies}
         for route in routes
     )

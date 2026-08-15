@@ -100,11 +100,21 @@ _DASHBOARD_METRICS_SQL = text(
           and enrollment.enrollment_date <= :today
           and student.status = 'active'
           and class_.is_active = true
+          and class_.cancelled_at is null
+          and (
+            class_.identity_scheme = 'LEGACY'
+            or (class_.start_date <= :today and class_.end_date >= :today)
+          )
       ) as active_student_count,
       (
         select count(*)
         from public.classes class_
         where class_.is_active = true
+          and class_.cancelled_at is null
+          and (
+            class_.identity_scheme = 'LEGACY'
+            or (class_.start_date <= :today and class_.end_date >= :today)
+          )
       ) as active_class_count,
       (
         select count(*)
@@ -118,6 +128,11 @@ _DASHBOARD_METRICS_SQL = text(
           end
         ) as schedule_slot(value)
         where class_.is_active = true
+          and class_.cancelled_at is null
+          and (
+            class_.identity_scheme = 'LEGACY'
+            or (class_.start_date <= :today and class_.end_date >= :today)
+          )
           and jsonb_typeof(schedule_slot.value) = 'object'
           and jsonb_typeof(schedule_slot.value -> 'day') = 'string'
           and jsonb_typeof(schedule_slot.value -> 'start') = 'string'

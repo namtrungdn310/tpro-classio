@@ -1,8 +1,10 @@
 import asyncio
 import logging
 import time
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi import HTTPException
 from fastapi import Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -11,32 +13,160 @@ from starlette.responses import Response
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.core.config import settings
-from app.core.billing import get_billing_period_key
 from app.core.database import AsyncSessionLocal
 from app.core.http import supabase_auth_client
+from app.routers.attendance import router as attendance_router
 from app.routers.auth import router as auth_router
+from app.routers.class_makeup import exception_router as class_exception_router
+from app.routers.class_makeup import router as class_makeup_router
 from app.routers.classes import router as classes_router
+from app.routers.contact_suggestions import router as contact_suggestions_router
 from app.routers.dashboard import router as dashboard_router
 from app.routers.fees import router as fees_router
 from app.routers.reports import router as reports_router
 from app.routers.staff import router as staff_router
 from app.routers.students import enrollments_router, students_router
-from app.services.class_service import get_classes
+from app.routers.suspensions import router as suspensions_router
+from app.services.class_service import complete_expired_classes
 from app.services.auth_flow_service import purge_expired_auth_flows
-from app.services.dashboard_service import get_dashboard_overview
-from app.services.fee_service import get_fee_records
-from app.services.student_service import get_students
 from app.services.google_identity_service import sync_due_google_avatars
 
 logger = logging.getLogger("tpro_classio")
 avatar_sync_task: asyncio.Task[None] | None = None
 auth_flow_cleanup_task: asyncio.Task[None] | None = None
+class_lifecycle_task: asyncio.Task[None] | None = None
+
+# A successful TCP/SELECT 1 probe is not enough after a forward-only domain
+# rollout: an old Supabase schema can accept connections while every new
+# business endpoint fails at runtime.  These relations are stable markers for
+# migrations 055, 059, 063, 067, 068, 071 and 073 respectively.  Keeping the
+# list small makes the readiness query bounded while still failing closed when
+# the Round 6/7 schema has not been installed.
+_REQUIRED_SCHEMA_RELATIONS = (
+    "student_code_registry",
+    "class_schedule_slots",
+    "enrollment_service_credit_events",
+    "staff_attendance_entries",
+    "payment_requests",
+    "staff_payroll_settlements",
+    "staff_payroll_settlement_reversals",
+)
+
+
+async def missing_required_schema_relations(session) -> list[str]:
+    result = await session.execute(
+        text(
+            "select required.name "
+            "from unnest(cast(:required_relations as text[])) as required(name) "
+            "where to_regclass('public.' || required.name) is null "
+            "order by required.name"
+        ),
+        {"required_relations": list(_REQUIRED_SCHEMA_RELATIONS)},
+    )
+    return list(result.scalars().all())
+
+
+async def run_auth_flow_cleanup_worker() -> None:
+    """Purge expired credential-bearing pre-auth rows on every deployment."""
+    while True:
+        try:
+            async with AsyncSessionLocal() as session:
+                await purge_expired_auth_flows(session)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Expired auth-flow cleanup failed")
+        await asyncio.sleep(5 * 60)
+
+
+async def run_avatar_sync_worker() -> None:
+    """Idempotently sync due Google avatars without delaying requests."""
+    while True:
+        try:
+            async with AsyncSessionLocal() as session:
+                await sync_due_google_avatars(session)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Periodic Google avatar sync failed")
+        await asyncio.sleep(60 * 60)
+
+
+async def run_class_lifecycle_worker() -> None:
+    """Finalize expired classes without making request visibility depend on it."""
+    while True:
+        try:
+            async with AsyncSessionLocal() as session:
+                completed = await complete_expired_classes(session)
+                if completed:
+                    logger.info("Finalized %s expired class(es)", completed)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Class lifecycle completion worker failed")
+        await asyncio.sleep(60)
+
+
+async def warm_database_connection() -> None:
+    """R6-D18: bounded readiness probe — SELECT 1 only (no full-read warmup)."""
+    started_at = time.perf_counter()
+    try:
+        async with AsyncSessionLocal() as session:
+            await session.execute(text("select 1"))
+        logger.info(
+            "Database connection warmup completed in %.1fms",
+            (time.perf_counter() - started_at) * 1000,
+        )
+    except Exception:
+        logger.exception("Database connection warmup failed")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global auth_flow_cleanup_task, avatar_sync_task, class_lifecycle_task
+    await warm_database_connection()
+    auth_flow_cleanup_task = asyncio.create_task(run_auth_flow_cleanup_worker())
+    class_lifecycle_task = asyncio.create_task(run_class_lifecycle_worker())
+    if (
+        settings.google_client_id
+        and settings.google_client_secret
+        and settings.supabase_service_role_key
+        and settings.auth_encryption_key
+    ):
+        avatar_sync_task = asyncio.create_task(run_avatar_sync_worker())
+
+    yield
+
+    if auth_flow_cleanup_task is not None:
+        auth_flow_cleanup_task.cancel()
+        try:
+            await auth_flow_cleanup_task
+        except asyncio.CancelledError:
+            pass
+        auth_flow_cleanup_task = None
+    if avatar_sync_task is not None:
+        avatar_sync_task.cancel()
+        try:
+            await avatar_sync_task
+        except asyncio.CancelledError:
+            pass
+        avatar_sync_task = None
+    if class_lifecycle_task is not None:
+        class_lifecycle_task.cancel()
+        try:
+            await class_lifecycle_task
+        except asyncio.CancelledError:
+            pass
+        class_lifecycle_task = None
+    await supabase_auth_client.aclose()
+
 
 app = FastAPI(
     title="TPRO Classio API",
     docs_url="/docs" if settings.api_docs_enabled else None,
     redoc_url="/redoc" if settings.api_docs_enabled else None,
     openapi_url="/openapi.json" if settings.api_docs_enabled else None,
+    lifespan=lifespan,
 )
 app.add_middleware(
     TrustedHostMiddleware,
@@ -59,13 +189,18 @@ app.add_middleware(
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 app.include_router(auth_router, prefix="/auth")
+app.include_router(attendance_router, prefix="/attendance")
 app.include_router(classes_router, prefix="/classes")
+app.include_router(class_makeup_router, prefix="/classes")
+app.include_router(class_exception_router, prefix="/class-session-exceptions")
+app.include_router(contact_suggestions_router, prefix="/contact-suggestions")
 app.include_router(dashboard_router, prefix="/dashboard")
 app.include_router(fees_router, prefix="/fees")
 app.include_router(reports_router, prefix="/reports")
 app.include_router(staff_router, prefix="/staff")
 app.include_router(students_router, prefix="/students")
 app.include_router(enrollments_router, prefix="/enrollments")
+app.include_router(suspensions_router, prefix="/classes")
 
 
 @app.middleware("http")
@@ -120,111 +255,17 @@ async def liveness_check() -> dict[str, str]:
 
 @app.get("/health/ready")
 async def readiness_check() -> dict[str, str]:
-    """Readiness probe used by Docker/load balancers; verifies the DB is reachable."""
+    """Verify both DB reachability and the minimum application schema contract."""
     async with AsyncSessionLocal() as session:
         await session.execute(text("select 1"))
+        missing = await missing_required_schema_relations(session)
+    if missing:
+        logger.error(
+            "Readiness blocked: database schema is missing %s required relation(s)",
+            len(missing),
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Database schema is not ready for this application version",
+        )
     return {"status": "ready", "app": "TPRO Classio API"}
-
-
-@app.on_event("startup")
-async def warm_database_on_startup() -> None:
-    global auth_flow_cleanup_task, avatar_sync_task
-    await warm_database_connection()
-    auth_flow_cleanup_task = asyncio.create_task(run_auth_flow_cleanup_worker())
-    if (
-        settings.google_client_id
-        and settings.google_client_secret
-        and settings.supabase_service_role_key
-        and settings.auth_encryption_key
-    ):
-        avatar_sync_task = asyncio.create_task(run_avatar_sync_worker())
-
-
-async def run_auth_flow_cleanup_worker() -> None:
-    """Purge expired credential-bearing pre-auth rows on every deployment."""
-    while True:
-        try:
-            async with AsyncSessionLocal() as session:
-                await purge_expired_auth_flows(session)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("Expired auth-flow cleanup failed")
-        await asyncio.sleep(5 * 60)
-
-
-async def run_avatar_sync_worker() -> None:
-    """Idempotently sync due Google avatars without delaying requests."""
-    while True:
-        try:
-            async with AsyncSessionLocal() as session:
-                await sync_due_google_avatars(session)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("Periodic Google avatar sync failed")
-        await asyncio.sleep(60 * 60)
-
-
-async def warm_database_connection() -> None:
-    started_at = time.perf_counter()
-    try:
-        async with AsyncSessionLocal() as session:
-            db_started_at = time.perf_counter()
-            await session.execute(text("select 1"))
-            db_ms = (time.perf_counter() - db_started_at) * 1000
-
-        cache_started_at = time.perf_counter()
-
-        async def warm_classes() -> None:
-            async with AsyncSessionLocal() as session:
-                await get_classes(session, is_active=True)
-
-        async def warm_dashboard() -> None:
-            async with AsyncSessionLocal() as session:
-                await get_dashboard_overview(session)
-
-        async def warm_students() -> None:
-            async with AsyncSessionLocal() as session:
-                await get_students(session, status="active")
-
-        async def warm_fees() -> None:
-            async with AsyncSessionLocal() as session:
-                await get_fee_records(session, get_billing_period_key())
-
-        await asyncio.gather(
-            warm_classes(),
-            warm_dashboard(),
-            warm_students(),
-            warm_fees(),
-        )
-        cache_ms = (time.perf_counter() - cache_started_at) * 1000
-
-        logger.info(
-            "Database warmup completed in %.1fms (connect %.1fms, read caches %.1fms)",
-            (time.perf_counter() - started_at) * 1000,
-            db_ms,
-            cache_ms,
-        )
-    except Exception:
-        logger.exception("Database warmup failed")
-
-
-@app.on_event("shutdown")
-async def close_http_clients() -> None:
-    global auth_flow_cleanup_task, avatar_sync_task
-    if auth_flow_cleanup_task is not None:
-        auth_flow_cleanup_task.cancel()
-        try:
-            await auth_flow_cleanup_task
-        except asyncio.CancelledError:
-            pass
-        auth_flow_cleanup_task = None
-    if avatar_sync_task is not None:
-        avatar_sync_task.cancel()
-        try:
-            await avatar_sync_task
-        except asyncio.CancelledError:
-            pass
-        avatar_sync_task = None
-    await supabase_auth_client.aclose()

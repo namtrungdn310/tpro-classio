@@ -115,16 +115,19 @@ async def test_staff_lifecycle_triggers_preserve_class_assignments() -> None:
                 where id = cast(:teacher_id as uuid)
                 """,
                 {"teacher_id": teacher_id},
-                match="cannot change staff type",
+                match="cannot change role while still assigned",
             )
-            await _assert_trigger_rejects(
-                db,
-                """
-                insert into public.class_teachers (class_id, teacher_id)
-                values (cast(:class_id as uuid), cast(:assistant_id as uuid))
-                """,
+            # Kể từ migration 049, ASSISTANT hợp lệ trong junction class_teachers:
+            # link assistant phải được chấp nhận (không còn bị chặn "must reference
+            # a teacher").
+            await db.execute(
+                text(
+                    """
+                    insert into public.class_teachers (class_id, teacher_id)
+                    values (cast(:class_id as uuid), cast(:assistant_id as uuid))
+                    """
+                ),
                 {"class_id": class_id, "assistant_id": assistant_id},
-                match="must reference a teacher",
             )
             await _assert_trigger_rejects(
                 db,
@@ -166,7 +169,7 @@ async def test_staff_lifecycle_triggers_preserve_class_assignments() -> None:
                 where id = cast(:class_id as uuid)
                 """,
                 {"class_id": class_id},
-                match="invalid teacher assignment",
+                match="inactive teacher or assistant",
             )
             await _assert_trigger_rejects(
                 db,
@@ -176,7 +179,7 @@ async def test_staff_lifecycle_triggers_preserve_class_assignments() -> None:
                 where id = cast(:teacher_id as uuid)
                 """,
                 {"teacher_id": teacher_id},
-                match="cannot change staff type",
+                match="cannot change role while still assigned",
             )
         finally:
             if transaction.is_active:

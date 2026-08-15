@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_user, require_admin
+from app.core.dependencies import Principal, require_management
 from app.schemas.fee import (
     FeeBatchNotifyRequest,
     FeeBatchPayRequest,
@@ -47,6 +47,7 @@ from app.services.fee_template_service import (
     get_fee_message_templates,
     update_fee_message_templates,
 )
+from app.services.fee_operation_service import FeeOperationActorSnapshot
 
 router = APIRouter(tags=["fees"])
 
@@ -54,7 +55,7 @@ router = APIRouter(tags=["fees"])
 @router.get("/periods", response_model=FeePeriodListResponse)
 async def list_fee_periods(
     db: AsyncSession = Depends(get_db),
-    current_user: dict[str, str | bool | None] = Depends(get_current_user),
+    principal: Principal = Depends(require_management),
 ) -> FeePeriodListResponse:
     return await get_fee_periods(db)
 
@@ -62,7 +63,7 @@ async def list_fee_periods(
 @router.get("/message-templates", response_model=FeeMessageTemplatesResponse)
 async def read_fee_message_templates(
     db: AsyncSession = Depends(get_db),
-    current_user: dict[str, str | bool | None] = Depends(require_admin),
+    principal: Principal = Depends(require_management),
 ) -> FeeMessageTemplatesResponse:
     return await get_fee_message_templates(db)
 
@@ -71,12 +72,12 @@ async def read_fee_message_templates(
 async def save_fee_message_templates(
     payload: FeeMessageTemplatesUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: dict[str, str | bool | None] = Depends(require_admin),
+    principal: Principal = Depends(require_management),
 ) -> FeeMessageTemplatesResponse:
     return await update_fee_message_templates(
         db,
         payload,
-        actor_id=_get_actor_id(current_user),
+        actor_id=principal.user_id,
     )
 
 
@@ -86,7 +87,7 @@ async def list_fee_records(
     class_id: UUID | None = Query(default=None),
     state: FeeQueryState | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
-    current_user: dict[str, str | bool | None] = Depends(get_current_user),
+    principal: Principal = Depends(require_management),
 ) -> FeeRecordListResponse:
     return await get_fee_records(db, period=period, class_id=class_id, state=state)
 
@@ -95,12 +96,13 @@ async def list_fee_records(
 async def sync_fee_records(
     period: str = Query(pattern=r"^\d{4}-\d{2}$"),
     db: AsyncSession = Depends(get_db),
-    current_user: dict[str, str | bool | None] = Depends(require_admin),
+    principal: Principal = Depends(require_management),
 ) -> FeeRecordListResponse:
     await sync_fee_records_for_period(
         db,
         period,
-        actor_id=_get_actor_id(current_user),
+        actor_id=principal.user_id,
+        actor_snapshot=_get_actor_snapshot(principal),
     )
     return await get_fee_records(db, period=period)
 
@@ -109,15 +111,16 @@ async def sync_fee_records(
 async def notify_fee_records(
     payload: FeeBatchNotifyRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: dict[str, str | bool | None] = Depends(require_admin),
+    principal: Principal = Depends(require_management),
 ) -> FeeBatchResponse:
     return await mark_fees_notified(
         db,
         payload.record_ids,
         payload.message,
         payload.channel,
-        actor_id=_get_actor_id(current_user),
+        actor_id=principal.user_id,
         request_id=payload.request_id,
+        actor_snapshot=_get_actor_snapshot(principal),
     )
 
 
@@ -125,14 +128,15 @@ async def notify_fee_records(
 async def pay_fee_records(
     payload: FeeBatchPayRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: dict[str, str | bool | None] = Depends(require_admin),
+    principal: Principal = Depends(require_management),
 ) -> FeeBatchResponse:
     return await mark_fees_paid(
         db,
         payload.record_ids,
-        actor_id=_get_actor_id(current_user),
+        actor_id=principal.user_id,
         payment_method=payload.payment_method,
         request_id=payload.request_id,
+        actor_snapshot=_get_actor_snapshot(principal),
     )
 
 
@@ -140,14 +144,15 @@ async def pay_fee_records(
 async def unpay_fee_records(
     payload: FeeBatchUnpayRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: dict[str, str | bool | None] = Depends(require_admin),
+    principal: Principal = Depends(require_management),
 ) -> FeeBatchResponse:
     return await mark_fees_unpaid(
         db,
         payload.record_ids,
-        actor_id=_get_actor_id(current_user),
+        actor_id=principal.user_id,
         target_notification_state=payload.target_notification_state,
         request_id=payload.request_id,
+        actor_snapshot=_get_actor_snapshot(principal),
     )
 
 
@@ -155,13 +160,14 @@ async def unpay_fee_records(
 async def unnotify_fee_records(
     payload: FeeBatchRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: dict[str, str | bool | None] = Depends(require_admin),
+    principal: Principal = Depends(require_management),
 ) -> FeeBatchResponse:
     return await mark_fees_unnotified(
         db,
         payload.record_ids,
-        actor_id=_get_actor_id(current_user),
+        actor_id=principal.user_id,
         request_id=payload.request_id,
+        actor_snapshot=_get_actor_snapshot(principal),
     )
 
 
@@ -169,12 +175,13 @@ async def unnotify_fee_records(
 async def refund_paid_fee_records(
     payload: FeeBatchRefundRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: dict[str, str | bool | None] = Depends(require_admin),
+    principal: Principal = Depends(require_management),
 ) -> FeeRefundBatchResponse:
     return await refund_fee_records(
         db,
         payload,
-        actor_id=_get_required_actor_id(current_user),
+        actor_id=principal.user_id,
+        actor_snapshot=_get_actor_snapshot(principal),
     )
 
 
@@ -185,12 +192,13 @@ async def refund_paid_fee_records(
 async def reverse_refund_transaction(
     payload: FeeRefundReversalRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: dict[str, str | bool | None] = Depends(require_admin),
+    principal: Principal = Depends(require_management),
 ) -> FeeRefundReversalResponse:
     return await reverse_fee_refund(
         db,
         payload,
-        actor_id=_get_required_actor_id(current_user),
+        actor_id=principal.user_id,
+        actor_snapshot=_get_actor_snapshot(principal),
     )
 
 
@@ -198,7 +206,7 @@ async def reverse_refund_transaction(
 async def read_fee_transactions(
     id: UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: dict[str, str | bool | None] = Depends(get_current_user),
+    principal: Principal = Depends(require_management),
 ) -> FeeTransactionListResponse:
     result = await get_fee_transactions(db, id)
     if result is None:
@@ -216,7 +224,7 @@ async def read_fee_transactions(
 async def read_fee_transaction_batch(
     payload: FeeBatchRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: dict[str, str | bool | None] = Depends(get_current_user),
+    principal: Principal = Depends(require_management),
 ) -> FeeTransactionBatchResponse:
     return await get_fee_transactions_batch(db, payload.record_ids)
 
@@ -226,14 +234,15 @@ async def notify_fee_record(
     id: UUID,
     payload: FeeNotifyRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: dict[str, str | bool | None] = Depends(require_admin),
+    principal: Principal = Depends(require_management),
 ) -> FeeRecordResponse:
     record = await mark_fee_notified(
         db,
         id,
         payload.message,
         payload.channel,
-        actor_id=_get_actor_id(current_user),
+        actor_id=principal.user_id,
+        actor_snapshot=_get_actor_snapshot(principal),
     )
     if record is None:
         raise HTTPException(
@@ -248,13 +257,14 @@ async def pay_fee_record(
     id: UUID,
     payment_method: FeePaymentMethod = Query(default="bank_transfer"),
     db: AsyncSession = Depends(get_db),
-    current_user: dict[str, str | bool | None] = Depends(require_admin),
+    principal: Principal = Depends(require_management),
 ) -> FeeRecordResponse:
     record = await mark_fee_paid(
         db,
         id,
-        actor_id=_get_actor_id(current_user),
+        actor_id=principal.user_id,
         payment_method=payment_method,
+        actor_snapshot=_get_actor_snapshot(principal),
     )
     if record is None:
         raise HTTPException(
@@ -269,13 +279,14 @@ async def unpay_fee_record(
     id: UUID,
     target_notification_state: FeeUnpayTargetState = Query(default="NOTIFIED_UNPAID"),
     db: AsyncSession = Depends(get_db),
-    current_user: dict[str, str | bool | None] = Depends(require_admin),
+    principal: Principal = Depends(require_management),
 ) -> FeeRecordResponse:
     record = await mark_fee_unpaid(
         db,
         id,
-        actor_id=_get_actor_id(current_user),
+        actor_id=principal.user_id,
         target_notification_state=target_notification_state,
+        actor_snapshot=_get_actor_snapshot(principal),
     )
     if record is None:
         raise HTTPException(
@@ -289,27 +300,26 @@ async def unpay_fee_record(
 async def unnotify_fee_record(
     id: UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: dict[str, str | bool | None] = Depends(require_admin),
+    principal: Principal = Depends(require_management),
 ) -> FeeBatchResponse:
     return await mark_fees_unnotified(
         db,
         [id],
-        actor_id=_get_actor_id(current_user),
+        actor_id=principal.user_id,
+        actor_snapshot=_get_actor_snapshot(principal),
     )
 
 
-def _get_actor_id(current_user: dict[str, str | bool | None]) -> str | None:
-    actor_id = current_user.get("id")
-    return actor_id if isinstance(actor_id, str) else None
-
-
-def _get_required_actor_id(
-    current_user: dict[str, str | bool | None],
-) -> str:
-    actor_id = _get_actor_id(current_user)
-    if actor_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Phiên đăng nhập không có định danh người thao tác",
-        )
-    return actor_id
+def _get_actor_snapshot(
+    principal: Principal,
+) -> FeeOperationActorSnapshot:
+    return FeeOperationActorSnapshot(
+        user_id=principal.user_id,
+        name=(
+            principal.full_name
+            if principal.full_name and principal.full_name.strip()
+            else principal.username
+        ),
+        username=principal.username,
+        role=principal.effective_role,
+    )

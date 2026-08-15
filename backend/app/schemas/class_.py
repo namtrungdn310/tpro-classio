@@ -4,7 +4,25 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.core.business_time import business_today
+
 ClassType = Literal["MONTHLY", "COURSE"]
+ClassIdentityScheme = Literal["LEGACY", "ACADEMIC_YEAR", "INTAKE"]
+ClassCategory = Literal["GENERAL", "SPECIALIZED", "IELTS", "CUSTOM"]
+ClassGradeMode = Literal["GRADE", "NONE"]
+ClassEducationLevel = Literal["PRIMARY", "MIDDLE", "HIGH"]
+ClassEffectiveStatus = Literal[
+    "LEGACY", "SCHEDULED", "ACTIVE", "COMPLETED", "CANCELLED"
+]
+ClassNextFeeDueState = Literal["OVERDUE", "UPCOMING", "NONE"]
+ClassScope = Literal[
+    "operational",
+    "active",
+    "enrollable",
+    "scheduled",
+    "completed",
+    "cancelled",
+]
 ClassDay = Literal[
     "Thứ 2",
     "Thứ 3",
@@ -14,7 +32,7 @@ ClassDay = Literal[
     "Thứ 7",
     "Chủ Nhật",
 ]
-COURSE_BILLING_MONTHS = {2, 3, 6, 12}
+MAX_BILLING_CYCLE_WEEKS = 32_767
 
 
 class ClassScheduleSlot(BaseModel):
@@ -23,11 +41,26 @@ class ClassScheduleSlot(BaseModel):
     day: ClassDay
     start: str = Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
     end: str = Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    teacher_ids: list[UUID] = Field(default_factory=list, max_length=10)
+    assistant_ids: list[UUID] = Field(default_factory=list, max_length=10)
+    # R6-D07: stable relational slot identity (read-only projection).
+    id: UUID | None = None
+    version: int | None = Field(default=None, ge=1)
 
     @model_validator(mode="after")
     def validate_time_range(self) -> "ClassScheduleSlot":
         if self.start >= self.end:
             raise ValueError("Giờ kết thúc phải sau giờ bắt đầu")
+        start_hour, start_minute = map(int, self.start.split(":"))
+        end_hour, end_minute = map(int, self.end.split(":"))
+        start_total = start_hour * 60 + start_minute
+        end_total = end_hour * 60 + end_minute
+        if start_minute not in (0, 30) or end_minute not in (0, 30):
+            raise ValueError("Khung giờ học phải theo mốc 30 phút")
+        if start_total < 7 * 60 or end_total > 22 * 60:
+            raise ValueError("Khung giờ học phải nằm trong khoảng 07:00 đến 22:00")
+        if end_total - start_total < 60:
+            raise ValueError("Mỗi buổi học phải kéo dài ít nhất 60 phút")
         return self
 
 
@@ -35,7 +68,7 @@ class ClassSchedule(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     text: str = Field(default="", max_length=1000)
-    slots: list[ClassScheduleSlot] = Field(default_factory=list, max_length=28)
+    slots: list[ClassScheduleSlot] = Field(default_factory=list, max_length=4)
 
     @model_validator(mode="after")
     def validate_non_overlapping_slots(self) -> "ClassSchedule":
@@ -53,37 +86,71 @@ def validate_class_configuration(
     *,
     class_type: ClassType,
     billing_cycle_months: int,
+    billing_cycle_weeks: int | None,
     start_date: date | None,
     end_date: date | None,
 ) -> None:
     if class_type == "MONTHLY" and billing_cycle_months != 1:
         raise ValueError("Lớp theo tháng phải có chu kỳ thu một tháng")
-    if class_type == "COURSE" and billing_cycle_months not in COURSE_BILLING_MONTHS:
-        raise ValueError("Thời lượng gói chỉ hỗ trợ 8, 12, 24 hoặc 48 tuần")
-    if start_date is not None and end_date is not None and end_date < start_date:
-        raise ValueError("Ngày kết thúc phải bằng hoặc sau ngày bắt đầu")
+    if class_type == "MONTHLY" and billing_cycle_weeks is not None:
+        raise ValueError("Lớp theo tháng không sử dụng thời lượng gói theo tuần")
+    if class_type == "COURSE" and (
+        billing_cycle_weeks is None or billing_cycle_weeks < 1
+    ):
+        raise ValueError("Thời lượng mỗi gói phải từ một tuần trở lên")
+    if start_date is not None and end_date is not None and end_date <= start_date:
+        raise ValueError("Ngày kết thúc phải sau ngày bắt đầu")
 
 
 class ClassBase(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     name: str = Field(min_length=1, max_length=120)
     type: ClassType
     base_fee: int = Field(ge=0, le=999_999_999_999)
     billing_cycle_months: int = Field(default=1, ge=1, le=24)
+    billing_cycle_weeks: int | None = Field(
+        default=None,
+        ge=1,
+        le=MAX_BILLING_CYCLE_WEEKS,
+    )
     start_date: date | None = None
     end_date: date | None = None
+    identity_scheme: ClassIdentityScheme = "LEGACY"
+    class_category: ClassCategory | None = None
+    grade_mode: ClassGradeMode | None = None
+    program_name: str | None = Field(default=None, min_length=1, max_length=120)
+    grade_level: int | None = Field(default=None, ge=1, le=12)
+    academic_year_start: int | None = Field(default=None, ge=2000, le=2200)
     schedule: ClassSchedule | None = None
     teacher_id: UUID | None = None
     teacher_ids: list[UUID] = Field(default_factory=list, max_length=10)
+    assistant_ids: list[UUID] = Field(default_factory=list, max_length=10)
+
+    @model_validator(mode="after")
+    def reject_teacher_assistant_overlap(self) -> "ClassBase":
+        teacher_set = set(self.teacher_ids)
+        assistant_set = set(self.assistant_ids)
+        overlap = teacher_set & assistant_set
+        if overlap:
+            raise ValueError("Một nhân sự không thể vừa là giáo viên vừa là trợ giảng")
+        return self
 
     @field_validator("teacher_ids")
     @classmethod
     def deduplicate_teacher_ids(cls, value: list[UUID]) -> list[UUID]:
         return list(dict.fromkeys(value))
 
+    @field_validator("assistant_ids")
+    @classmethod
+    def deduplicate_assistant_ids(cls, value: list[UUID]) -> list[UUID]:
+        return list(dict.fromkeys(value))
+
 
 class ClassCreate(ClassBase):
+    class_category: ClassCategory
+    source_class_id: UUID | None = None
+
     @model_validator(mode="after")
     def validate_create_configuration(self) -> "ClassCreate":
         if not self.teacher_ids and self.teacher_id is None:
@@ -95,9 +162,23 @@ class ClassCreate(ClassBase):
         validate_class_configuration(
             class_type=self.type,
             billing_cycle_months=self.billing_cycle_months,
+            billing_cycle_weeks=self.billing_cycle_weeks,
             start_date=self.start_date,
             end_date=self.end_date,
         )
+        validate_class_identity(
+            identity_scheme=self.identity_scheme,
+            class_category=self.class_category,
+            grade_mode=self.grade_mode,
+            grade_level=self.grade_level,
+            academic_year_start=self.academic_year_start,
+            start_date=self.start_date,
+            end_date=self.end_date,
+            allow_legacy=False,
+        )
+        today = business_today()
+        if self.start_date is not None and self.start_date < today:
+            raise ValueError("Ngày bắt đầu không được trước ngày hôm nay")
         return self
 
 
@@ -108,11 +189,34 @@ class ClassUpdate(BaseModel):
     type: ClassType | None = None
     base_fee: int | None = Field(default=None, ge=0, le=999_999_999_999)
     billing_cycle_months: int | None = Field(default=None, ge=1, le=24)
+    billing_cycle_weeks: int | None = Field(
+        default=None,
+        ge=1,
+        le=MAX_BILLING_CYCLE_WEEKS,
+    )
     start_date: date | None = None
     end_date: date | None = None
+    end_date_change_reason: str | None = Field(
+        default=None,
+        min_length=3,
+        max_length=500,
+    )
+    expected_version: int | None = Field(default=None, ge=1)
+    expected_fingerprint: str | None = Field(
+        default=None,
+        min_length=32,
+        max_length=64,
+    )
+    identity_scheme: ClassIdentityScheme | None = None
+    class_category: ClassCategory | None = None
+    grade_mode: ClassGradeMode | None = None
+    program_name: str | None = Field(default=None, min_length=1, max_length=120)
+    grade_level: int | None = Field(default=None, ge=1, le=12)
+    academic_year_start: int | None = Field(default=None, ge=2000, le=2200)
     schedule: ClassSchedule | None = None
     teacher_id: UUID | None = None
     teacher_ids: list[UUID] | None = Field(default=None, max_length=10)
+    assistant_ids: list[UUID] | None = Field(default=None, max_length=10)
     is_active: bool | None = None
 
     @model_validator(mode="before")
@@ -143,6 +247,14 @@ class ClassUpdate(BaseModel):
     ) -> list[UUID] | None:
         return None if value is None else list(dict.fromkeys(value))
 
+    @field_validator("assistant_ids")
+    @classmethod
+    def deduplicate_optional_assistant_ids(
+        cls,
+        value: list[UUID] | None,
+    ) -> list[UUID] | None:
+        return None if value is None else list(dict.fromkeys(value))
+
     @model_validator(mode="after")
     def validate_explicit_teacher_selection(self) -> "ClassUpdate":
         if "teacher_ids" in self.model_fields_set and not self.teacher_ids:
@@ -151,12 +263,253 @@ class ClassUpdate(BaseModel):
         return self
 
 
+class ClassEndDateUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    end_date: date
+    reason: str = Field(min_length=3, max_length=500)
+    expected_version: int = Field(ge=1)
+    expected_fingerprint: str = Field(min_length=32, max_length=64)
+
+
+class ClassEndDatePreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    end_date: date
+    expected_version: int = Field(ge=1)
+
+
+class ClassEndDatePreviewResponse(BaseModel):
+    previous_end_date: date
+    next_end_date: date
+    total_weeks: int | None
+    package_count: int | None
+    affected_student_count: int
+    mutable_fee_record_count: int
+    protected_fee_record_count: int
+    version: int
+    preview_fingerprint: str
+    preview_expires_at: datetime
+
+
+class ScheduleAvailabilityRequest(BaseModel):
+    """Yêu cầu lịch bận dành riêng cho form lớp — payload tối thiểu, không
+    chứa thông tin liên hệ nhân sự."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    class_id: UUID | None = None
+    start_date: date
+    end_date: date
+    teacher_ids: list[UUID] = Field(default_factory=list, max_length=10)
+    assistant_ids: list[UUID] = Field(default_factory=list, max_length=10)
+
+    @model_validator(mode="after")
+    def validate_availability_request(self) -> "ScheduleAvailabilityRequest":
+        if self.end_date <= self.start_date:
+            raise ValueError("Ngày kết thúc phải sau ngày bắt đầu")
+        if not self.teacher_ids and not self.assistant_ids:
+            raise ValueError("Vui lòng chọn ít nhất một giáo viên hoặc trợ giảng")
+        overlap = set(self.teacher_ids) & set(self.assistant_ids)
+        if overlap:
+            raise ValueError("Một nhân sự không thể vừa là giáo viên vừa là trợ giảng")
+        return self
+
+
+class ScheduleAvailabilityConflict(BaseModel):
+    """Một occupied session = ĐÚNG MỘT canonical block. Giữ đồng thời busy ID
+    của cả giáo viên lẫn trợ giảng để frontend không mất conflict khi merge."""
+
+    class_id: UUID
+    class_name: str
+    class_category: ClassCategory | None = None
+    grade_level: int | None = None
+    day: ClassDay
+    start: str
+    end: str
+    busy_teacher_ids: list[UUID] = Field(default_factory=list)
+    busy_assistant_ids: list[UUID] = Field(default_factory=list)
+
+
+class ScheduleAvailabilityResponse(BaseModel):
+    conflicts: list[ScheduleAvailabilityConflict] = Field(default_factory=list)
+
+
+class ClassHistoryTeacherEvent(BaseModel):
+    teacher_id: UUID
+    teacher_name: str
+    staff_type: Literal["TEACHER", "ASSISTANT"]
+    event_type: Literal["assigned", "unassigned"]
+    occurred_at: datetime
+
+
+class ClassHistoryEnrollment(BaseModel):
+    enrollment_id: UUID
+    student_id: UUID
+    student_name: str
+    enrollment_date: date | None
+    ended_at: datetime | None
+    status: Literal["active", "dropped", "completed", "cancelled"]
+
+
+class ClassHistoryEvent(BaseModel):
+    event_type: str
+    previous_end_date: date | None
+    next_end_date: date | None
+    reason: str | None
+    occurred_at: datetime
+
+
+class ClassHistoryAdjustment(BaseModel):
+    """Dated make-up exception trong timeline 'Điều chỉnh buổi học' — tối
+    thiểu, không chứa audit payload hay thông tin liên hệ."""
+
+    adjustment_id: UUID
+    reason_code: str
+    reason_note: str | None = None
+    original_start_at: datetime
+    original_end_at: datetime
+    status: str
+    display_status: str
+    replacement_start_at: datetime | None = None
+    replacement_end_at: datetime | None = None
+    completed_at: datetime | None = None
+    restored_at: datetime | None = None
+    version: int
+
+
+class ClassHistoryResponse(BaseModel):
+    id: UUID
+    name: str
+    display_name: str
+    primary_label: str
+    secondary_label: str | None
+    effective_status: ClassEffectiveStatus
+    start_date: date | None
+    end_date: date | None
+    schedule: ClassSchedule | None
+    teachers: list[ClassHistoryTeacherEvent]
+    enrollments: list[ClassHistoryEnrollment]
+    lifecycle_events: list[ClassHistoryEvent]
+    adjustments: list[ClassHistoryAdjustment] = Field(default_factory=list)
+
+
+class ClassScopeSummary(BaseModel):
+    """Small, non-PII counts used by the class lifecycle navigation."""
+
+    operational: int = Field(ge=0)
+    active: int = Field(ge=0)
+    scheduled: int = Field(ge=0)
+    completed: int = Field(ge=0)
+    cancelled: int = Field(ge=0)
+
+
+def validate_class_identity(
+    *,
+    identity_scheme: ClassIdentityScheme,
+    class_category: ClassCategory | None = None,
+    grade_mode: ClassGradeMode | None = None,
+    grade_level: int | None,
+    academic_year_start: int | None,
+    start_date: date | None,
+    end_date: date | None,
+    allow_legacy: bool = False,
+) -> None:
+    if identity_scheme == "LEGACY":
+        if allow_legacy:
+            return
+        raise ValueError("Vui lòng chọn loại lớp")
+    if start_date is None or end_date is None:
+        raise ValueError("Vui lòng chọn ngày bắt đầu và ngày kết thúc")
+    if end_date <= start_date:
+        raise ValueError("Ngày kết thúc phải sau ngày bắt đầu")
+    if class_category is None:
+        raise ValueError("Vui lòng chọn loại lớp")
+    expected_scheme = "INTAKE" if class_category == "IELTS" else "ACADEMIC_YEAR"
+    if identity_scheme != expected_scheme:
+        raise ValueError("Thông tin loại lớp không nhất quán")
+    if class_category == "GENERAL":
+        if grade_mode != "GRADE" or grade_level is None or academic_year_start is None:
+            raise ValueError("Vui lòng chọn khối lớp và năm học")
+        return
+    if class_category == "SPECIALIZED":
+        if academic_year_start is not None and not 2000 <= academic_year_start <= 2200:
+            raise ValueError("Năm học không hợp lệ")
+        if grade_mode == "GRADE" and grade_level is not None:
+            return
+        if grade_mode == "NONE" and grade_level is None:
+            return
+        raise ValueError("Vui lòng chọn khối lớp hoặc chọn Không")
+    if class_category == "CUSTOM":
+        if academic_year_start is not None and not 2000 <= academic_year_start <= 2200:
+            raise ValueError("Năm học không hợp lệ")
+        if grade_mode == "GRADE" and grade_level is not None:
+            return
+        if grade_mode == "NONE" and grade_level is None:
+            return
+        raise ValueError("Vui lòng chọn khối lớp hoặc chọn Không")
+    if class_category == "IELTS":
+        if (
+            grade_mode != "NONE"
+            or grade_level is not None
+            or academic_year_start is not None
+        ):
+            raise ValueError("Lớp IELTS không sử dụng khối lớp và năm học")
+        return
+    raise ValueError("Loại lớp không hợp lệ")
+
+
+def education_level_for_grade(grade_level: int) -> ClassEducationLevel:
+    if 1 <= grade_level <= 5:
+        return "PRIMARY"
+    if 6 <= grade_level <= 9:
+        return "MIDDLE"
+    if 10 <= grade_level <= 12:
+        return "HIGH"
+    raise ValueError("Khối lớp không hợp lệ")
+
+
 class ClassResponse(ClassBase):
     id: UUID
     is_active: bool
     student_count: int
+    education_level: ClassEducationLevel | None = None
     teacher_name: str | None = None
     teacher_names: list[str] = Field(default_factory=list)
+    assistant_ids: list[UUID] = Field(default_factory=list)
+    assistant_names: list[str] = Field(default_factory=list)
     created_at: datetime
+    updated_at: datetime
+    version: int
+    display_name: str
+    primary_label: str
+    secondary_label: str | None = None
+    effective_status: ClassEffectiveStatus
+    can_edit_end_date: bool
+    can_edit: bool = False
+    can_cancel: bool = False
+    can_view_history: bool = True
+    next_fee_due_date: date | None = None
+    next_fee_due_state: ClassNextFeeDueState = "NONE"
+    cancelled_at: datetime | None = None
+    unresolved_makeup_count: int = 0
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ClassCopyTemplateResponse(BaseModel):
+    name: str
+    type: ClassType
+    base_fee: int
+    billing_cycle_months: int
+    billing_cycle_weeks: int | None = None
+    identity_scheme: ClassIdentityScheme = "INTAKE"
+    class_category: ClassCategory | None = None
+    grade_mode: ClassGradeMode | None = None
+    program_name: str | None = None
+    grade_level: int | None = None
+    academic_year_start: int | None = None
+    schedule: ClassSchedule | None = None
+    teacher_ids: list[UUID] = Field(default_factory=list)
+    assistant_ids: list[UUID] = Field(default_factory=list)
+    source_class_id: UUID

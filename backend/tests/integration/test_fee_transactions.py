@@ -24,6 +24,10 @@ from app.services.fee_service import (
     refund_fee_records,
     reverse_fee_refund,
 )
+from app.services.paid_report_service import (
+    get_paid_fee_receipt,
+    get_paid_fee_receipts,
+)
 
 pytestmark = [
     pytest.mark.db_integration,
@@ -85,6 +89,12 @@ async def test_batch_payment_and_reversal_share_one_consistent_ledger() -> None:
                         enrollment_id=enrollment_id,
                         period=period,
                         due_date=today,
+                        cycle_no=index + 1,
+                        base_due_date=today,
+                        adjusted_due_date=today,
+                        coverage_start=today,
+                        coverage_end=today,
+                        origin="LEGACY_BACKFILL",
                         enrollment_date_snapshot=today,
                         student_name_snapshot="Integration Fee Student",
                         class_name_snapshot=f"Integration {class_ids[index][:8]}",
@@ -106,6 +116,20 @@ async def test_batch_payment_and_reversal_share_one_consistent_ledger() -> None:
                 payment_method="cash",
             )
             assert [record.status for record in paid.records] == ["PAID", "PAID"]
+            paid_report = await get_paid_fee_receipts(
+                db,
+                query_text=class_ids[0][:8],
+                limit=10,
+            )
+            assert len(paid_report.receipts) == 1
+            assert paid_report.receipts[0].class_count == 2
+            assert paid_report.receipts[0].gross_amount == 750_000
+            paid_detail = await get_paid_fee_receipt(
+                db,
+                paid_report.receipts[0].receipt_id,
+            )
+            assert paid_detail is not None
+            assert len(paid_detail.allocations) == 2
 
             reversed_ = await mark_fees_unpaid(
                 db,
@@ -115,6 +139,20 @@ async def test_batch_payment_and_reversal_share_one_consistent_ledger() -> None:
                 "NOTIFIED_UNPAID",
                 "NOTIFIED_UNPAID",
             ]
+            effective_report = await get_paid_fee_receipts(
+                db,
+                query_text=class_ids[0][:8],
+                limit=10,
+            )
+            assert effective_report.receipts == []
+            reversed_report = await get_paid_fee_receipts(
+                db,
+                query_text=class_ids[0][:8],
+                refund_state="REVERSED",
+                limit=10,
+            )
+            assert len(reversed_report.receipts) == 1
+            assert reversed_report.receipts[0].net_amount == 0
 
             ledger_result = await db.execute(
                 select(Payment).where(Payment.fee_record_id.in_(fee_ids))
@@ -205,6 +243,12 @@ async def test_refund_retry_and_reversal_keep_projection_and_ledger_consistent(
                     enrollment_id=enrollment_id,
                     period=period,
                     due_date=today,
+                    cycle_no=1,
+                    base_due_date=today,
+                    adjusted_due_date=today,
+                    coverage_start=today,
+                    coverage_end=today,
+                    origin="LEGACY_BACKFILL",
                     enrollment_date_snapshot=today,
                     student_name_snapshot="Integration Refund Student",
                     class_name_snapshot=f"Integration Refund {class_id[:8]}",
@@ -234,6 +278,15 @@ async def test_refund_retry_and_reversal_keep_projection_and_ledger_consistent(
             assert retried.receipt.request_id == refund_request_id
             assert refunded.records[0].refunded_amount == 250_000
             assert retried.records[0].refunded_amount == 250_000
+            partial_report = await get_paid_fee_receipts(
+                db,
+                query_text=class_id[:8],
+                refund_state="PARTIAL",
+                limit=10,
+            )
+            assert len(partial_report.receipts) == 1
+            assert partial_report.receipts[0].refunded_amount == 250_000
+            assert partial_report.receipts[0].net_amount == 500_000
 
             with pytest.raises(HTTPException) as conflict:
                 await refund_fee_records(
@@ -272,6 +325,23 @@ async def test_refund_retry_and_reversal_keep_projection_and_ledger_consistent(
                 "refund",
                 "refund_reversal",
             }
+            restored_report = await get_paid_fee_receipts(
+                db,
+                query_text=class_id[:8],
+                limit=10,
+            )
+            assert len(restored_report.receipts) == 1
+            restored_detail = await get_paid_fee_receipt(
+                db,
+                restored_report.receipts[0].receipt_id,
+            )
+            assert restored_detail is not None
+            assert restored_detail.refunded_amount == 0
+            assert [entry.event for entry in restored_detail.timeline] == [
+                "payment",
+                "refund",
+                "refund_reversal",
+            ]
 
             with pytest.raises(DBAPIError):
                 await db.execute(

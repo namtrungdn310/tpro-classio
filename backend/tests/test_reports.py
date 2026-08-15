@@ -5,7 +5,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.routing import APIRoute
 
-from app.core.dependencies import get_current_user
+from app.core.dependencies import require_management
 from app.routers.reports import router
 from app.services.report_service import _decode_cursor, _encode_cursor
 
@@ -16,7 +16,7 @@ def test_report_routes_are_read_only_and_available_to_authenticated_users() -> N
     assert routes
     assert all(route.methods == {"GET"} for route in routes)
     assert all(
-        get_current_user
+        require_management
         in {dependency.call for dependency in route.dependant.dependencies}
         for route in routes
     )

@@ -8,7 +8,9 @@ from app.core.business_time import business_today
 from app.core.contact import validate_complete_contact_pair
 from app.core.phone import is_valid_vietnam_mobile_phone, normalize_vietnam_phone
 
-StudentStatus = Literal["active", "inactive"]
+StudentStatus = Literal["active", "inactive", "archived"]
+StudentListState = Literal["UNASSIGNED", "CURRENT", "FORMER", "ARCHIVED"]
+StudentIdentityMatchStrength = Literal["strong", "possible"]
 StudentHiddenField = Literal[
     "birth_date",
     "school",
@@ -46,13 +48,16 @@ def validate_complete_contact_pairs(
 
 
 class StudentCreate(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    # R6: write payloads forbid unknown fields — a client-supplied
+    # `student_code` must fail with 422, never be silently ignored. Profile
+    # creation is class-optional; enrollment is a separate command.
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     full_name: str = Field(min_length=1, max_length=120)
-    class_id: UUID
+    class_id: UUID | None = None
     # None deliberately inherits the class fee; this field is an override.
     custom_fee: int | None = Field(default=None, ge=0, le=999_999_999_999)
-    enrollment_date: date
+    enrollment_date: date | None = None
     birth_date: date
     school: str = Field(min_length=1, max_length=160)
     parent_name: str | None = Field(default=None, max_length=120)
@@ -113,8 +118,63 @@ class StudentCreate(BaseModel):
         return self
 
 
+class StudentDuplicateResolution(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["create_new"]
+    candidate_ids: list[UUID] = Field(min_length=1, max_length=5)
+
+    @field_validator("candidate_ids")
+    @classmethod
+    def deduplicate_candidate_ids(cls, value: list[UUID]) -> list[UUID]:
+        if len(set(value)) != len(value):
+            raise ValueError("Danh sách hồ sơ đã kiểm tra không được trùng lặp")
+        return value
+
+
+class StudentCreateCommand(StudentCreate):
+    duplicate_resolution: StudentDuplicateResolution | None = None
+
+
+class StudentReactivationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    student: StudentCreate
+    expected_updated_at: datetime
+
+
+class StudentPreviousClass(BaseModel):
+    name: str
+    enrollment_date: date | None
+
+
+class StudentIdentityCandidate(BaseModel):
+    id: UUID
+    status: StudentStatus
+    full_name: str
+    birth_date: date | None
+    school: str | None
+    masked_parent_phone: str | None
+    masked_student_phone: str | None
+    previous_classes: list[StudentPreviousClass]
+    updated_at: datetime
+    match_strength: StudentIdentityMatchStrength
+    match_reason: str
+    already_in_target_class: bool
+
+
+class StudentIdentityConflict(BaseModel):
+    code: Literal[
+        "STUDENT_IDENTITY_CONFLICT",
+        "STUDENT_IDENTITY_CONFLICT_CHANGED",
+    ] = "STUDENT_IDENTITY_CONFLICT"
+    message: str = "Có thể học viên này đã có hồ sơ trong hệ thống"
+    target_class_id: UUID | None = None
+    candidates: list[StudentIdentityCandidate] = Field(min_length=1, max_length=5)
+
+
 class StudentUpdate(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     full_name: str | None = Field(default=None, min_length=1, max_length=120)
     birth_date: date | None = None
@@ -196,14 +256,20 @@ class StudentEnrollmentInfo(BaseModel):
     id: UUID
     class_id: UUID
     class_name: str
+    class_category: Literal["GENERAL", "SPECIALIZED", "IELTS", "CUSTOM"] | None = None
+    class_grade_mode: Literal["GRADE", "NONE"] | None = None
+    class_grade_level: int | None = None
+    class_start_date: date | None = None
+    class_end_date: date | None = None
     custom_fee: int | None
     effective_fee: int
     enrollment_date: date | None
-    status: Literal["active", "dropped"]
+    status: Literal["active", "dropped", "completed", "cancelled"]
 
 
 class StudentResponse(BaseModel):
     id: UUID
+    student_code: str | None = None
     full_name: str
     birth_date: date | None
     school: str | None
@@ -215,6 +281,9 @@ class StudentResponse(BaseModel):
     notes: str | None
     hidden_fields: list[StudentHiddenField]
     status: StudentStatus
+    list_state: StudentListState = "UNASSIGNED"
+    archived_at: datetime | None = None
+    archived_reason: str | None = None
     classes: list[StudentClassInfo]
     active_enrollments: list[StudentEnrollmentInfo]
     created_at: datetime
@@ -222,6 +291,13 @@ class StudentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class ContactSuggestionResponse(BaseModel):
-    phone: str
-    zalo_name: str
+class StudentArchiveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class StudentRestoreRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=3, max_length=500)

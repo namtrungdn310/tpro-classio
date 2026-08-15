@@ -8,7 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth_credentials import decrypt_credential, encrypt_credential
 
-_RESET_ACCESS_TOKEN_PURPOSE = "password-reset-access-token-v1"
+# A domain-separation label, not a credential.  # nosec B105
+_RESET_ACCESS_TOKEN_PURPOSE = "password-reset-access-token-v1"  # nosec B105
 
 
 def _token_hash(token: str) -> str:

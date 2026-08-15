@@ -16,6 +16,15 @@ FeeOperationAction = Literal[
     "template_update",
 ]
 
+FeePaidPaymentMethod = Literal["bank_transfer", "cash"]
+FeePaidRefundState = Literal["NONE", "PARTIAL", "FULL", "REVERSED"]
+FeePaidTimelineEvent = Literal[
+    "payment",
+    "refund",
+    "refund_reversal",
+    "payment_reversal",
+]
+
 
 class FeeOperationItemResponse(BaseModel):
     id: UUID
@@ -71,3 +80,70 @@ class FeeOperationListResponse(BaseModel):
     next_cursor: str | None
     summary: FeeOperationSummaryResponse
     history_complete_from: datetime | None
+
+
+class FeePaidReceiptSummaryResponse(BaseModel):
+    """One effective student receipt, grouped across all classes paid together."""
+
+    receipt_id: str
+    payment_operation_id: UUID
+    student_id: UUID | None
+    student_name: str
+    period: str | None
+    paid_date: date
+    paid_at: datetime
+    payment_method: FeePaidPaymentMethod
+    gross_amount: int = Field(ge=0)
+    refunded_amount: int = Field(ge=0)
+    net_amount: int = Field(ge=0)
+    refund_state: FeePaidRefundState
+    class_count: int = Field(ge=1)
+    class_names: list[str]
+    actor_name: str | None
+    actor_username: str | None
+    actor_role: str | None
+
+
+class FeePaidReportSummaryResponse(BaseModel):
+    gross_amount: int = Field(ge=0)
+    refunded_amount: int = Field(ge=0)
+    net_amount: int = Field(ge=0)
+    receipt_count: int = Field(ge=0)
+    student_count: int = Field(ge=0)
+    bank_transfer_net_amount: int = Field(ge=0)
+    cash_net_amount: int = Field(ge=0)
+
+
+class FeePaidReceiptListResponse(BaseModel):
+    receipts: list[FeePaidReceiptSummaryResponse]
+    next_cursor: str | None
+    summary: FeePaidReportSummaryResponse
+
+
+class FeePaidAllocationResponse(BaseModel):
+    fee_record_id: UUID | None
+    enrollment_id: UUID | None
+    class_id: UUID | None
+    class_name: str
+    period: str
+    gross_amount: int = Field(ge=0)
+    refunded_amount: int = Field(ge=0)
+    net_amount: int = Field(ge=0)
+
+
+class FeePaidTimelineEntryResponse(BaseModel):
+    id: UUID
+    event: FeePaidTimelineEvent
+    business_date: date
+    occurred_at: datetime
+    amount_delta: int
+    payment_method: FeePaidPaymentMethod
+    actor_name: str | None
+    actor_username: str | None
+    actor_role: str | None
+    reason: str | None
+
+
+class FeePaidReceiptDetailResponse(FeePaidReceiptSummaryResponse):
+    allocations: list[FeePaidAllocationResponse]
+    timeline: list[FeePaidTimelineEntryResponse]

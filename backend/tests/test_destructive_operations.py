@@ -1,18 +1,19 @@
 from datetime import date
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
 
 import pytest
 
 from app.models.class_ import Class
+from app.schemas.student import StudentArchiveRequest
+from app.services.student_service import archive_student
 from app.models.enrollment import Enrollment
 from app.models.fee_record import FeeRecord
 from app.models.student import Student
-from app.services.class_service import archive_class
+from app.services.class_service import delete_class
 from app.services.fee_service import sync_fee_records_for_period
-from app.services.student_service import delete_student
 
 
 class ScalarResult:
@@ -61,13 +62,21 @@ async def test_sync_keeps_current_unpaid_record_after_due_date() -> None:
         status="UNPAID",
     )
     db = AsyncMock()
+    db.add = Mock()
+    db.scalar = AsyncMock(return_value=1)
     db.execute.side_effect = [
         None,
         ScalarResult([enrollment]),
+        None,
         ScalarResult([record]),
     ]
 
-    with patch("app.services.fee_service.date") as mocked_date:
+    with (
+        patch(
+            "app.services.fee_service.business_today", return_value=date(2026, 7, 11)
+        ),
+        patch("app.services.fee_service.date") as mocked_date,
+    ):
         mocked_date.today.return_value = date(2026, 7, 11)
         mocked_date.side_effect = lambda *args, **kwargs: date(*args, **kwargs)
         await sync_fee_records_for_period(db, "2026-07")
@@ -78,7 +87,8 @@ async def test_sync_keeps_current_unpaid_record_after_due_date() -> None:
 
 
 @pytest.mark.asyncio
-async def test_archive_class_preserves_business_history() -> None:
+async def test_delete_class_preserves_history_and_never_deactivates_profiles() -> None:
+    """R6: cancelling a class never archives/inactivates student profiles."""
     class_id = uuid4()
     class_ = Class(
         id=str(class_id),
@@ -88,7 +98,22 @@ async def test_archive_class_preserves_business_history() -> None:
         billing_cycle_months=1,
         is_active=True,
     )
+    orphan = Student(
+        id=str(uuid4()),
+        full_name="Only in deleted class",
+        status="active",
+    )
+    enrollment = Enrollment(
+        id=str(uuid4()),
+        student_id=orphan.id,
+        class_id=class_.id,
+        enrollment_date=date(2026, 6, 5),
+        status="active",
+    )
     db = AsyncMock()
+    db.add = Mock()
+    db.execute.return_value = ScalarResult([orphan.id])
+    db.scalar.return_value = 0
 
     with (
         patch(
@@ -96,29 +121,36 @@ async def test_archive_class_preserves_business_history() -> None:
             new=AsyncMock(return_value=class_),
         ),
         patch(
+            "app.services.class_service._lock_enrolled_students",
+            new=AsyncMock(return_value=[orphan]),
+        ),
+        patch(
             "app.services.class_service._reconcile_current_class_fees",
-            new=AsyncMock(),
+            new=AsyncMock(return_value=[enrollment]),
         ) as reconcile,
     ):
-        deleted = await archive_class(db, class_id)
+        deleted = await delete_class(db, class_id)
 
     assert deleted is class_
     reconcile.assert_awaited_once_with(db, class_)
     assert class_.is_active is False
+    assert enrollment.status == "cancelled"
+    assert enrollment.ended_at is not None
+    assert enrollment.end_reason == "Lớp đã bị hủy"
+    assert orphan.status == "active"
     db.delete.assert_not_awaited()
     db.commit.assert_awaited_once()
     db.refresh.assert_awaited_once_with(class_)
 
 
 @pytest.mark.asyncio
-async def test_delete_student_archives_and_drops_active_enrollments() -> None:
+async def test_archive_student_requires_reason_and_preserves_profile() -> None:
     student_id = uuid4()
     student = Student(
         id=str(student_id),
         full_name="Student to archive",
         status="active",
     )
-    response = SimpleNamespace(id=str(student_id))
     class_ = Class(
         id=str(uuid4()),
         name="Student class",
@@ -136,27 +168,35 @@ async def test_delete_student_archives_and_drops_active_enrollments() -> None:
     )
     enrollment.class_ = class_
     db = AsyncMock()
+    db.add = Mock()
     db.execute.side_effect = [ScalarResult([student]), ScalarResult([enrollment])]
+    db.commit = AsyncMock()
 
     with (
         patch(
             "app.services.student_service.get_student",
-            new=AsyncMock(return_value=response),
+            new=AsyncMock(
+                return_value=SimpleNamespace(id=str(student_id), status="archived")
+            ),
         ),
         patch(
-            "app.services.student_service.lock_fee_period",
-            new=AsyncMock(),
+            "app.services.student_service.append_student_lifecycle_event",
+            new=Mock(),
         ),
-        patch(
-            "app.services.student_service.reconcile_fee_record_for_period",
-            new=AsyncMock(),
-        ) as reconcile,
     ):
-        deleted = await delete_student(db, student_id)
+        archived = await archive_student(
+            db,
+            student_id,
+            StudentArchiveRequest(reason="Học viên chuyển trường"),
+            actor_user_id="actor-1",
+        )
 
-    assert deleted is response
-    assert student.status == "inactive"
+    assert archived is not None
+    assert student.status == "archived"
+    assert student.archived_reason == "Học viên chuyển trường"
+    assert student.archived_by == "actor-1"
+    assert student.archived_at is not None
     assert enrollment.status == "dropped"
-    reconcile.assert_awaited_once()
+    assert enrollment.end_reason == "Hồ sơ học viên được lưu trữ"
     db.delete.assert_not_awaited()
     db.commit.assert_awaited_once()

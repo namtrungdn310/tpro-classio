@@ -297,33 +297,62 @@ async def test_unpay_appends_negative_reversal_and_preserves_notification() -> N
 
 
 @pytest.mark.asyncio
-async def test_unpay_cannot_invent_notification_for_a_direct_payment() -> None:
+async def test_direct_payment_can_be_reversed_to_notified_with_a_snapshot() -> None:
     record = make_fee_record(
         status="PAID",
         notified_at=None,
         paid_amount=Decimal("750000"),
         paid_date=date(2026, 7, 12),
     )
+    actor_id = str(uuid4())
+    payment_id = str(uuid4())
     db = make_db()
 
-    with patch(
-        "app.services.fee_service._load_locked_fee_records",
-        new=AsyncMock(return_value=[record]),
+    with (
+        patch(
+            "app.services.fee_service._load_locked_fee_records",
+            new=AsyncMock(return_value=[record]),
+        ),
+        patch(
+            "app.services.fee_service._get_fee_records_by_ids",
+            new=AsyncMock(return_value=[record]),
+        ),
+        patch("app.services.fee_service.business_today", return_value=CURRENT_DAY),
+        patch(
+            "app.services.fee_service._get_payment_ledger_states",
+            new=AsyncMock(
+                return_value={
+                    record.id: SimpleNamespace(
+                        has_entries=True,
+                        net_amount=750000,
+                        payment_method="bank_transfer",
+                        payment_id=payment_id,
+                    )
+                }
+            ),
+        ),
     ):
-        with pytest.raises(HTTPException) as exc_info:
-            await mark_fees_unpaid(
-                db,
-                [UUID(record.id)],
-                target_notification_state="NOTIFIED_UNPAID",
-            )
+        response = await mark_fees_unpaid(
+            db,
+            [UUID(record.id)],
+            actor_id=actor_id,
+            target_notification_state="NOTIFIED_UNPAID",
+        )
 
-    assert exc_info.value.status_code == 409
-    assert "chỉ có thể hoàn tác về trạng thái chưa báo" in exc_info.value.detail
-    assert record.status == "PAID"
-    assert record.notified_at is None
-    db.add.assert_not_called()
-    db.commit.assert_not_awaited()
-    db.rollback.assert_awaited_once()
+    assert record.status == "UNPAID"
+    assert record.notified_at is not None
+    assert record.notification_channel == "zalo_manual"
+    assert record.notification_message
+    assert response.records[0].notification_state == "NOTIFIED_UNPAID"
+    reversal = db.add.call_args.args[0]
+    assert isinstance(reversal, Payment)
+    assert reversal.entry_type == "payment_reversal"
+    assert int(reversal.amount) == -750000
+    assert reversal.payment_method == "bank_transfer"
+    assert reversal.related_payment_id == payment_id
+    assert reversal.created_by == actor_id
+    db.commit.assert_awaited_once()
+    db.rollback.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -583,7 +612,7 @@ async def test_unnotify_current_period_recalculates_live_amount_and_due_date() -
 
 
 @pytest.mark.asyncio
-async def test_unnotify_current_period_reports_deleted_non_chargeable_record() -> None:
+async def test_unnotify_voids_non_chargeable_record_without_deleting_history() -> None:
     record = make_fee_record(
         notified_at=datetime(2026, 7, 10, tzinfo=timezone.utc),
         enrollment_status="dropped",
@@ -603,8 +632,14 @@ async def test_unnotify_current_period_reports_deleted_non_chargeable_record() -
     ):
         response = await mark_fees_unnotified(db, [record_id])
 
-    db.delete.assert_awaited_once_with(record)
+    db.delete.assert_not_awaited()
+    assert record.status == "VOID"
+    assert record.voided_at is not None
+    assert record.voided_at.tzinfo is not None
+    assert record.notified_at is None
     assert response.records == []
+    # Compatibility field means "remove from the active projection", not a
+    # physical database delete. The immutable row remains auditable as VOID.
     assert response.deleted_ids == [record_id]
     db.commit.assert_awaited_once()
 
@@ -754,6 +789,11 @@ async def test_notify_freezes_current_business_identity() -> None:
     record.enrollment.class_.name = "7C1 hiện tại"
     db = make_db()
 
+    async def expire_generated_amount_after_flush() -> None:
+        record.__dict__.pop("final_amount", None)
+
+    db.flush.side_effect = expire_generated_amount_after_flush
+
     with (
         patch(
             "app.services.fee_service._load_locked_fee_records",
@@ -762,7 +802,7 @@ async def test_notify_freezes_current_business_identity() -> None:
         patch(
             "app.services.fee_service._get_fee_records_by_ids",
             new=AsyncMock(return_value=[record]),
-        ),
+        ) as reload_records,
         patch("app.services.fee_service.business_today", return_value=CURRENT_DAY),
     ):
         response = await mark_fees_notified(
@@ -778,6 +818,8 @@ async def test_notify_freezes_current_business_identity() -> None:
     assert record.billing_cycle_months_snapshot == 1
     assert response.records[0].student_name == "Nguyễn An hiện tại"
     assert response.records[0].class_name == "7C1 hiện tại"
+    assert response.records[0].final_amount == 750_000
+    reload_records.assert_not_awaited()
     db.commit.assert_awaited_once()
 
 

@@ -1,7 +1,7 @@
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
@@ -10,7 +10,6 @@ from app.models.class_ import Class
 from app.models.enrollment import Enrollment
 from app.models.fee_record import FeeRecord
 from app.models.student import Student
-from app.services.fee_reconciliation import reconcile_fee_record_for_period
 from app.services.fee_service import build_zalo_fee_message, mark_fee_paid
 
 
@@ -36,138 +35,12 @@ def make_enrollment(
     return enrollment
 
 
-@pytest.mark.asyncio
-async def test_reconcile_creates_overdue_fee_in_current_period() -> None:
-    enrollment = make_enrollment(enrollment_date=date(2026, 6, 5))
-    db = SimpleNamespace(add=Mock(), delete=AsyncMock(), scalar=AsyncMock())
+def test_reconcile_period_helper_retired() -> None:
+    """R6-D19: period-based reconcile (generator cũ) đã bị retire khỏi
+    runtime — không còn import được từ fee_reconciliation."""
+    import app.services.fee_reconciliation as module
 
-    changed = await reconcile_fee_record_for_period(
-        db,
-        enrollment,
-        "2026-07",
-        date(2026, 7, 14),
-        existing_record=None,
-    )
-
-    assert changed is True
-    created = db.add.call_args.args[0]
-    assert created.due_date == date(2026, 7, 5)
-    assert created.enrollment_date_snapshot == date(2026, 6, 5)
-    db.delete.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_reconcile_updates_only_unnotified_unpaid_snapshot() -> None:
-    enrollment = make_enrollment(enrollment_date=date(2026, 6, 20))
-    record = FeeRecord(
-        id=str(uuid4()),
-        enrollment_id=enrollment.id,
-        period="2026-07",
-        due_date=date(2026, 7, 5),
-        enrollment_date_snapshot=date(2026, 6, 5),
-        base_amount=Decimal("700000"),
-        discount_amount=Decimal("0"),
-        status="UNPAID",
-    )
-    db = SimpleNamespace(add=Mock(), delete=AsyncMock(), scalar=AsyncMock())
-
-    changed = await reconcile_fee_record_for_period(
-        db,
-        enrollment,
-        "2026-07",
-        date(2026, 7, 14),
-        existing_record=record,
-    )
-
-    assert changed is True
-    assert record.due_date == date(2026, 7, 20)
-    assert record.enrollment_date_snapshot == date(2026, 6, 20)
-    assert int(record.base_amount) == 750000
-
-
-@pytest.mark.asyncio
-async def test_reconcile_preserves_notified_record_when_schedule_moves() -> None:
-    enrollment = make_enrollment(enrollment_date=date(2026, 7, 20))
-    original_due_date = date(2026, 7, 5)
-    record = FeeRecord(
-        id=str(uuid4()),
-        enrollment_id=enrollment.id,
-        period="2026-07",
-        due_date=original_due_date,
-        enrollment_date_snapshot=date(2026, 6, 5),
-        base_amount=Decimal("750000"),
-        discount_amount=Decimal("0"),
-        status="UNPAID",
-        notified_at=datetime(2026, 7, 3, tzinfo=timezone.utc),
-    )
-    db = SimpleNamespace(add=Mock(), delete=AsyncMock(), scalar=AsyncMock())
-
-    changed = await reconcile_fee_record_for_period(
-        db,
-        enrollment,
-        "2026-07",
-        date(2026, 7, 14),
-        existing_record=record,
-    )
-
-    assert changed is False
-    assert record.due_date == original_due_date
-    db.delete.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_reconcile_deletes_only_unprotected_non_due_record() -> None:
-    enrollment = make_enrollment(enrollment_date=date(2026, 7, 20))
-    record = FeeRecord(
-        id=str(uuid4()),
-        enrollment_id=enrollment.id,
-        period="2026-07",
-        due_date=date(2026, 7, 5),
-        enrollment_date_snapshot=date(2026, 6, 5),
-        base_amount=Decimal("750000"),
-        discount_amount=Decimal("0"),
-        status="UNPAID",
-    )
-    db = SimpleNamespace(add=Mock(), delete=AsyncMock(), scalar=AsyncMock())
-
-    changed = await reconcile_fee_record_for_period(
-        db,
-        enrollment,
-        "2026-07",
-        date(2026, 7, 14),
-        existing_record=record,
-    )
-
-    assert changed is True
-    db.delete.assert_awaited_once_with(record)
-
-
-@pytest.mark.asyncio
-async def test_reconcile_removes_draft_when_class_is_archived() -> None:
-    enrollment = make_enrollment(enrollment_date=date(2026, 6, 5))
-    enrollment.class_.is_active = False
-    record = FeeRecord(
-        id=str(uuid4()),
-        enrollment_id=enrollment.id,
-        period="2026-07",
-        due_date=date(2026, 7, 5),
-        enrollment_date_snapshot=date(2026, 6, 5),
-        base_amount=Decimal("750000"),
-        discount_amount=Decimal("0"),
-        status="UNPAID",
-    )
-    db = SimpleNamespace(add=Mock(), delete=AsyncMock(), scalar=AsyncMock())
-
-    changed = await reconcile_fee_record_for_period(
-        db,
-        enrollment,
-        "2026-07",
-        date(2026, 7, 14),
-        existing_record=record,
-    )
-
-    assert changed is True
-    db.delete.assert_awaited_once_with(record)
+    assert not hasattr(module, "reconcile_fee_record_for_period")
 
 
 def test_zalo_message_uses_immutable_due_date_snapshot() -> None:

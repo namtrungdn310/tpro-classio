@@ -29,6 +29,20 @@ class FeeRecordAuditSnapshot:
     notification_message: str | None
 
 
+@dataclass(frozen=True)
+class FeeOperationActorSnapshot:
+    """Authenticated actor data already loaded by the request dependency.
+
+    Passing this snapshot prevents fee mutations from querying ``profiles`` a
+    second time while preserving the immutable actor fields in the audit log.
+    """
+
+    user_id: str
+    name: str | None
+    username: str | None
+    role: str | None
+
+
 def _to_int(value: Decimal | int | None) -> int:
     return int(value or 0)
 
@@ -102,6 +116,7 @@ async def append_fee_operation(
     amount_deltas: list[int] | None = None,
     reason: str | None = None,
     origin: str = "application",
+    actor_snapshot: FeeOperationActorSnapshot | None = None,
 ) -> FeeOperation:
     """Append one immutable event inside the caller's current transaction."""
 
@@ -112,8 +127,15 @@ async def append_fee_operation(
     if amount_deltas is not None and len(amount_deltas) != len(before):
         raise ValueError("Fee operation deltas must match snapshots")
 
+    if (
+        actor_snapshot is not None
+        and actor_id is not None
+        and actor_snapshot.user_id != actor_id
+    ):
+        raise ValueError("Fee operation actor snapshot does not match actor_id")
+
     actor = None
-    if actor_id:
+    if actor_id and actor_snapshot is None:
         actor = (
             await db.execute(select(Profile).where(Profile.id == actor_id))
         ).scalar_one_or_none()
@@ -131,9 +153,27 @@ async def append_fee_operation(
         period=next(iter(periods)) if len(periods) == 1 else None,
         business_date=business_today(),
         actor_user_id=actor_id,
-        actor_name_snapshot=(actor.full_name or actor.username) if actor else None,
-        actor_username_snapshot=actor.username if actor else None,
-        actor_role_snapshot=actor.role if actor else None,
+        actor_name_snapshot=(
+            actor_snapshot.name
+            if actor_snapshot is not None
+            else (actor.full_name or actor.username)
+            if actor
+            else None
+        ),
+        actor_username_snapshot=(
+            actor_snapshot.username
+            if actor_snapshot is not None
+            else actor.username
+            if actor
+            else None
+        ),
+        actor_role_snapshot=(
+            actor_snapshot.role
+            if actor_snapshot is not None
+            else actor.role
+            if actor
+            else None
+        ),
         item_count=len(before),
         total_amount=sum(deltas),
     )

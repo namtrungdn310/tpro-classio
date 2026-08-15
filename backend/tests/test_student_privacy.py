@@ -5,7 +5,7 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from app.core.dependencies import require_admin
+from app.core.dependencies import require_management
 from app.routers.students import list_student_enrollments
 from app.schemas.student import StudentEnrollmentInfo, StudentResponse, StudentUpdate
 from app.services.student_service import redact_student_hidden_fields
@@ -72,8 +72,8 @@ def test_student_update_rejects_null_hidden_fields() -> None:
         StudentUpdate(hidden_fields=None)
 
 
-def test_raw_enrollment_history_requires_admin_access() -> None:
+def test_raw_enrollment_history_requires_management_access() -> None:
     dependency = (
-        inspect.signature(list_student_enrollments).parameters["current_user"].default
+        inspect.signature(list_student_enrollments).parameters["principal"].default
     )
-    assert dependency.dependency is require_admin
+    assert dependency.dependency is require_management

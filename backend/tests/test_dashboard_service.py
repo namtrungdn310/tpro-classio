@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import app.services.dashboard_service as dashboard_service
 
 from app.core.business_time import business_today
-from app.core.dependencies import get_current_user, require_admin
+from app.core.dependencies import require_management
 from app.routers.dashboard import router as dashboard_router
 from app.services.dashboard_service import _period_key
 
@@ -17,7 +17,7 @@ def test_dashboard_uses_vietnam_business_date() -> None:
     assert _period_key(business_today(utc_time)) == "2026-08"
 
 
-def test_dashboard_fee_summary_is_available_to_every_authenticated_role() -> None:
+def test_dashboard_fee_summary_is_management_gated() -> None:
     overview_route = next(
         route for route in dashboard_router.routes if route.path == "/overview"
     )
@@ -25,8 +25,7 @@ def test_dashboard_fee_summary_is_available_to_every_authenticated_role() -> Non
         dependency.call for dependency in overview_route.dependant.dependencies
     }
 
-    assert get_current_user in dependency_calls
-    assert require_admin not in dependency_calls
+    assert require_management in dependency_calls
 
 
 class _DashboardResult:

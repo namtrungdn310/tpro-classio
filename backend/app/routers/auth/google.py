@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.dependencies import get_current_user
+from app.core.dependencies import Principal, get_current_user
 from app.core.rate_limit import enforce_rate_limit
 from app.models.google_identity import AuthGoogleIdentity
 from app.routers.auth.common import record_account_security_event
@@ -129,15 +129,11 @@ async def google_link_callback(
 async def get_private_avatar(
     user_id: str,
     request: Request,
-    current_user: dict = Depends(get_current_user),
+    current_user: Principal = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
-    requester_id = str(current_user.get("id") or "")
-    if (
-        requester_id != user_id
-        and current_user.get("role") != "admin"
-        and not current_user.get("is_owner")
-    ):
+    requester_id = current_user.user_id
+    if requester_id != user_id and not current_user.is_management:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Không có quyền xem avatar này.",
@@ -188,10 +184,10 @@ async def get_private_avatar(
 
 @router.post("/me/avatar/sync", response_model=MessageResponse)
 async def sync_my_avatar(
-    current_user: dict = Depends(get_current_user),
+    principal: Principal = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
-    user_id = str(current_user.get("id") or "")
+    user_id = principal.user_id
     await enforce_rate_limit(
         db,
         scope="avatar_sync",

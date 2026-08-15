@@ -1,25 +1,100 @@
 -- DEVELOPMENT ONLY: realistic test data for fee collection flows.
 -- Never run this file on staging or production. It deletes and rebuilds all
 -- business data while intentionally retaining auth.users and profiles.
+--
+-- This seed is intentionally opt-in. Before running it with psql, execute in
+-- the same database session:
+--   set app.tpro_destructive_seed_confirmation = 'RESET_LOCAL_DEMO_DATA';
+-- The confirmation prevents an accidental paste into a shared environment.
 
 begin;
+
+do $$
+declare
+  tbl text;
+  seed_tables text[] := array[
+    'public.classes',
+    'public.class_lifecycle_events',
+    'public.class_teacher_events',
+    'public.class_teachers',
+    'public.student_lifecycle_events',
+    'public.students',
+    'public.enrollments',
+    'public.fee_records',
+    'public.payments',
+    'public.fee_operations',
+    'public.fee_operation_items',
+    'public.staff_members'
+  ];
+begin
+  if current_setting('app.tpro_destructive_seed_confirmation', true)
+    is distinct from 'RESET_LOCAL_DEMO_DATA' then
+    raise exception
+      'Destructive development seed is blocked. Set app.tpro_destructive_seed_confirmation to RESET_LOCAL_DEMO_DATA in this session before running it.';
+  end if;
+
+  -- The production schema protects lifecycle/ledger history with many user
+  -- triggers (append-only, package-cycle, enrollment-range, ...). A local
+  -- fixture reset is the one explicit exception: disable every user trigger on
+  -- the tables this seed touches and restore them right before commit.
+  foreach tbl in array seed_tables loop
+    if to_regclass(tbl) is not null then
+      execute format('alter table %s disable trigger user', tbl);
+    end if;
+  end loop;
+
+  if to_regclass('public.class_lifecycle_events') is not null then
+    execute 'delete from public.class_lifecycle_events';
+  end if;
+  if to_regclass('public.class_teacher_events') is not null then
+    execute 'delete from public.class_teacher_events';
+  end if;
+  if to_regclass('public.student_lifecycle_events') is not null then
+    execute 'delete from public.student_lifecycle_events';
+  end if;
+  if to_regclass('public.class_teachers') is not null then
+    execute 'delete from public.class_teachers';
+  end if;
+end
+$$;
 
 alter table fee_records
   add column if not exists notified_at timestamptz,
   add column if not exists notification_channel text,
   add column if not exists notification_message text;
 
-do $$
-begin
-  if to_regclass('public.class_teachers') is not null then
-    execute 'delete from public.class_teachers';
-  end if;
-end $$;
+delete from fee_operation_items;
+delete from fee_operations;
 delete from payments;
 delete from fee_records;
 delete from enrollments;
 delete from students;
 delete from classes;
+delete from staff_members;
+
+-- Giáo viên và trợ giảng dùng id cố định để seed có thể gán theo từng lớp/buổi.
+insert into staff_members (
+  id,
+  full_name,
+  staff_type,
+  phone,
+  zalo_name,
+  is_active
+) values
+  ('00000000-0000-4000-8000-000000000001', 'Cô Thu Hà',   'TEACHER',  '0911000001', 'Cô Thu Hà',   true),
+  ('00000000-0000-4000-8000-000000000002', 'Cô Mai Lan',  'TEACHER',  '0911000002', 'Cô Mai Lan',  true),
+  ('00000000-0000-4000-8000-000000000003', 'Thầy Minh Đức','TEACHER',  '0911000003', 'Thầy Minh Đức', true),
+  ('00000000-0000-4000-8000-000000000004', 'Cô Bích Ngọc','TEACHER',  '0911000004', 'Cô Bích Ngọc', true),
+  ('00000000-0000-4000-8000-000000000005', 'Thầy Quang Huy','TEACHER', '0911000005', 'Thầy Quang Huy', true),
+  ('00000000-0000-4000-8000-000000000006', 'Cô Thanh Trúc','TEACHER',  '0911000006', 'Cô Thanh Trúc', true),
+  ('00000000-0000-4000-8000-000000000007', 'Thầy Đức Anh','TEACHER',  '0911000007', 'Thầy Đức Anh', true),
+  ('00000000-0000-4000-8000-000000000008', 'Cô Phương Linh','TEACHER', '0911000008', 'Cô Phương Linh', true),
+  ('00000000-0000-4000-8000-000000000009', 'Anh Hoàng Nam','ASSISTANT', '0911000009', 'Anh Hoàng Nam', true),
+  ('00000000-0000-4000-8000-00000000000a', 'Chị Thảo Vy', 'ASSISTANT', '0911000010', 'Chị Thảo Vy', true),
+  ('00000000-0000-4000-8000-00000000000b', 'Anh Tuấn Kiệt','ASSISTANT', '0911000011', 'Anh Tuấn Kiệt', true),
+  ('00000000-0000-4000-8000-00000000000c', 'Chị Hồng Nhung','ASSISTANT','0911000012', 'Chị Hồng Nhung', true),
+  ('00000000-0000-4000-8000-00000000000d', 'Cô Ngọc Diễm','TEACHER',  '0911000013', 'Cô Ngọc Diễm', false),
+  ('00000000-0000-4000-8000-00000000000e', 'Anh Gia Bảo', 'ASSISTANT', '0911000014', 'Anh Gia Bảo', false);
 
 insert into classes (
   name,
@@ -211,6 +286,255 @@ insert into classes (
     ),
     true
   );
+
+-- Structured class metadata mirrors the operational form: the entered name is
+-- kept untouched while the surrounding programme and period distinguish it.
+update classes
+set
+  identity_scheme = case
+    when name in ('6C1', '6C2', '6C3') then 'ACADEMIC_YEAR'::class_identity_scheme
+    when name in ('7C1', '7C2', '7C3', '7C4') then 'ACADEMIC_YEAR'::class_identity_scheme
+    when name in ('L12', 'Kèm 9') then 'ACADEMIC_YEAR'::class_identity_scheme
+    else 'INTAKE'::class_identity_scheme
+  end,
+  class_category = case
+    when name in ('6C1', '6C2', '6C3', '7C1', '7C2', '7C3', '7C4', 'L12')
+      then 'GENERAL'::class_category
+    when name = 'Kèm 9' then 'CUSTOM'::class_category
+    else 'IELTS'::class_category
+  end,
+  grade_mode = case
+    when name like 'IELTS%' then 'NONE'::class_grade_mode
+    else 'GRADE'::class_grade_mode
+  end,
+  program_name = null,
+  grade_level = case
+    when name in ('6C1', '6C2', '6C3') then 6
+    when name in ('7C1', '7C2', '7C3', '7C4') then 7
+    when name = 'L12' then 12
+    when name = 'Kèm 9' then 9
+    else null
+  end,
+  education_level = case
+    when name in ('6C1', '6C2', '6C3', '7C1', '7C2', '7C3', '7C4') then 'MIDDLE'
+    when name = 'L12' then 'HIGH'
+    when name = 'Kèm 9' then 'MIDDLE'
+    else null
+  end,
+  academic_year_start = case
+    when name in ('6C1', '6C2', '6C3', '7C1', '7C2', '7C3', '7C4', 'L12', 'Kèm 9')
+      then case when extract(month from current_date) >= 8
+        then extract(year from current_date)::smallint
+        else (extract(year from current_date)::smallint - 1)
+      end
+    else null
+  end,
+  end_date = current_date + interval '10 months';
+
+-- Các lớp ở trạng thái khác (sắp mở / đã kết thúc / đã hủy) để test bộ lọc
+-- trạng thái trên trang lớp học. 9A1 có 4 buổi/tuần, 2 buổi GV Thu Hà + 2 buổi
+-- GV Mai Lan, có trợ giảng — đúng kịch bản phân công theo buổi.
+insert into classes (
+  name,
+  type,
+  base_fee,
+  billing_cycle_months,
+  billing_cycle_weeks,
+  start_date,
+  end_date,
+  schedule,
+  is_active,
+  identity_scheme,
+  class_category,
+  grade_mode,
+  program_name,
+  grade_level,
+  education_level,
+  academic_year_start,
+  cancelled_at
+) values
+  (
+    '9A1',
+    'MONTHLY'::class_type,
+    850000,
+    1,
+    null,
+    current_date + interval '21 days',
+    current_date + interval '10 months',
+    jsonb_build_object(
+      'text', 'Thứ 2 (17:00-18:30); Thứ 3 (17:00-18:30); Thứ 5 (17:00-18:30); Thứ 6 (17:00-18:30)',
+      'slots', jsonb_build_array(
+        jsonb_build_object('day', 'Thứ 2', 'start', '17:00', 'end', '18:30',
+          'teacher_ids', jsonb_build_array('00000000-0000-4000-8000-000000000001'),
+          'assistant_ids', jsonb_build_array('00000000-0000-4000-8000-000000000009')),
+        jsonb_build_object('day', 'Thứ 3', 'start', '17:00', 'end', '18:30',
+          'teacher_ids', jsonb_build_array('00000000-0000-4000-8000-000000000001'),
+          'assistant_ids', jsonb_build_array('00000000-0000-4000-8000-000000000009')),
+        jsonb_build_object('day', 'Thứ 5', 'start', '17:00', 'end', '18:30',
+          'teacher_ids', jsonb_build_array('00000000-0000-4000-8000-000000000002'),
+          'assistant_ids', jsonb_build_array('00000000-0000-4000-8000-000000000009')),
+        jsonb_build_object('day', 'Thứ 6', 'start', '17:00', 'end', '18:30',
+          'teacher_ids', jsonb_build_array('00000000-0000-4000-8000-000000000002'),
+          'assistant_ids', jsonb_build_array('00000000-0000-4000-8000-000000000009'))
+      )
+    ),
+    true,
+    'ACADEMIC_YEAR'::class_identity_scheme,
+    'GENERAL'::class_category,
+    'GRADE'::class_grade_mode,
+    null,
+    9,
+    'MIDDLE',
+    case when extract(month from current_date) >= 8
+      then extract(year from current_date)::smallint
+      else (extract(year from current_date)::smallint - 1)
+    end,
+    null
+  ),
+  (
+    '8B1',
+    'MONTHLY'::class_type,
+    750000,
+    1,
+    null,
+    current_date - interval '14 months',
+    current_date - interval '1 month',
+    jsonb_build_object(
+      'text', 'Thứ 2 (13:30-15:00); Thứ 4 (13:30-15:00)',
+      'slots', jsonb_build_array(
+        jsonb_build_object('day', 'Thứ 2', 'start', '13:30', 'end', '15:00'),
+        jsonb_build_object('day', 'Thứ 4', 'start', '13:30', 'end', '15:00')
+      )
+    ),
+    true,
+    'ACADEMIC_YEAR'::class_identity_scheme,
+    'GENERAL'::class_category,
+    'GRADE'::class_grade_mode,
+    null,
+    8,
+    'MIDDLE',
+    case when extract(month from current_date) >= 8
+      then extract(year from current_date)::smallint - 1
+      else (extract(year from current_date)::smallint - 2)
+    end,
+    null
+  ),
+  (
+    'IELTS Cấp tốc',
+    'COURSE'::class_type,
+    5000000,
+    3,
+    12,
+    current_date - interval '84 days',
+    current_date + interval '84 days',
+    jsonb_build_object(
+      'text', 'Thứ 7 (14:00-16:00); Chủ Nhật (09:00-11:00)',
+      'slots', jsonb_build_array(
+        jsonb_build_object('day', 'Thứ 7', 'start', '14:00', 'end', '16:00'),
+        jsonb_build_object('day', 'Chủ Nhật', 'start', '09:00', 'end', '11:00')
+      )
+    ),
+    true,
+    'INTAKE'::class_identity_scheme,
+    'IELTS'::class_category,
+    'NONE'::class_grade_mode,
+    null,
+    null,
+    null,
+    null,
+    now()
+  );
+
+-- Phân công giáo viên / trợ giảng cho từng lớp (bảng class_teachers) và cột
+-- legacy classes.teacher_id (giáo viên đầu tiên). Cả 2 đều dùng staff active.
+insert into class_teachers (class_id, teacher_id)
+select classes.id, staff_members.id
+from (values
+  ('6C1', '00000000-0000-4000-8000-000000000001'),
+  ('6C1', '00000000-0000-4000-8000-000000000002'),
+  ('6C1', '00000000-0000-4000-8000-000000000009'),
+  ('6C2', '00000000-0000-4000-8000-000000000001'),
+  ('6C2', '00000000-0000-4000-8000-000000000009'),
+  ('6C3', '00000000-0000-4000-8000-000000000003'),
+  ('6C3', '00000000-0000-4000-8000-00000000000a'),
+  ('7C1', '00000000-0000-4000-8000-000000000004'),
+  ('7C1', '00000000-0000-4000-8000-000000000005'),
+  ('7C1', '00000000-0000-4000-8000-00000000000b'),
+  ('7C2', '00000000-0000-4000-8000-000000000004'),
+  ('7C2', '00000000-0000-4000-8000-00000000000b'),
+  ('7C3', '00000000-0000-4000-8000-000000000005'),
+  ('7C3', '00000000-0000-4000-8000-00000000000c'),
+  ('7C4', '00000000-0000-4000-8000-000000000006'),
+  ('7C4', '00000000-0000-4000-8000-00000000000c'),
+  ('Kèm 9', '00000000-0000-4000-8000-000000000007'),
+  ('Kèm 9', '00000000-0000-4000-8000-00000000000a'),
+  ('L12', '00000000-0000-4000-8000-000000000008'),
+  ('L12', '00000000-0000-4000-8000-000000000009'),
+  ('IELTS 10', '00000000-0000-4000-8000-000000000001'),
+  ('IELTS 10', '00000000-0000-4000-8000-000000000002'),
+  ('IELTS 10', '00000000-0000-4000-8000-000000000009'),
+  ('IELTS Tổng hợp', '00000000-0000-4000-8000-000000000003'),
+  ('IELTS Tổng hợp', '00000000-0000-4000-8000-00000000000b'),
+  ('IELTS Chuyên sâu', '00000000-0000-4000-8000-000000000005'),
+  ('IELTS Chuyên sâu', '00000000-0000-4000-8000-000000000006'),
+  ('IELTS Chuyên sâu', '00000000-0000-4000-8000-00000000000c'),
+  ('9A1', '00000000-0000-4000-8000-000000000001'),
+  ('9A1', '00000000-0000-4000-8000-000000000002'),
+  ('9A1', '00000000-0000-4000-8000-000000000009'),
+  ('8B1', '00000000-0000-4000-8000-000000000004'),
+  ('8B1', '00000000-0000-4000-8000-00000000000a'),
+  ('IELTS Cấp tốc', '00000000-0000-4000-8000-000000000007'),
+  ('IELTS Cấp tốc', '00000000-0000-4000-8000-00000000000b')
+) as assignment(class_name, teacher_id)
+join classes on classes.name = assignment.class_name
+join staff_members on staff_members.id = assignment.teacher_id::uuid;
+
+-- Cột legacy classes.teacher_id trỏ tới giáo viên (TEACHER) đầu tiên.
+update classes
+set teacher_id = assignment.teacher_id::uuid
+from (
+  select distinct on (class_name) class_name, teacher_id
+  from (values
+    ('6C1', '00000000-0000-4000-8000-000000000001'),
+    ('6C2', '00000000-0000-4000-8000-000000000001'),
+    ('6C3', '00000000-0000-4000-8000-000000000003'),
+    ('7C1', '00000000-0000-4000-8000-000000000004'),
+    ('7C2', '00000000-0000-4000-8000-000000000004'),
+    ('7C3', '00000000-0000-4000-8000-000000000005'),
+    ('7C4', '00000000-0000-4000-8000-000000000006'),
+    ('Kèm 9', '00000000-0000-4000-8000-000000000007'),
+    ('L12', '00000000-0000-4000-8000-000000000008'),
+    ('IELTS 10', '00000000-0000-4000-8000-000000000001'),
+    ('IELTS Tổng hợp', '00000000-0000-4000-8000-000000000003'),
+    ('IELTS Chuyên sâu', '00000000-0000-4000-8000-000000000005'),
+    ('9A1', '00000000-0000-4000-8000-000000000001'),
+    ('8B1', '00000000-0000-4000-8000-000000000004'),
+    ('IELTS Cấp tốc', '00000000-0000-4000-8000-000000000007')
+  ) as legacy(class_name, teacher_id)
+  order by class_name, teacher_id
+) assignment
+where classes.name = assignment.class_name;
+
+-- Gán GV riêng theo từng buổi cho IELTS 10 (3 buổi: Thu Hà / Mai Lan / cả hai).
+update classes
+set schedule = jsonb_set(
+  schedule,
+  '{slots}',
+  jsonb_build_array(
+    jsonb_build_object('day', 'Thứ 4', 'start', '18:30', 'end', '20:00',
+      'teacher_ids', jsonb_build_array('00000000-0000-4000-8000-000000000001'),
+      'assistant_ids', jsonb_build_array('00000000-0000-4000-8000-000000000009')),
+    jsonb_build_object('day', 'Thứ 6', 'start', '18:30', 'end', '20:00',
+      'teacher_ids', jsonb_build_array('00000000-0000-4000-8000-000000000002'),
+      'assistant_ids', jsonb_build_array('00000000-0000-4000-8000-000000000009')),
+    jsonb_build_object('day', 'Thứ 7', 'start', '08:00', 'end', '10:00',
+      'teacher_ids', jsonb_build_array(
+        '00000000-0000-4000-8000-000000000001',
+        '00000000-0000-4000-8000-000000000002'),
+      'assistant_ids', jsonb_build_array('00000000-0000-4000-8000-000000000009'))
+  )
+)
+where name = 'IELTS 10';
 
 create temporary table seed_students (
   full_name text primary key,
@@ -416,7 +740,11 @@ insert into fee_records (
   notification_message,
   paid_amount,
   paid_date,
-  note
+  note,
+  student_name_snapshot,
+  class_name_snapshot,
+  class_type_snapshot,
+  billing_cycle_months_snapshot
 )
 select
   enrollments.id,
@@ -461,7 +789,11 @@ select
   case
     when seed_enrollments.custom_fee is not null then 'Seed: học phí riêng'
     else 'Seed: học phí mặc định'
-  end
+  end,
+  students.full_name,
+  classes.name,
+  classes.type,
+  classes.billing_cycle_months
 from seed_enrollments
 join students on students.full_name = seed_enrollments.full_name
 join classes on classes.name = seed_enrollments.class_name
@@ -487,6 +819,33 @@ select
   'Seed: thanh toán học phí test'
 from fee_records
 where fee_records.status = 'PAID';
+
+-- Khôi phục toàn bộ trigger đã tắt khi bắt đầu seed.
+do $$
+declare
+  tbl text;
+  seed_tables text[] := array[
+    'public.classes',
+    'public.class_lifecycle_events',
+    'public.class_teacher_events',
+    'public.class_teachers',
+    'public.student_lifecycle_events',
+    'public.students',
+    'public.enrollments',
+    'public.fee_records',
+    'public.payments',
+    'public.fee_operations',
+    'public.fee_operation_items',
+    'public.staff_members'
+  ];
+begin
+  foreach tbl in array seed_tables loop
+    if to_regclass(tbl) is not null then
+      execute format('alter table %s enable trigger user', tbl);
+    end if;
+  end loop;
+end
+$$;
 
 commit;
 

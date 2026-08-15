@@ -24,7 +24,8 @@ from app.models.google_identity import AuthGoogleIdentity
 
 logger = logging.getLogger("tpro_classio.google_identity")
 
-_GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+# Public OAuth endpoint, not a credential.
+_GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"  # nosec B105
 _GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 _GOOGLE_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
 _REFRESH_PURPOSE = "google-provider-refresh-token"
