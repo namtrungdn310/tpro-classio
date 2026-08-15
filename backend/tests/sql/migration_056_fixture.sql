@@ -3,6 +3,42 @@
 -- enrollment record.
 \set ON_ERROR_STOP on
 
+-- Keep this fixture self-contained when CI runs the numeric migration chain.
+-- The disposable multi-scenario runner already has the M053 class/staff, so
+-- these inserts are no-ops there.  The class carries a canonical JSON slot;
+-- migration 059 will materialize it and migration 062 can safely backfill the
+-- active enrollment's ALL-slot selection instead of aborting on a schedule-less
+-- synthetic class.
+insert into public.staff_members (id, full_name, staff_type, is_active, zalo_name, phone)
+values (
+  '10000000-0000-0000-0000-000000000001', 'M056 Teacher', 'TEACHER', true,
+  'm056-teacher', '0900000056'
+)
+on conflict (id) do nothing;
+
+insert into public.classes (
+  id, name, type, base_fee, billing_cycle_months, teacher_id,
+  identity_scheme, start_date, end_date, is_active, schedule
+)
+values (
+  '50000000-0000-0000-0000-000000000001', 'Lớp M053 A', 'MONTHLY', 750000, 1,
+  '10000000-0000-0000-0000-000000000001', 'LEGACY',
+  date '2026-09-01', date '2027-05-31', true,
+  '{"text":"Thứ 2 (18:00-19:30)","slots":[
+     {"day":"Thứ 2","start":"18:00","end":"19:30",
+      "teacher_ids":["10000000-0000-0000-0000-000000000001"],
+      "assistant_ids":[]}
+   ]}'::jsonb
+)
+on conflict (id) do nothing;
+
+insert into public.class_teachers (class_id, teacher_id)
+values (
+  '50000000-0000-0000-0000-000000000001',
+  '10000000-0000-0000-0000-000000000001'
+)
+on conflict do nothing;
+
 insert into public.students (id, full_name, status)
 select '60000000-0000-0000-0000-000000000011', 'M056 Student X', 'active'
 where not exists (

@@ -133,6 +133,14 @@ jobs:
             if [ "$(basename "$migration")" = "028_fee_refund_ledger.sql" ]; then
               psql -v ON_ERROR_STOP=1 -f tests/sql/pre_refund_upgrade_fixture.sql
             fi
+            # The cycle-identity integration tests intentionally exercise a
+            # legacy three-cycle enrollment.  Seed that evidence immediately
+            # before 056 so the migration backfills it; inserting it after the
+            # migration would test only an empty database and would hide a
+            # broken legacy backfill.
+            if [ "$(basename "$migration")" = "056_fee_cycle_identity.sql" ]; then
+              psql -v ON_ERROR_STOP=1 -f tests/sql/migration_056_fixture.sql
+            fi
             psql -v ON_ERROR_STOP=1 -f "$migration"
           done
           psql -v ON_ERROR_STOP=1 -f tests/sql/verify_security.sql
