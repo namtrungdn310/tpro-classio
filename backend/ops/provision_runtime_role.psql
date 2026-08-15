@@ -88,6 +88,15 @@ grant select, insert, update, delete on all tables in schema public
   to tpro_backend;
 grant usage, select on all sequences in schema public to tpro_backend;
 
+-- The student-code trigger runs as the database runtime role.  Migration 055
+-- grants these helpers only when the role already exists; this provisioning
+-- step runs after the role is created, so re-apply the minimal EXECUTE grants
+-- here.  Do not grant EXECUTE on all functions: browser roles remain denied
+-- and the runtime role receives only the immutable code helpers it needs.
+grant execute on function public.student_code_luhn_check(text) to tpro_backend;
+grant execute on function public.student_code_from_serial(bigint) to tpro_backend;
+grant execute on function public.student_code_valid(text) to tpro_backend;
+
 do $$
 declare
   runtime_role record;
@@ -149,6 +158,24 @@ begin
        'CREATE'
      ) then
     raise exception 'tpro_backend must not create database objects';
+  end if;
+
+  if not has_function_privilege(
+       'tpro_backend',
+       'public.student_code_luhn_check(text)',
+       'EXECUTE'
+     )
+     or not has_function_privilege(
+       'tpro_backend',
+       'public.student_code_from_serial(bigint)',
+       'EXECUTE'
+     )
+     or not has_function_privilege(
+       'tpro_backend',
+       'public.student_code_valid(text)',
+       'EXECUTE'
+     ) then
+    raise exception 'tpro_backend student-code helper privileges are incomplete';
   end if;
 
   if exists (
