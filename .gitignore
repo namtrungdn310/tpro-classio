@@ -19,6 +19,7 @@ frontend/.nyc_output/
 frontend/playwright-report/
 frontend/test-results/
 frontend/*.tsbuildinfo
+frontend/*output.txt
 frontend/next-env.d.ts
 .eslintcache
 
@@ -117,3 +118,12 @@ Thumbs.db:encryptable
 .gemini/
 .agents/
 .codex/
+
+# Playwright trace/video/report artifacts (source specs remain tracked)
+frontend/blob-report/
+frontend/playwright/.cache/
+
+# Database dumps and disposable DB evidence
+*.dump
+*.dmp
+*.sql.gz

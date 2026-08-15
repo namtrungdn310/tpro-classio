@@ -21,7 +21,7 @@ concurrency:
 jobs:
   frontend:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: frontend
@@ -40,8 +40,8 @@ jobs:
         run: npm ci
       - name: Audit production dependency tree
         run: npm audit --omit=dev --audit-level=high
-      - name: Reject critical findings in the full toolchain
-        run: npm audit --audit-level=critical
+      - name: Reject high findings in the full toolchain
+        run: npm audit --audit-level=high
       - name: Type-check
         run: npm run type-check
       - name: Lint
@@ -50,10 +50,23 @@ jobs:
         run: npm test
       - name: Build
         run: npm run build
+      - name: Install pinned Playwright browsers
+        run: npx playwright install --with-deps chromium firefox
+      - name: Browser component harness + production-path E2E (Chromium)
+        run: npx playwright test --project=chromium --reporter=line
+      - name: Browser component harness + production-path E2E (Firefox)
+        run: npx playwright test --project=firefox --reporter=line
+      - name: Upload Playwright trace/screenshot/video only on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: playwright-artifacts
+          path: frontend/test-results/
+          if-no-files-found: ignore
 
   backend:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       APP_ENVIRONMENT: test
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/tpro_ci
@@ -144,6 +157,11 @@ jobs:
           DATABASE_URL: postgresql+asyncpg://tpro_backend:ci-runtime-only-password-at-least-32@127.0.0.1:5432/tpro_ci
           DB_TEST_ADMIN_DSN: postgresql://postgres:postgres@127.0.0.1:5432/tpro_ci
         run: python -m pytest -q -m db_integration
+      - name: Disposable DB pipeline (clean chain, rollback, drift, negatives, restricted roles, verify x2, perf)
+        env:
+          TPRO_DB_PORT: "55437"
+        run: |
+          python scripts/run_disposable_db.py
 
   security:
     runs-on: ubuntu-latest
