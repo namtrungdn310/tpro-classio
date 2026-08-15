@@ -25,6 +25,8 @@ const config: Config = {
         primary: {
           DEFAULT: "var(--primary)",
           foreground: "var(--primary-foreground)",
+          soft: "var(--primary-soft)",
+          "soft-foreground": "var(--primary-soft-foreground)",
         },
         secondary: {
           DEFAULT: "var(--secondary)",
@@ -41,6 +43,7 @@ const config: Config = {
         destructive: {
           DEFAULT: "var(--destructive)",
           foreground: "var(--destructive-foreground)",
+          soft: "var(--destructive-soft)",
         },
       },
       borderRadius: {

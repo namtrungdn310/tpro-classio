@@ -1,6 +1,6 @@
 "use client";
 
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
   keepPreviousData,
   useMutation,
@@ -8,7 +8,7 @@ import {
   useQueryClient,
   type QueryClient,
 } from "@tanstack/react-query";
-import { Download, MessageSquareText } from "lucide-react";
+import { RiDownload2Line as Download, RiMessage2Line as MessageSquareText } from "react-icons/ri";
 import { FeeMessageTemplateDialog } from "@/components/fees/fee-message-template-dialog";
 import { FeeRefundDialog } from "@/components/fees/fee-refund-dialog";
 import { FeeReportPanel } from "@/components/fees/fee-report-panel";
@@ -17,9 +17,9 @@ import { FeesTable } from "@/components/fees/fees-table";
 import { HeaderControlsPortal } from "@/components/layout/header-controls-portal";
 import { HeaderFilterControls } from "@/components/layout/header-filter-controls";
 import { ConfirmationDialog } from "@/components/ui/confirmation-dialog";
-import { InlineFieldDivider } from "@/components/ui/inline-field-divider";
 import { LoadingLabel } from "@/components/ui/loading-label";
 import { getClasses } from "@/lib/api/classes";
+import { classQueryKeys } from "@/lib/classes/query-keys";
 import {
   getFeeRecords,
   getFeeTransactionBatch,
@@ -35,8 +35,10 @@ import {
   updateFeeMessageTemplates,
 } from "@/lib/api/fees";
 import { useAuth } from "@/lib/hooks/useAuth";
+import { isManagementUser } from "@/lib/auth/permissions";
 import { usePersistentState } from "@/lib/hooks/usePersistentState";
 import {
+  formatFeeGroupSubject,
   renderGroupFeeMessage,
   type StudentFeeGroup,
 } from "@/lib/fees/view-model";
@@ -48,7 +50,6 @@ import {
   indexFeeRecords,
 } from "@/lib/fees/dashboard-view-model";
 import {
-  canRestoreNotifiedFeeState,
   getDefaultUnpayTargetState,
   getFeeConfirmationContent,
   type FeeConfirmationTarget,
@@ -93,7 +94,7 @@ const UNPAY_TARGET_OPTIONS = [
 export default function FeesPage() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
-  const isAdmin = user?.role === "admin";
+  const isAdmin = isManagementUser(user);
   const [search, setSearch] = usePersistentState("tpro:fees:search", "");
   const deferredSearch = useDeferredValue(search);
   const [period, setPeriod] = usePersistentState("tpro:fees:period", getCurrentFeePeriod());
@@ -112,6 +113,7 @@ export default function FeesPage() {
   const [isMessageTemplateDialogOpen, setIsMessageTemplateDialogOpen] =
     useState(false);
   const deferredClassId = useDeferredValue(classId);
+  const lastAutoSyncPeriodRef = useRef<string | null>(null);
   const notify = useToast();
   const matchesFeeSearch = useMemo(
     () => createPreparedSearchMatcher(deferredSearch),
@@ -119,13 +121,13 @@ export default function FeesPage() {
   );
 
   const classesQuery = useQuery({
-    queryKey: ["classes", { is_active: true }],
-    queryFn: () => getClasses({ is_active: true }),
+    queryKey: classQueryKeys.list("active"),
+    queryFn: () => getClasses({ scope: "active" }),
     enabled: Boolean(user),
     placeholderData: keepPreviousData,
-    initialData: () => queryClient.getQueryData(["classes", { is_active: true }]),
+    initialData: () => queryClient.getQueryData(classQueryKeys.list("active")),
     initialDataUpdatedAt: () =>
-      queryClient.getQueryState(["classes", { is_active: true }])?.dataUpdatedAt,
+      queryClient.getQueryState(classQueryKeys.list("active"))?.dataUpdatedAt,
   });
 
   const feePeriodsQuery = useQuery({
@@ -152,9 +154,10 @@ export default function FeesPage() {
     queryKey: ["fees", { period }],
     queryFn: () => getFeeRecords({ period }),
     enabled: Boolean(user) && !isInvalidPeriod,
+    staleTime: 10_000,
     refetchInterval: 30_000,
     refetchIntervalInBackground: false,
-    refetchOnWindowFocus: "always",
+    refetchOnWindowFocus: true,
     initialData: () => queryClient.getQueryData(["fees", { period }]),
     initialDataUpdatedAt: () =>
       queryClient.getQueryState(["fees", { period }])?.dataUpdatedAt,
@@ -171,10 +174,13 @@ export default function FeesPage() {
   const feeTransactionsQuery = useQuery({
     queryKey: ["fee-transactions", "period", { period, feeRecordIds }],
     queryFn: () => loadFeeTransactionHistories(feeRecordIds),
+    // Transaction/refund history is detail data. Loading it eagerly for every
+    // fee in a period delayed the first usable render and amplified requests.
     enabled:
       Boolean(user) &&
       !isInvalidPeriod &&
-      feesQuery.data !== undefined,
+      feesQuery.data !== undefined &&
+      refundTarget !== null,
     staleTime: 30_000,
     refetchOnWindowFocus: "always",
   });
@@ -212,10 +218,12 @@ export default function FeesPage() {
       return await notifyFeeRecords(records.map((record) => record.id), message);
     },
     onMutate: () => cancelFeeQueries(queryClient),
-    onSuccess: (result) => {
+    onSuccess: (result, group) => {
       updateFeeRecordsInCache(queryClient, result);
       void queryClient.invalidateQueries({ queryKey: ["reports"] });
-      notify.success("Đã đánh dấu đã báo phụ huynh.");
+      notify.success(
+        `Đã báo học phí cho phụ huynh ${formatFeeGroupSubject(group)}.`,
+      );
     },
     onError: (error) => {
       void queryClient.invalidateQueries({ queryKey: ["fees"] });
@@ -260,13 +268,15 @@ export default function FeesPage() {
       );
     },
     onMutate: () => cancelFeeQueries(queryClient),
-    onSuccess: async (result) => {
+    onSuccess: (result, variables) => {
       updateFeeRecordsInCache(queryClient, result);
-      notify.success("Đã ghi nhận học phí.");
-      void invalidateFeeDependencies(queryClient);
+      notify.success(
+        `Đã ghi nhận học phí của ${formatFeeGroupSubject(variables.group)}.`,
+      );
+      invalidateSuccessfulFeeMutation(queryClient, { transactions: true });
     },
     onError: (error) => {
-      void invalidateFeeDependencies(queryClient);
+      recoverFeeMutationData(queryClient);
       notify.error(getApiErrorMessage(error, "Không thể ghi nhận học phí."));
     },
   });
@@ -285,17 +295,18 @@ export default function FeesPage() {
       );
     },
     onMutate: () => cancelFeeQueries(queryClient),
-    onSuccess: async (result, variables) => {
+    onSuccess: (result, variables) => {
       updateFeeRecordsInCache(queryClient, result);
+      const subject = formatFeeGroupSubject(variables.group);
       notify.success(
         variables.targetNotificationState === "UNNOTIFIED"
-          ? "Đã hoàn tác ghi nhận nộp và chuyển khoản học phí về trạng thái chưa báo."
-          : "Đã hoàn tác ghi nhận nộp. Khoản học phí trở về trạng thái đã báo, chưa nộp.",
+          ? `Đã hoàn tác ghi nhận học phí của ${subject} và chuyển về trạng thái chưa báo.`
+          : `Đã hoàn tác ghi nhận học phí của ${subject} về trạng thái đã báo, chưa nộp.`,
       );
-      void invalidateFeeDependencies(queryClient);
+      invalidateSuccessfulFeeMutation(queryClient, { transactions: true });
     },
     onError: (error) => {
-      void invalidateFeeDependencies(queryClient);
+      recoverFeeMutationData(queryClient);
       notify.error(getApiErrorMessage(error, "Không thể hoàn tác học phí."));
     },
   });
@@ -308,16 +319,16 @@ export default function FeesPage() {
       payload: FeeRefundRequest;
     }) => await refundFeeRecords(payload),
     onMutate: () => cancelFeeQueries(queryClient),
-    onSuccess: async (result) => {
+    onSuccess: (result, variables) => {
       updateFeeRecordsInCache(queryClient, result);
       setRefundReceipt(result.receipt);
-      await invalidateFeeTransactionQueries(queryClient);
-      notify.success("Đã ghi nhận hoàn phí và lưu lịch sử đối soát.");
-      void invalidateFeeDependencies(queryClient);
+      notify.success(
+        `Đã ghi nhận hoàn phí cho ${formatFeeGroupSubject(variables.group)} và lưu lịch sử đối soát.`,
+      );
+      invalidateSuccessfulFeeMutation(queryClient, { transactions: true });
     },
     onError: (error) => {
-      void queryClient.invalidateQueries({ queryKey: ["fee-transactions"] });
-      void invalidateFeeDependencies(queryClient);
+      recoverFeeMutationData(queryClient);
       notify.error(
         getApiErrorMessage(
           error,
@@ -335,15 +346,15 @@ export default function FeesPage() {
       payload: FeeRefundReversalRequest;
     }) => await reverseFeeRefund(payload),
     onMutate: () => cancelFeeQueries(queryClient),
-    onSuccess: async (result) => {
+    onSuccess: (result, variables) => {
       updateFeeRecordsInCache(queryClient, result);
-      await invalidateFeeTransactionQueries(queryClient);
-      notify.success("Đã hoàn tác khoản hoàn phí nhập nhầm và lưu bút toán sửa sai.");
-      void invalidateFeeDependencies(queryClient);
+      notify.success(
+        `Đã hoàn tác khoản hoàn phí của ${formatFeeGroupSubject(variables.group)} và lưu bút toán sửa sai.`,
+      );
+      invalidateSuccessfulFeeMutation(queryClient, { transactions: true });
     },
     onError: (error) => {
-      void queryClient.invalidateQueries({ queryKey: ["fee-transactions"] });
-      void invalidateFeeDependencies(queryClient);
+      recoverFeeMutationData(queryClient);
       notify.error(
         getApiErrorMessage(error, "Không thể hoàn tác khoản hoàn phí."),
       );
@@ -355,28 +366,45 @@ export default function FeesPage() {
       return await unnotifyFeeRecords(group.records.map((record) => record.id));
     },
     onMutate: () => cancelFeeQueries(queryClient),
-    onSuccess: async (result) => {
+    onSuccess: (result, group) => {
       updateFeeRecordsInCache(queryClient, result);
-      notify.success("Đã chuyển học phí về trạng thái chưa báo.");
-      void invalidateFeeDependencies(queryClient);
+      notify.success(
+        `Đã chuyển học phí của ${formatFeeGroupSubject(group)} về trạng thái chưa báo.`,
+      );
+      invalidateSuccessfulFeeMutation(queryClient);
     },
     onError: (error) => {
-      void invalidateFeeDependencies(queryClient);
+      recoverFeeMutationData(queryClient);
       notify.error(getApiErrorMessage(error, "Không thể hoàn tác thông báo."));
     },
   });
 
   useEffect(() => {
-    if (!isAdmin || period !== getCurrentFeePeriod()) {
+    if (
+      !isAdmin ||
+      period !== getCurrentFeePeriod() ||
+      !feesQuery.isSuccess ||
+      feesQuery.isFetching ||
+      feesQuery.data.records.length > 0 ||
+      lastAutoSyncPeriodRef.current === period
+    ) {
       return;
     }
 
-    // Enrollment mutations reconcile current fees on the backend. This is a
-    // current-period fallback only; opening historical reports must stay read-only.
+    // Student/class/enrollment mutations already reconcile current fees.
+    // Generate the period only when it is genuinely empty instead of locking
+    // and rescanning the whole ledger on every visit to the page.
+    lastAutoSyncPeriodRef.current = period;
     syncMutation.mutate(period);
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAdmin, period]);
+  }, [
+    feesQuery.data?.records.length,
+    feesQuery.isFetching,
+    feesQuery.isSuccess,
+    isAdmin,
+    period,
+  ]);
 
   const indexedRecords = useMemo(
     () => indexFeeRecords(feesQuery.data?.records ?? []),
@@ -436,7 +464,6 @@ export default function FeesPage() {
   const hasFeeData = feesQuery.data !== undefined;
   const hasClassData = classesQuery.data !== undefined;
   const hasMessageTemplateData = messageTemplatesQuery.data !== undefined;
-  const hasFeeTransactionData = feeTransactionsQuery.data !== undefined;
   const isInitialLoading =
     Boolean(user) &&
     !isInvalidPeriod &&
@@ -444,23 +471,13 @@ export default function FeesPage() {
       (!hasFeeData &&
         (feesQuery.isPending || feesQuery.isFetching || syncMutation.isPending)) ||
       (!hasClassData && classesQuery.isPending) ||
-      (isAdmin && !hasMessageTemplateData && messageTemplatesQuery.isPending) ||
-      (hasFeeData &&
-        !hasFeeTransactionData &&
-        feeTransactionsQuery.isPending)
+      (isAdmin && !hasMessageTemplateData && messageTemplatesQuery.isPending)
     );
   const hasBlockingFeeError =
     feesQuery.isError && !hasFeeData && !feesQuery.isFetching && !syncMutation.isPending;
-  const hasBlockingTransactionError =
-    hasFeeData &&
-    feeTransactionsQuery.isError &&
-    !hasFeeTransactionData &&
-    !feeTransactionsQuery.isFetching;
-  const hasBlockingLoadError =
-    hasBlockingFeeError || hasBlockingTransactionError;
+  const hasBlockingLoadError = hasBlockingFeeError;
   const hasRefreshError =
-    (feesQuery.isError && hasFeeData) ||
-    (feeTransactionsQuery.isError && hasFeeTransactionData);
+    feesQuery.isError && hasFeeData;
 
   const [currentYearText, currentMonthText] = getCurrentFeePeriod().split("-");
   const currentYear = Number(currentYearText);
@@ -589,12 +606,9 @@ export default function FeesPage() {
     confirmationTarget,
     unpayTargetState,
   );
-  const canRestoreNotifiedState =
-    confirmationTarget?.action === "unpay" &&
-    canRestoreNotifiedFeeState(confirmationTarget.group);
-  const visibleUnpayTargetOptions = canRestoreNotifiedState
-    ? UNPAY_TARGET_OPTIONS
-    : UNPAY_TARGET_OPTIONS.filter((option) => option.value === "UNNOTIFIED");
+  // Keep both reversal targets visible. The selected target is written to the
+  // fee record by the backend as one atomic, audited state transition.
+  const visibleUnpayTargetOptions = UNPAY_TARGET_OPTIONS;
   const isConfirmationMutationPending = Boolean(
     confirmationTarget &&
     pendingAction === confirmationTarget.action &&
@@ -686,10 +700,9 @@ export default function FeesPage() {
                     className="shrink-0 font-semibold underline underline-offset-2 hover:text-amber-950 disabled:cursor-wait disabled:opacity-60"
                     onClick={() => {
                       void feesQuery.refetch();
-                      void feeTransactionsQuery.refetch();
                     }}
                   >
-                    {feesQuery.isFetching || feeTransactionsQuery.isFetching
+                    {feesQuery.isFetching
                       ? <LoadingLabel label="Đang cập nhật" />
                       : "Cập nhật lại"}
                   </button>
@@ -698,22 +711,19 @@ export default function FeesPage() {
 
               <div className="min-h-0 md:flex-1 md:overflow-hidden">
                 {hasBlockingLoadError && !isInvalidPeriod ? (
-                  <div className="flex min-h-48 flex-col items-center justify-center gap-3 rounded-md border border-red-100 bg-red-50 px-4 text-center md:h-full">
-                    <p className="font-semibold text-red-800">
+                  <div className="flex min-h-48 flex-col items-center justify-center gap-3 rounded-md border border-destructive/15 bg-destructive-soft px-4 text-center md:h-full">
+                    <p className="font-semibold text-destructive">
                       Không thể tải đầy đủ dữ liệu học phí
                     </p>
                     <button
                       type="button"
-                      disabled={feesQuery.isFetching || feeTransactionsQuery.isFetching}
-                      className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-red-500 disabled:cursor-wait disabled:opacity-60"
+                      disabled={feesQuery.isFetching}
+                      className="rounded-md bg-destructive px-3 py-1.5 text-xs font-semibold text-destructive-foreground shadow-sm hover:bg-destructive/90 disabled:cursor-wait disabled:opacity-60"
                       onClick={() => {
                         if (hasBlockingFeeError) void feesQuery.refetch();
-                        if (hasBlockingTransactionError) {
-                          void feeTransactionsQuery.refetch();
-                        }
                       }}
                     >
-                      {feesQuery.isFetching || feeTransactionsQuery.isFetching
+                      {feesQuery.isFetching
                         ? <LoadingLabel label="Đang thử lại" />
                         : "Thử lại"}
                     </button>
@@ -748,8 +758,15 @@ export default function FeesPage() {
                         notify.warning("Chưa tải được nội dung Zalo. Vui lòng thử lại.");
                         return;
                       }
-                      void copyFeeMessage(group, activeTab === "paid", templates)
-                        .then(() => notify.success("Đã sao chép tin nhắn Zalo."))
+                      const isPaidMessage = activeTab === "paid";
+                      void copyFeeMessage(group, isPaidMessage, templates)
+                        .then(() =>
+                          notify.success(
+                            isPaidMessage
+                              ? "Đã sao chép tin nhắn nhận học phí."
+                              : "Đã sao chép tin nhắn đóng học phí.",
+                          ),
+                        )
                         .catch((error: unknown) =>
                           notify.error(
                             error instanceof Error
@@ -796,10 +813,10 @@ export default function FeesPage() {
                   {PAYMENT_METHOD_OPTIONS.map((option) => (
                     <label
                       key={option.value}
-                      className={`form-input-text flex h-full min-w-0 select-none cursor-pointer items-center justify-center whitespace-nowrap rounded-[5px] px-1 transition-colors has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-1 has-[:focus-visible]:outline-gray-950 ${
+                      className={`form-input-text flex h-full min-w-0 select-none cursor-pointer items-center justify-center whitespace-nowrap rounded-[5px] px-1 transition-colors has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-1 has-[:focus-visible]:outline-primary ${
                         paymentMethod === option.value
-                          ? "bg-gray-950 text-white"
-                          : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                          ? "bg-primary text-primary-foreground"
+                          : "text-gray-600 hover:bg-primary-soft hover:text-primary"
                       } ${isConfirmationMutationPending ? "cursor-wait opacity-60" : ""}`}
                     >
                       <input
@@ -814,32 +831,31 @@ export default function FeesPage() {
                     </label>
                   ))}
                 </div>
-                <div className="hidden" aria-hidden="true">
-                  <InlineFieldDivider />
-                </div>
               </fieldset>
             ) : null}
             {confirmationTarget?.action === "unpay" ? (
               <fieldset className="mt-4" disabled={isConfirmationMutationPending}>
                 <legend className="text-sm font-medium text-gray-900">
-                  Chuyển khoản học phí về
+                  Trạng thái sau hoàn tác
                 </legend>
                 <div
-                  className={`mt-2 grid h-9 gap-1.5 ${
-                    visibleUnpayTargetOptions.length === 1
-                      ? "grid-cols-1"
-                      : "grid-cols-2"
-                  }`}
+                  role="group"
+                  aria-label="Trạng thái chuyển về"
+                  className="mt-2 grid h-8 w-full select-none grid-cols-2 overflow-hidden rounded-md border border-gray-200 bg-white p-0.5"
                 >
                   {visibleUnpayTargetOptions.map((option) => {
                     const selected = unpayTargetState === option.value;
                     return (
-                      <label
+                      <button
                         key={option.value}
-                        className={`flex h-full select-none cursor-pointer items-center justify-center rounded-md border px-3 text-sm font-medium transition-colors focus-within:ring-2 focus-within:ring-gray-950 focus-within:ring-offset-2 ${
+                        type="button"
+                        aria-pressed={selected}
+                        disabled={isConfirmationMutationPending}
+                        onClick={() => setUnpayTargetState(option.value)}
+                        className={`form-input-text h-full min-w-0 rounded-[5px] px-3 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40 ${
                           selected
-                            ? "border-gray-950 bg-gray-950 text-white"
-                            : "border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:text-gray-900"
+                            ? "bg-primary text-primary-foreground"
+                            : "text-gray-600 hover:bg-primary-soft hover:text-primary"
                         } ${isConfirmationMutationPending ? "cursor-wait opacity-60" : ""}`}
                       >
                         <input
@@ -851,7 +867,7 @@ export default function FeesPage() {
                           className="sr-only"
                         />
                         {option.label}
-                      </label>
+                      </button>
                     );
                   })}
                 </div>
@@ -860,6 +876,7 @@ export default function FeesPage() {
           </>
         }
         confirmLabel={confirmationContent.confirmLabel}
+        pendingLabel={confirmationContent.pendingLabel}
         tone={confirmationContent.tone}
         isPending={isConfirmationMutationPending}
         onCancel={() => setConfirmationTarget(null)}
@@ -963,17 +980,24 @@ async function cancelFeeQueries(queryClient: QueryClient) {
   await queryClient.cancelQueries({ queryKey: ["fees"] });
 }
 
-async function invalidateFeeDependencies(queryClient: QueryClient) {
-  await Promise.all([
-    queryClient.invalidateQueries({ queryKey: ["fees"] }),
-    queryClient.invalidateQueries({ queryKey: ["reports"] }),
-  ]);
+function invalidateSuccessfulFeeMutation(
+  queryClient: QueryClient,
+  options: { transactions?: boolean } = {},
+) {
+  void queryClient.invalidateQueries({ queryKey: ["reports"] });
+  void queryClient.invalidateQueries({ queryKey: ["classes"] });
+  if (options.transactions) {
+    void queryClient.invalidateQueries({ queryKey: ["fee-transactions"] });
+  }
 }
 
-async function invalidateFeeTransactionQueries(
-  queryClient: QueryClient,
-) {
-  await queryClient.invalidateQueries({ queryKey: ["fee-transactions"] });
+function recoverFeeMutationData(queryClient: QueryClient) {
+  void Promise.all([
+    queryClient.invalidateQueries({ queryKey: ["fees"] }),
+    queryClient.invalidateQueries({ queryKey: ["fee-transactions"] }),
+    queryClient.invalidateQueries({ queryKey: ["reports"] }),
+    queryClient.invalidateQueries({ queryKey: ["classes"] }),
+  ]);
 }
 
 async function loadFeeTransactionHistories(

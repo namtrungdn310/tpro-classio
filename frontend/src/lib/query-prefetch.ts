@@ -1,14 +1,15 @@
 import type { QueryClient, QueryKey } from "@tanstack/react-query";
 import { getUsers } from "@/lib/api/auth";
 import { authQueryKeys } from "@/lib/auth/query-keys";
-import { getClasses } from "@/lib/api/classes";
+import { getClasses, getClassScopeSummary } from "@/lib/api/classes";
+import { classQueryKeys } from "@/lib/classes/query-keys";
 import { getDashboardOverview } from "@/lib/api/dashboard";
 import { getFeeMessageTemplates, getFeeRecords } from "@/lib/api/fees";
 import { getActiveTeacherOptions, getStaffMembers } from "@/lib/api/staff";
 import { staffQueryKeys } from "@/lib/staff/query-keys";
 import { getStudents } from "@/lib/api/students";
-import { getFeeOperations } from "@/lib/api/reports";
-import type { FeeOperationListResponse } from "@/lib/types";
+import { getFeePaidReceipts } from "@/lib/api/reports";
+import type { FeePaidReceiptListResponse } from "@/lib/types";
 
 const ROOT_STALE_MS: Record<string, number> = {
   "auth-users": 2 * 60 * 1000,
@@ -74,15 +75,15 @@ export async function prefetchRouteData(
       tasks.push(
         () => prefetchIfStale(queryClient, ["dashboard", "overview"], getDashboardOverview),
         () =>
-          prefetchIfStale(queryClient, ["classes", { is_active: true }], () =>
-            getClasses({ is_active: true }),
+          prefetchIfStale(queryClient, classQueryKeys.list("active"), () =>
+            getClasses({ scope: "active" }),
           ),
       );
       break;
     case "/students":
       tasks.push(() =>
-        prefetchIfStale(queryClient, ["classes", { is_active: true }], () =>
-          getClasses({ is_active: true }),
+        prefetchIfStale(queryClient, classQueryKeys.list("enrollable"), () =>
+          getClasses({ scope: "enrollable" }),
         ),
       );
       if (context.selectedStudentClassId) {
@@ -94,9 +95,12 @@ export async function prefetchRouteData(
       break;
     case "/classes":
       tasks.push(() =>
-        prefetchIfStale(queryClient, ["classes", { is_active: true }], () =>
-          getClasses({ is_active: true }),
+        prefetchIfStale(queryClient, classQueryKeys.list("operational"), () =>
+          getClasses({ scope: "operational" }),
         ),
+      );
+      tasks.push(() =>
+        prefetchIfStale(queryClient, classQueryKeys.summary(), getClassScopeSummary),
       );
       if (context.isAdmin) {
         tasks.push(() =>
@@ -109,8 +113,8 @@ export async function prefetchRouteData(
     case "/fees":
       tasks.push(
         () =>
-          prefetchIfStale(queryClient, ["classes", { is_active: true }], () =>
-            getClasses({ is_active: true }),
+          prefetchIfStale(queryClient, classQueryKeys.list("active"), () =>
+            getClasses({ scope: "active" }),
           ),
         () =>
           prefetchIfStale(queryClient, ["fees", { period }], () =>
@@ -136,20 +140,24 @@ export async function prefetchRouteData(
       break;
     case "/report": {
       const filters = {
-        action: "" as const,
         period: "",
         q: "",
         date_from: undefined,
         date_to: undefined,
+        payment_method: "" as const,
+        refund_state: "" as const,
         limit: 30,
       };
       tasks.push(() =>
         queryClient.prefetchInfiniteQuery({
-          queryKey: ["reports", "fee-operations", filters],
-          queryFn: ({ pageParam }) =>
-            getFeeOperations({ ...filters, cursor: pageParam as string }),
+          queryKey: ["reports", "fee-paid", filters],
+          queryFn: ({ pageParam, signal }) =>
+            getFeePaidReceipts(
+              { ...filters, cursor: pageParam as string },
+              signal,
+            ),
           initialPageParam: "",
-          getNextPageParam: (lastPage: FeeOperationListResponse) =>
+          getNextPageParam: (lastPage: FeePaidReceiptListResponse) =>
             lastPage.next_cursor ?? undefined,
           staleTime: ROOT_STALE_MS.reports,
         }),

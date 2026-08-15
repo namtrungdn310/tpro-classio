@@ -18,5 +18,5 @@ export const validationMessages = {
   phoneFormat: "Số điện thoại chưa đúng định dạng.",
   feeFormat: "Học phí phải là một số hợp lệ.",
   feeNonNegative: "Học phí phải lớn hơn hoặc bằng 0.",
-  billingCycle: "Thời lượng gói phải từ một tháng trở lên.",
+  billingCycle: "Thời lượng mỗi gói phải từ một tuần trở lên.",
 } as const;

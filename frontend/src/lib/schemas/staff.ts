@@ -82,6 +82,7 @@ export const teacherOptionResponseListSchema = z.array(
   z.object({
     id: z.string().uuid(),
     full_name: z.string().trim().min(1).max(255),
+    staff_type: z.enum(["TEACHER", "ASSISTANT"]),
   }),
 );
 

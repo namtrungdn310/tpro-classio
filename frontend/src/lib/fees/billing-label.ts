@@ -4,10 +4,11 @@ import { getCourseWeeks } from "@/lib/utils/format";
 export function formatFeeBillingLabel(
   classType: ClassType,
   billingCycleMonths: number,
+  billingCycleWeeks?: number | null,
 ) {
   if (classType === "MONTHLY") {
     return "Theo tháng";
   }
 
-  return `Theo khóa · ${getCourseWeeks(billingCycleMonths)} tuần`;
+  return `Theo gói · ${getCourseWeeks(billingCycleMonths, billingCycleWeeks)} tuần`;
 }

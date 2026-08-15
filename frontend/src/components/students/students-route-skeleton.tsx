@@ -77,9 +77,7 @@ export function StudentTableSkeleton({ isAdmin }: { isAdmin: boolean }) {
   const tableGridClass = isAdmin
     ? STUDENTS_TABLE_GRID_CLASS
     : STUDENTS_TABLE_VIEWER_GRID_CLASS;
-  const columnWidths = isAdmin
-    ? [72, 52, 96, 68, 90, 94, 108, 56]
-    : [72, 52, 96, 68, 90, 94, 108];
+  const columnWidths = [72, 52, 96, 68, 90, 94, 108];
 
   return (
     <div
@@ -94,12 +92,6 @@ export function StudentTableSkeleton({ isAdmin }: { isAdmin: boolean }) {
                 <div className="h-4 w-40 rounded bg-gray-200" />
                 <div className="mt-2 h-3 w-28 rounded bg-gray-100" />
               </div>
-              {isAdmin ? (
-                <div className="flex shrink-0 gap-2">
-                  <div className="h-7 w-7 rounded-md bg-gray-100" />
-                  <div className="h-7 w-7 rounded-md bg-gray-100" />
-                </div>
-              ) : null}
             </div>
             <div className="mt-4 grid grid-cols-2 gap-x-3 gap-y-3">
               <div className="h-9 rounded bg-gray-100" />
@@ -112,18 +104,12 @@ export function StudentTableSkeleton({ isAdmin }: { isAdmin: boolean }) {
       </div>
 
       <div className="hidden animate-pulse overflow-hidden rounded-md border border-gray-200 xl:h-full xl:min-h-0 xl:flex xl:flex-col">
-        <div className="shrink-0 border-b border-gray-200 bg-gray-50">
+        <div className="shrink-0 border-b border-gray-200 bg-gray-100">
           <div className={`${tableGridClass} items-center`}>
             {columnWidths.map((width, index) => (
               <div
                 key={index}
-                className={
-                  isAdmin && index === 7
-                    ? "flex justify-center px-2 py-3"
-                    : index === 4
-                      ? "py-3 pl-4 pr-2.5"
-                      : "px-2.5 py-3"
-                }
+                className={index === 4 ? "py-3 pl-4 pr-2.5" : "px-2.5 py-3"}
               >
                 <div
                   className="h-3 rounded bg-gray-200"
@@ -135,34 +121,21 @@ export function StudentTableSkeleton({ isAdmin }: { isAdmin: boolean }) {
         </div>
 
         <div className="scrollbar-hidden min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain bg-white">
-          <div className="divide-y divide-gray-100">
+          <div className="divide-y divide-gray-200">
             {Array.from({ length: 10 }).map((_, rowIndex) => (
               <div key={rowIndex} className={`${tableGridClass} cv-auto items-center`}>
                 {columnWidths.map((width, cellIndex) => (
                   <div
                     key={cellIndex}
-                    className={
-                      isAdmin && cellIndex === 7
-                        ? "px-2 py-3"
-                        : cellIndex === 4
-                          ? "py-3 pl-4 pr-2.5"
-                          : "px-2.5 py-3"
-                    }
+                    className={cellIndex === 4 ? "py-3 pl-4 pr-2.5" : "px-2.5 py-3"}
                   >
-                    {isAdmin && cellIndex === 7 ? (
-                      <div className="flex justify-center gap-1.5">
-                        <div className="h-7 w-7 rounded-md bg-gray-100" />
-                        <div className="h-7 w-7 rounded-md bg-gray-100" />
-                      </div>
-                    ) : (
-                      <div
-                        className="h-4 rounded bg-gray-100"
-                        style={{
-                          width: `${width + (rowIndex % 3) * 10}px`,
-                          maxWidth: "100%",
-                        }}
-                      />
-                    )}
+                    <div
+                      className="h-4 rounded bg-gray-100"
+                      style={{
+                        width: `${width + (rowIndex % 3) * 10}px`,
+                        maxWidth: "100%",
+                      }}
+                    />
                   </div>
                 ))}
               </div>

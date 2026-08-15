@@ -1,19 +1,34 @@
 "use client";
 
-import { useEffect, useId, useState, type ReactNode } from "react";
-import { createPortal } from "react-dom";
+import {
+  useEffect,
+  useId,
+  useState,
+} from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
-import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { InlineFieldDivider } from "@/components/ui/inline-field-divider";
+import {
+  createEntityDialogFrameClassName,
+  FormDialogBody,
+  FormDialogFooter,
+  FormDialogShell,
+} from "@/components/ui/form-dialog-shell";
+import { FormField } from "@/components/ui/form-field";
+import { InlineFormError } from "@/components/ui/inline-form-error";
+import { FormSection } from "@/components/ui/form-section";
+import {
+  formTextControlClassName,
+  formTextControlErrorClassName,
+} from "@/components/ui/form-text-control";
 import { SaveButton } from "@/components/ui/save-button";
+import { SegmentedControl } from "@/components/ui/segmented-control";
+import { SplitTextField } from "@/components/ui/split-text-field";
 import {
   shouldShowUnsavedChanges,
   UnsavedChangesNotice,
 } from "@/components/ui/unsaved-changes-notice";
 import { getApiErrorMessage } from "@/lib/api/errors";
-import { useModalDialog } from "@/lib/hooks/useModalDialog";
 import {
   normalizeVietnamPhone,
   staffCreateFormSchema,
@@ -26,6 +41,13 @@ import {
   savedInfoAutocomplete,
 } from "@/lib/forms/saved-info-policy";
 import { useFormFieldFeedback } from "@/lib/forms/use-form-field-feedback";
+import { moveFocusByFormArrow } from "@/lib/forms/field-navigation";
+import {
+  handleContactSuggestionTab,
+  type ContactSuggestionSource,
+  useContactPairSuggestion,
+} from "@/lib/forms/use-contact-pair-suggestion";
+import { cn } from "@/lib/utils";
 
 const STAFF_FEEDBACK_FIELDS = ["full_name", "staff_type", "contact"] as const;
 
@@ -38,12 +60,14 @@ const defaultValues: StaffFormValues = {
 
 export function StaffFormDialog({
   assignedClassNames,
+  contactSuggestionSources,
   isSaving,
   onClose,
   onSubmit,
   staff,
 }: {
   assignedClassNames: string[];
+  contactSuggestionSources: ContactSuggestionSource[];
   isSaving: boolean;
   onClose: () => void;
   onSubmit: (payload: StaffCreate | StaffUpdate) => Promise<void>;
@@ -51,12 +75,7 @@ export function StaffFormDialog({
 }) {
   const [mounted, setMounted] = useState(false);
   const [submitError, setSubmitError] = useState("");
-  const titleId = useId();
   const fieldIdPrefix = useId();
-  const { backdropPointerDownRef, dialogRef, requestClose } = useModalDialog({
-    isBusy: isSaving,
-    onClose,
-  });
   const {
     clearErrors,
     formState: { errors, isSubmitted },
@@ -82,6 +101,12 @@ export function StaffFormDialog({
   } = useFormFieldFeedback(STAFF_FEEDBACK_FIELDS);
   const staffType = watch("staff_type");
   const watchedFormValues = watch();
+  const contactSuggestion = useContactPairSuggestion({
+    localSources: contactSuggestionSources,
+    owner: "staff",
+    phoneValue: watchedFormValues.phone,
+    zaloValue: watchedFormValues.zalo_name,
+  });
 
   useEffect(() => setMounted(true), []);
 
@@ -130,6 +155,32 @@ export function StaffFormDialog({
     }
   }
 
+  function acceptContactSuggestion() {
+    if (!contactSuggestion) {
+      return;
+    }
+
+    const field =
+      contactSuggestion.target === "zalo" ? "zalo_name" : "phone";
+    const nextZaloName =
+      field === "zalo_name"
+        ? contactSuggestion.value
+        : getValues("zalo_name");
+    const nextPhone =
+      field === "phone"
+        ? contactSuggestion.value
+        : getValues("phone");
+
+    setSubmitError("");
+    clearErrors(["zalo_name", "phone"]);
+    setValue(field, contactSuggestion.value, {
+      shouldDirty: true,
+      shouldTouch: true,
+      shouldValidate: true,
+    });
+    markInput("contact", [nextZaloName, nextPhone].filter(Boolean));
+  }
+
   if (!mounted) return null;
 
   const hasUnsavedChanges = Boolean(
@@ -165,6 +216,7 @@ export function StaffFormDialog({
     ? contactError
     : undefined;
   const contactErrorId = `${fieldIdPrefix}-contact-error`;
+  const contactDescribedBy = visibleContactError ? contactErrorId : undefined;
   const assignmentsId = `${fieldIdPrefix}-assignments`;
   const fullNameDescription = [
     visibleFullNameError ? `${fullNameId}-error` : null,
@@ -175,56 +227,29 @@ export function StaffFormDialog({
     .filter(Boolean)
     .join(" ") || undefined;
 
-  return createPortal(
-    <div
-      className="fixed inset-0 z-50 flex items-stretch justify-center bg-black/30 p-0 sm:items-center sm:p-4"
-      onPointerDown={(event) => {
-        backdropPointerDownRef.current = event.target === event.currentTarget;
-      }}
-      onPointerUp={(event) => {
-        if (backdropPointerDownRef.current && event.target === event.currentTarget) requestClose();
-        backdropPointerDownRef.current = false;
-      }}
-      onPointerCancel={() => {
-        backdropPointerDownRef.current = false;
-      }}
+  return (
+    <FormDialogShell
+      title={staff ? "Chỉnh sửa nhân sự" : "Thêm nhân sự"}
+      width={staff ? "md" : "standard"}
+      isBusy={isSaving}
+      dirty={hasUnsavedChanges}
+      onClose={onClose}
+      frameProps={{ className: staff ? undefined : createEntityDialogFrameClassName }}
     >
-      <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        aria-busy={isSaving || undefined}
-        tabIndex={-1}
-        className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-white shadow-xl sm:h-auto sm:max-h-[calc(100dvh-2rem)] sm:max-w-[536px] sm:rounded-xl"
-      >
-        <div className="flex shrink-0 items-center justify-between gap-4 border-b border-gray-200 py-3 pl-4 pr-4 sm:pl-5">
-          <h2 id={titleId} className="section-title-text min-w-0 select-none text-gray-900">
-            {staff ? "Chỉnh sửa nhân sự" : "Thêm nhân sự"}
-          </h2>
-          <button
-            type="button"
-            aria-label="Đóng"
-            title="Đóng"
-            disabled={isSaving}
-            onClick={requestClose}
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-gray-500 transition hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <X className="h-4 w-4" aria-hidden="true" />
-          </button>
-        </div>
 
         <form
           {...noSavedInfoFormProps}
           noValidate
           className="flex min-h-0 flex-1 flex-col"
+          onKeyDown={moveFocusByFormArrow}
           onSubmit={handleSubmit(submit, () => markSubmitted())}
         >
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 sm:px-5">
+          <FormDialogBody>
             <fieldset disabled={isSaving} className="space-y-3 disabled:opacity-70">
+              <FormSection label="Hồ sơ nhân sự" order={1}>
               <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
                 <div className="min-w-0">
-                  <Field
+                  <FormField
                     controlId={fullNameId}
                     error={visibleFullNameError?.message}
                     errorId={`${fullNameId}-error`}
@@ -244,54 +269,39 @@ export function StaffFormDialog({
                       aria-invalid={Boolean(visibleFullNameError)}
                       aria-describedby={fullNameDescription}
                       className={getInputClass(Boolean(visibleFullNameError))}
+                      data-row={0}
+                      data-col={0}
                     />
-                  </Field>
+                  </FormField>
                 </div>
 
-                <Field
+                <FormField
                   error={visibleStaffTypeError?.message}
                   errorId={`${fieldIdPrefix}-staff-type-error`}
                   label="Vai trò"
                   labelId={typeLabelId}
                 >
                   <input type="hidden" {...register("staff_type")} />
-                  <div
-                    role="group"
-                    aria-labelledby={typeLabelId}
-                    aria-describedby={visibleStaffTypeError ? `${fieldIdPrefix}-staff-type-error` : undefined}
-                    className={`grid h-8 w-full select-none grid-cols-2 overflow-hidden rounded-md border bg-white p-0.5 ${visibleStaffTypeError ? "border-red-400 ring-2 ring-red-100" : "border-gray-200"}`}
-                  >
-                    {([
+                  <SegmentedControl
+                    ariaLabelledBy={typeLabelId}
+                    ariaDescribedBy={visibleStaffTypeError ? `${fieldIdPrefix}-staff-type-error` : undefined}
+                    invalid={Boolean(visibleStaffTypeError)}
+                    options={[
                       { label: "Giáo viên", value: "TEACHER" },
                       { label: "Trợ giảng", value: "ASSISTANT" },
-                    ] as const).map((option) => {
-                      const selected = staffType === option.value;
-                      return (
-                        <button
-                          key={option.value}
-                          type="button"
-                          aria-pressed={selected}
-                          onClick={() => {
-                            clearErrors("staff_type");
-                            setSubmitError("");
-                            markInput("staff_type", option.value);
-                            setValue("staff_type", option.value as StaffType, {
-                              shouldDirty: true,
-                              shouldValidate: false,
-                            });
-                          }}
-                          className={`form-input-text h-full min-w-0 rounded-[5px] px-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gray-300 ${
-                            selected
-                              ? "bg-gray-950 text-white"
-                              : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
-                          }`}
-                        >
-                          {option.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </Field>
+                    ]}
+                    selected={staffType}
+                    onSelect={(value) => {
+                      clearErrors("staff_type");
+                      setSubmitError("");
+                      markInput("staff_type", value);
+                      setValue("staff_type", value as StaffType, {
+                        shouldDirty: true,
+                        shouldValidate: false,
+                      });
+                    }}
+                  />
+                </FormField>
 
                 {staff?.staff_type === "TEACHER" && assignedClassNames.length > 0 ? (
                   <p
@@ -302,154 +312,151 @@ export function StaffFormDialog({
                   </p>
                 ) : null}
               </div>
+              </FormSection>
 
-              <Field
+              <FormSection label="Thông tin liên hệ" order={2}>
+              <FormField
                 error={visibleContactError?.message}
                 errorId={contactErrorId}
-                label="Thông tin nhân sự"
+                label="Zalo và số điện thoại"
                 labelId={contactLabelId}
               >
-                <div
+                <SplitTextField
                   role="group"
                   aria-labelledby={contactLabelId}
-                  aria-describedby={visibleContactError ? contactErrorId : undefined}
+                  aria-describedby={contactDescribedBy}
+                  onKeyDown={(event) =>
+                    handleContactSuggestionTab(
+                      event,
+                      contactSuggestion,
+                      acceptContactSuggestion,
+                    )
+                  }
                   onBlur={(event) => {
                     if (!event.currentTarget.contains(event.relatedTarget)) {
                       markBlur("contact");
                     }
                   }}
-                  className={`grid h-8 grid-cols-[minmax(0,1fr)_1px_minmax(0,1fr)] items-center rounded-md border bg-white transition-shadow focus-within:ring-2 ${
+                  className={`h-8 rounded-md border bg-white transition-shadow focus-within:ring-2 ${
                     visibleContactError
-                      ? "border-red-400 focus-within:border-red-500 focus-within:ring-red-100"
-                      : "border-gray-200 focus-within:border-gray-400 focus-within:ring-gray-200"
+                      ? "border-destructive focus-within:border-destructive focus-within:ring-destructive/15"
+                      : "border-gray-200 focus-within:border-primary/60 focus-within:ring-primary/15"
                   }`}
-                >
-                  <input
-                    {...register("zalo_name", {
-                      onChange: (event) => {
-                        setSubmitError("");
-                        markInput("contact", [
-                          event.target.value,
-                          getValues("phone"),
-                        ].filter(Boolean));
-                      },
-                    })}
-                    id={zaloNameId}
-                    autoComplete={savedInfoAutocomplete.disabled}
-                    maxLength={100}
-                    placeholder="Tên Zalo"
-                    aria-label="Tên Zalo nhân sự"
-                    aria-invalid={Boolean(visibleContactError)}
-                    aria-describedby={visibleContactError ? contactErrorId : undefined}
-                    className="form-input-text h-full min-w-0 bg-transparent px-3 outline-none placeholder:text-gray-400"
-                  />
-                  <InlineFieldDivider />
-                  <input
-                    {...register("phone", {
-                      onChange: (event) => {
-                        setSubmitError("");
-                        markInput("contact", [
-                          getValues("zalo_name"),
-                          event.target.value,
-                        ].filter(Boolean));
-                      },
-                    })}
-                    id={phoneId}
-                    inputMode="tel"
-                    autoComplete={savedInfoAutocomplete.disabled}
-                    maxLength={32}
-                    placeholder="SĐT"
-                    aria-label="Số điện thoại nhân sự"
-                    aria-invalid={Boolean(visibleContactError)}
-                    aria-describedby={visibleContactError ? contactErrorId : undefined}
-                    className="form-input-text h-full min-w-0 bg-transparent px-3 outline-none placeholder:text-gray-400"
-                  />
-                </div>
-              </Field>
+                  left={
+                    <input
+                      {...register("zalo_name", {
+                        onChange: (event) => {
+                          setSubmitError("");
+                          markInput("contact", [
+                            event.target.value,
+                            getValues("phone"),
+                          ].filter(Boolean));
+                        },
+                      })}
+                      id={zaloNameId}
+                      autoComplete={savedInfoAutocomplete.disabled}
+                      maxLength={100}
+                      placeholder={
+                        contactSuggestion?.target === "zalo"
+                          ? contactSuggestion.value
+                          : "Tên Zalo"
+                      }
+                      aria-label="Tên Zalo nhân sự"
+                      aria-invalid={Boolean(visibleContactError)}
+                      aria-describedby={contactDescribedBy}
+                      aria-autocomplete={
+                        contactSuggestion?.target === "zalo"
+                          ? "inline"
+                          : undefined
+                      }
+                      aria-keyshortcuts={contactSuggestion ? "Tab" : undefined}
+                      data-contact-part="zalo"
+                      className="form-input-text h-full min-w-0 bg-transparent px-3 py-0 outline-none placeholder:text-gray-400"
+                      data-row={1}
+                      data-col={0}
+                    />
+                  }
+                  right={
+                    <input
+                      {...register("phone", {
+                        onChange: (event) => {
+                          setSubmitError("");
+                          markInput("contact", [
+                            getValues("zalo_name"),
+                            event.target.value,
+                          ].filter(Boolean));
+                        },
+                      })}
+                      id={phoneId}
+                      inputMode="tel"
+                      autoComplete={savedInfoAutocomplete.disabled}
+                      maxLength={32}
+                      placeholder={
+                        contactSuggestion?.target === "phone"
+                          ? contactSuggestion.value
+                          : "SĐT"
+                      }
+                      aria-label="Số điện thoại nhân sự"
+                      aria-invalid={Boolean(visibleContactError)}
+                      aria-describedby={contactDescribedBy}
+                      aria-autocomplete={
+                        contactSuggestion?.target === "phone"
+                          ? "inline"
+                          : undefined
+                      }
+                      aria-keyshortcuts={contactSuggestion ? "Tab" : undefined}
+                      data-contact-part="phone"
+                      className="form-input-text h-full min-w-0 bg-transparent px-3 py-0 outline-none placeholder:text-gray-400"
+                      data-row={1}
+                      data-col={1}
+                    />
+                  }
+                />
+              </FormField>
+              </FormSection>
             </fieldset>
 
             {submitError ? (
-              <div role="alert" className="helper-text mt-3 rounded-md border border-red-100 bg-red-50 px-3 py-2 text-red-700">
-                {submitError}
-              </div>
+              <InlineFormError className="mt-3">{submitError}</InlineFormError>
             ) : null}
-          </div>
+          </FormDialogBody>
 
-          {shouldShowUnsavedNotice ? (
-            <div className="shrink-0 px-4 pb-3 sm:px-5">
-              <UnsavedChangesNotice
-                hasChanges={hasUnsavedChanges}
-                hasErrors={hasErrors}
-                isSaving={isSaving}
-              />
-            </div>
-          ) : null}
-
-          <div className="flex shrink-0 justify-end gap-2 border-t border-gray-200 bg-gray-50 px-4 py-3 sm:px-5">
-            <Button
-              type="button"
-              variant="outline"
-              className="h-8 rounded-md px-3 text-sm"
-              disabled={isSaving}
-              onClick={requestClose}
-            >
-              Huỷ
-            </Button>
-            <SaveButton
-              type="submit"
-              isSaving={isSaving}
-              disabled={Boolean(staff && !hasUnsavedChanges)}
-            />
-          </div>
+          <FormDialogFooter
+            left={
+              shouldShowUnsavedNotice ? (
+                <UnsavedChangesNotice
+                  hasChanges={hasUnsavedChanges}
+                  hasErrors={hasErrors}
+                  isSaving={isSaving}
+                />
+              ) : null
+            }
+            right={
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-8 rounded-md px-3 text-sm"
+                  disabled={isSaving}
+                  onClick={onClose}
+                >
+                  Huỷ
+                </Button>
+                <SaveButton
+                  type="submit"
+                  isSaving={isSaving}
+                  disabled={Boolean(staff && !hasUnsavedChanges)}
+                />
+              </>
+            }
+          />
         </form>
-      </div>
-    </div>,
-    document.body,
-  );
-}
-
-function Field({
-  children,
-  controlId,
-  error,
-  errorId,
-  label,
-  labelId,
-}: {
-  children: ReactNode;
-  controlId?: string;
-  error?: string;
-  errorId?: string;
-  label: string;
-  labelId?: string;
-}) {
-  return (
-    <div className="block space-y-1">
-      {controlId ? (
-        <label htmlFor={controlId} className="form-label-text block select-none text-[15px] text-gray-700">
-          {label}
-        </label>
-      ) : (
-        <span id={labelId} className="form-label-text block select-none text-[15px] text-gray-700">
-          {label}
-        </span>
-      )}
-      {children}
-      {error ? (
-        <span id={errorId} role="alert" className="helper-text block text-red-600">
-          {error}
-        </span>
-      ) : null}
-    </div>
-  );
-}
+      </FormDialogShell>
+    );
+  }
 
 function getInputClass(hasError: boolean) {
-  return `form-input-text h-8 w-full rounded-md border bg-white px-3 outline-none transition select-text ${
-    hasError
-      ? "border-red-400 focus:border-red-500 focus:ring-2 focus:ring-red-100"
-      : "border-gray-200 focus:border-gray-400 focus:ring-2 focus:ring-gray-200"
-  }`;
+  return cn(formTextControlClassName, hasError && formTextControlErrorClassName);
 }
 
 function formatClassList(classNames: string[]) {

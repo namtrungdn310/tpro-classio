@@ -8,6 +8,7 @@ import {
   parseSmartMoneyInput,
 } from "@/lib/forms/money-input";
 import { savedInfoAutocomplete } from "@/lib/forms/saved-info-policy";
+import { collapseSelectionOnKeyboardFocus } from "@/lib/forms/keyboard-focus";
 
 type SmartMoneyInputProps = {
   ariaLabel?: string;
@@ -16,6 +17,7 @@ type SmartMoneyInputProps = {
   className?: string;
   dataCol?: number;
   dataRow?: number;
+  dataVerticalArrowScope?: string;
   disabled?: boolean;
   id?: string;
   isContentHidden?: boolean;
@@ -35,6 +37,7 @@ export function SmartMoneyInput({
   className,
   dataCol,
   dataRow,
+  dataVerticalArrowScope,
   disabled = false,
   id,
   isContentHidden = false,
@@ -130,7 +133,7 @@ export function SmartMoneyInput({
           const rawCaretPosition =
             event.currentTarget.selectionStart ?? rawDisplayText.length;
           const rawText = rawDisplayText.toLowerCase().replace(/\s+/g, "");
-          if (/[,k]/i.test(rawText) || /[^0-9.tr]/i.test(rawText)) {
+          if (rawText.includes(",") || /[^0-9.trmk]/i.test(rawText)) {
             return;
           }
 
@@ -170,10 +173,10 @@ export function SmartMoneyInput({
             return;
           }
 
-          const isProgressiveMillionInput =
-            /^\d+\.\d{0,3}(?:t(?:r)?)?$/.test(rawText) ||
-            /^\d+t(?:r(?:\d{0,3})?)?$/.test(rawText);
-          if (!isProgressiveMillionInput) {
+          const isProgressiveSmartMoneyInput =
+            /^\d+\.\d{0,3}(?:t(?:r)?|m|k)?$/.test(rawText) ||
+            /^\d+(?:t(?:r(?:\d{0,3})?)?|m(?:\d{0,3})?|k(?:\d{0,3})?)?$/.test(rawText);
+          if (!isProgressiveSmartMoneyInput) {
             return;
           }
 
@@ -199,7 +202,10 @@ export function SmartMoneyInput({
             commitExpandedValue();
           }
         }}
-        onFocus={() => setIsFocused(true)}
+        onFocus={(event) => {
+          setIsFocused(true);
+          collapseSelectionOnKeyboardFocus(event);
+        }}
         onBlur={() => {
           if (!commitExpandedValue()) {
             const plainValue = parsePlainMoneyInput(inputValue);
@@ -225,6 +231,7 @@ export function SmartMoneyInput({
         }}
         data-row={dataRow}
         data-col={dataCol}
+        data-vertical-arrow-scope={dataVerticalArrowScope}
         data-private-hidden={isContentHidden}
       />
       {previewText ? (

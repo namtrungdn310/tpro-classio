@@ -2,7 +2,9 @@
 
 import { useMemo } from "react";
 import type { ClassResponse } from "@/lib/types";
-import { abbreviateClassName, getClassGroupInfo } from "@/lib/utils/class-groups";
+import { getClassGroupInfoForRecord } from "@/lib/classes/presentation";
+import { abbreviateClassName } from "@/lib/utils/class-groups";
+import { SCHEDULE_BLOCK_COUNT } from "@/lib/classes/schedule-drag";
 import { cn } from "@/lib/utils";
 
 export const DAYS_OF_WEEK = [
@@ -19,19 +21,30 @@ export interface ScheduleSlot {
   day: (typeof DAYS_OF_WEEK)[number];
   start: string;
   end: string;
+  /** Giáo viên phụ trách riêng buổi này (subset của teacher_ids của lớp). */
+  teacher_ids?: string[];
+  /** Trợ giảng hỗ trợ riêng buổi này (subset của assistant_ids của lớp). */
+  assistant_ids?: string[];
 }
 
 export interface ClassScheduleSlot extends ScheduleSlot {
   classId: string;
   className: string;
+  classCategory: ClassResponse["class_category"];
+  gradeLevel: number | null;
   teacherName?: string | null;
 }
 
-export const TIME_BLOCKS = Array.from({ length: 30 }, (_, index) => {
+export const TIME_BLOCKS = Array.from({ length: SCHEDULE_BLOCK_COUNT }, (_, index) => {
   const hour = Math.floor(7 + index / 2);
   const minute = index % 2 === 0 ? "00" : "30";
   return `${String(hour).padStart(2, "0")}:${minute}`;
 });
+
+/** Display form of a time block label: "07:00" -> "7:00". */
+export function formatTimeBlock(timeBlock: string) {
+  return timeBlock.replace(/^0/, "");
+}
 
 const MAX_CONCURRENT_CLASSES = 2;
 const TIME_COLUMN_WIDTH = 56;
@@ -41,6 +54,7 @@ interface WeeklyScheduleBoardProps {
   detailDay?: string;
   className?: string;
   detailWidthClassName?: string;
+  occurrencesByClass?: Map<string, EffectiveOccurrenceSummary["occurrences"]>;
 }
 
 export function WeeklyScheduleBoard({
@@ -48,8 +62,13 @@ export function WeeklyScheduleBoard({
   className,
   detailDay = getTodayLabel(),
   detailWidthClassName = "lg:grid-cols-[minmax(0,1fr)_190px]",
+  occurrencesByClass,
 }: WeeklyScheduleBoardProps) {
   const scheduleSlots = useMemo(() => getClassScheduleSlots(classes), [classes]);
+  const makeupMarkers = useMemo(
+    () => buildMakeupMarkers(classes, occurrencesByClass),
+    [classes, occurrencesByClass],
+  );
   const detailSlots = useMemo(
     () =>
       scheduleSlots
@@ -70,26 +89,26 @@ export function WeeklyScheduleBoard({
   return (
     <div className={cn("grid min-h-[520px] gap-3 overflow-hidden", detailWidthClassName, className)}>
       <div className="min-h-0 min-w-0 overflow-hidden rounded-lg border border-gray-200 bg-white">
-        <div className="flex h-full min-h-[518px] min-w-0 flex-col overflow-hidden">
-        <div className="table-heading-text grid grid-cols-[56px_repeat(7,minmax(0,1fr))] border-b border-gray-200 bg-gray-50 text-center text-gray-700">
-          <div className="border-r border-gray-200 py-2">Giờ</div>
+        <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
+        <div className="table-heading-text grid grid-cols-[56px_repeat(7,minmax(0,1fr))] border-b border-gray-200 bg-gray-100 text-center text-gray-800">
+          <div className="border-r border-gray-200 py-1">Giờ</div>
           {DAYS_OF_WEEK.map((day) => (
-            <div key={day} className="min-w-0 border-r border-gray-200 px-0.5 py-2 last:border-r-0">
+            <div key={day} className="min-w-0 border-r border-gray-200 px-0.5 py-1 last:border-r-0">
               <span className="hidden sm:inline">{day}</span>
               <span className="sm:hidden" aria-hidden="true">{compactDayLabel(day)}</span>
             </div>
           ))}
         </div>
 
-        <div className="relative flex flex-1 flex-col">
+        <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
           {TIME_BLOCKS.map((timeBlock, timeIndex) => (
-            <div key={timeBlock} className="grid flex-1 grid-cols-[56px_repeat(7,minmax(0,1fr))] text-center text-xs">
+            <div key={timeBlock} className="grid min-h-0 flex-1 grid-cols-[56px_repeat(7,minmax(0,1fr))] text-center text-xs">
               <div
-                className={`caption-text flex items-center justify-center border-r border-gray-200 bg-gray-50 text-gray-600 ${
+                className={`font-ui flex items-center justify-center border-r border-gray-200 bg-gray-100/70 text-[11px] font-medium leading-3 text-gray-600 ${
                   timeIndex > 0 ? "border-t border-gray-100" : ""
                 }`}
               >
-                {timeBlock}
+                {formatTimeBlock(timeBlock)}
               </div>
               {DAYS_OF_WEEK.map((day) => (
                 <div
@@ -101,13 +120,51 @@ export function WeeklyScheduleBoard({
           ))}
 
           {positionedSlots.map(({ slot, color, style }, index) => {
+            const postponed = makeupMarkers.postponed.get(
+              `${slot.classId}|${slot.day}|${slot.start}`,
+            );
 
             return (
               <div
                 key={`${slot.classId}-${slot.day}-${slot.start}-${slot.end}-${index}`}
-                title={`${slot.className}${slot.teacherName ? ` - ${slot.teacherName}` : ""} (${slot.start}-${slot.end})`}
-                aria-label={`${slot.className}${slot.teacherName ? `, ${slot.teacherName}` : ""}, ${slot.start} đến ${slot.end}`}
+                title={`${slot.className}${slot.teacherName ? ` - ${slot.teacherName}` : ""} (${slot.start}-${slot.end})${postponed ? " - Đã hoãn" : ""}`}
+                aria-label={`${slot.className}${slot.teacherName ? `, ${slot.teacherName}` : ""}, ${slot.start} đến ${slot.end}${postponed ? ", đã hoãn" : ""}`}
                 className="font-ui absolute z-10 flex items-center justify-center rounded-md border px-1 text-center text-[10px] font-semibold leading-tight shadow-sm"
+                style={{
+                  ...style,
+                  backgroundColor: postponed ? color.background : color.background,
+                  borderColor: color.border,
+                  color: color.text,
+                  opacity: postponed ? 0.55 : 1,
+                }}
+              >
+                <span className="line-clamp-2" aria-hidden="true">
+                  {postponed ? "Hoãn" : abbreviateClassName(slot.className, 20)}
+                </span>
+                {postponed ? (
+                  <span className="sr-only">Buổi này đã hoãn</span>
+                ) : null}
+              </div>
+            );
+          })}
+
+          {makeupMarkers.makeups.map((marker) => {
+            const syntheticSlot: ClassScheduleSlot = {
+              day: marker.day,
+              start: marker.start,
+              end: marker.end,
+              classId: marker.classId,
+              className: marker.className,
+              classCategory: marker.classCategory,
+              gradeLevel: marker.gradeLevel,
+            };
+            const { color, style } = getSlotStyle(syntheticSlot, scheduleSlots);
+            return (
+              <div
+                key={marker.key}
+                title={`Học bù: ${marker.className} (${marker.start}-${marker.end})`}
+                aria-label={`Học bù, ${marker.className}, ${marker.start} đến ${marker.end}`}
+                className="font-ui absolute z-20 flex items-center justify-center rounded-md border border-dashed px-1 text-center text-[10px] font-semibold leading-tight"
                 style={{
                   ...style,
                   backgroundColor: color.background,
@@ -115,9 +172,7 @@ export function WeeklyScheduleBoard({
                   color: color.text,
                 }}
               >
-                <span className="line-clamp-2" aria-hidden="true">
-                  {abbreviateClassName(slot.className)}
-                </span>
+                <span className="line-clamp-2">Học bù</span>
               </div>
             );
           })}
@@ -132,11 +187,17 @@ export function WeeklyScheduleBoard({
           </h3>
         </div>
         {detailSlots.length === 0 ? (
-          <p className="helper-text px-3 py-3 italic text-gray-400">Không có ca.</p>
+          <p className="helper-text px-3 py-3 italic text-gray-400">
+            Không có ca học trong ngày này.
+          </p>
         ) : (
           <div className="flex flex-1 flex-col gap-2 overflow-y-auto p-2">
             {detailSlots.map((slot, index) => {
-              const color = getClassGroupInfo(slot.className).color;
+              const color = getClassGroupInfoForRecord({
+                name: slot.className,
+                class_category: slot.classCategory,
+                grade_level: slot.gradeLevel,
+              } as ClassResponse).color;
 
               return (
                 <div
@@ -180,7 +241,7 @@ export function WeeklyScheduleBoardSkeleton({
     >
       <div className="min-h-0 min-w-0 overflow-hidden rounded-lg border border-gray-200 bg-white">
         <div className="flex h-full min-h-[518px] min-w-0 flex-col overflow-hidden">
-        <div className="grid grid-cols-[56px_repeat(7,minmax(0,1fr))] border-b border-gray-200 bg-gray-50 text-center">
+        <div className="grid grid-cols-[56px_repeat(7,minmax(0,1fr))] border-b border-gray-200 bg-gray-100 text-center">
           <div className="border-r border-gray-200 px-3 py-2">
             <div className="h-3 rounded bg-gray-200" />
           </div>
@@ -195,7 +256,7 @@ export function WeeklyScheduleBoardSkeleton({
           {TIME_BLOCKS.map((timeBlock, timeIndex) => (
             <div key={timeBlock} className="grid flex-1 grid-cols-[56px_repeat(7,minmax(0,1fr))] text-center text-xs">
               <div
-                className={`flex items-center justify-center border-r border-gray-200 bg-gray-50 px-2 ${
+                className={`flex items-center justify-center border-r border-gray-200 bg-gray-100/70 px-2 ${
                   timeIndex > 0 ? "border-t border-gray-100" : ""
                 }`}
               >
@@ -256,7 +317,9 @@ export function getClassScheduleSlots(classes: ClassResponse[]): ClassScheduleSl
       .map((slot) => ({
         ...slot,
         classId: class_.id,
-        className: class_.name,
+        className: class_.primary_label,
+        classCategory: class_.class_category,
+        gradeLevel: class_.grade_level,
         teacherName: getClassTeacherNames(class_).join(", ") || null,
       })),
   );
@@ -264,6 +327,96 @@ export function getClassScheduleSlots(classes: ClassResponse[]): ClassScheduleSl
 
 function getClassTeacherNames(class_: ClassResponse): string[] {
   return class_.teacher_names?.length ? class_.teacher_names : class_.teacher_name ? [class_.teacher_name] : [];
+}
+
+type EffectiveOccurrenceSummary = {
+  class_id: string;
+  occurrences: Array<{
+    key: string;
+    kind: "REGULAR" | "POSTPONED" | "MAKEUP";
+    original_start_at: string;
+    original_end_at: string;
+    source_slot_key: string;
+    exception_id: string | null;
+    status: string | null;
+    replacement_start_at: string | null;
+    replacement_end_at: string | null;
+  }>;
+};
+
+function buildMakeupMarkers(
+  classes: ClassResponse[],
+  occurrencesByClass?: Map<string, EffectiveOccurrenceSummary["occurrences"]>,
+): {
+  postponed: Map<string, string>;
+  makeups: Array<{
+    key: string;
+    classId: string;
+    className: string;
+    classCategory: ClassResponse["class_category"];
+    gradeLevel: number | null;
+    day: ScheduleSlot["day"];
+    start: string;
+    end: string;
+  }>;
+} {
+  const postponed = new Map<string, string>();
+  const makeups: ReturnType<typeof buildMakeupMarkers>["makeups"] = [];
+  if (!occurrencesByClass) {
+    return { postponed, makeups };
+  }
+  const classById = new Map(classes.map((class_) => [class_.id, class_]));
+  for (const [classId, occurrences] of occurrencesByClass) {
+    const class_ = classById.get(classId);
+    if (!class_) {
+      continue;
+    }
+    for (const occurrence of occurrences) {
+      if (occurrence.kind === "MAKEUP" && occurrence.replacement_start_at) {
+        const start = new Date(occurrence.replacement_start_at);
+        const end = new Date(occurrence.replacement_end_at ?? occurrence.replacement_start_at);
+        const day = weekdayName(start.getDay());
+        const startLabel = `${String(start.getHours()).padStart(2, "0")}:${String(start.getMinutes()).padStart(2, "0")}`;
+        const endLabel = `${String(end.getHours()).padStart(2, "0")}:${String(end.getMinutes()).padStart(2, "0")}`;
+        makeups.push({
+          key: occurrence.key,
+          classId,
+          className: class_.primary_label,
+          classCategory: class_.class_category,
+          gradeLevel: class_.grade_level,
+          day,
+          start: startLabel,
+          end: endLabel,
+        });
+      }
+      if (
+        occurrence.kind === "POSTPONED" &&
+        occurrence.source_slot_key &&
+        occurrence.status &&
+        occurrence.status !== "RESTORED"
+      ) {
+        const [day, start] = occurrence.source_slot_key.split("|");
+        if (day && start) {
+          postponed.set(`${classId}|${day}|${start}`, occurrence.key);
+        }
+      }
+    }
+  }
+  return { postponed, makeups };
+}
+
+function weekdayName(dayIndex: number): ScheduleSlot["day"] {
+  return (
+    {
+      0: "Chủ Nhật",
+      1: "Thứ 2",
+      2: "Thứ 3",
+      3: "Thứ 4",
+      4: "Thứ 5",
+      5: "Thứ 6",
+      6: "Thứ 7",
+    } as Record<number, ScheduleSlot["day"]>
+  )[dayIndex];
 }
 
 export function getTodayLabel() {
@@ -287,7 +440,11 @@ function getSlotStyle(slot: ClassScheduleSlot, allSlots: ClassScheduleSlot[]) {
   const slotStart = Math.max(gridStart, timeToMinutes(slot.start));
   const slotEnd = Math.min(gridEnd, timeToMinutes(slot.end));
   const dayIndex = DAYS_OF_WEEK.indexOf(slot.day);
-  const color = getClassGroupInfo(slot.className).color;
+  const color = getClassGroupInfoForRecord({
+    name: slot.className,
+    class_category: slot.classCategory,
+    grade_level: slot.gradeLevel,
+  } as ClassResponse).color;
   const overlappingSlots = allSlots.filter((other) => {
     if (other.day !== slot.day) return false;
     const otherStart = timeToMinutes(other.start);

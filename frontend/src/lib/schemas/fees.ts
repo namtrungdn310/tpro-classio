@@ -36,6 +36,7 @@ export const feeRecordResponseSchema = z
     class_name: z.string().min(1),
     class_type: z.enum(["MONTHLY", "COURSE"]),
     billing_cycle_months: z.number().int().min(1).max(24),
+    billing_cycle_weeks: z.number().int().min(1).max(32_767).nullable().default(null),
     student_phone: z.string().nullable(),
     student_zalo: z.string().nullable(),
     student_contact_hidden: z.boolean(),

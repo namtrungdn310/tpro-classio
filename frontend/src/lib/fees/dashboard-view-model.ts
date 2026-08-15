@@ -5,7 +5,7 @@ import type {
   FeeTab,
   UnpaidStage,
 } from "@/lib/fees/types";
-import type { FeeRecordResponse } from "@/lib/types";
+import type { ClassCategory, FeeRecordResponse } from "@/lib/types";
 import { getClassSortKey } from "@/lib/utils/class-groups";
 import {
   prepareSearchCorpus,
@@ -20,6 +20,8 @@ export type IndexedFeeRecord = {
 type FeeClass = {
   id: string;
   name: string;
+  class_category?: ClassCategory | null;
+  grade_level?: number | null;
 };
 
 type DeriveFeeViewModelOptions = {
@@ -157,6 +159,8 @@ export function buildClassFeeSummaries(
     {
       id: string;
       name: string;
+      classCategory: ClassCategory | null;
+      gradeLevel: number | null;
       totalAmount: number;
       paidStudentIds: Set<string>;
       unpaidStudentIds: Set<string>;
@@ -167,6 +171,8 @@ export function buildClassFeeSummaries(
     summaries.set(class_.id, {
       id: class_.id,
       name: class_.name,
+      classCategory: class_.class_category ?? null,
+      gradeLevel: class_.grade_level ?? null,
       paidStudentIds: new Set(),
       totalAmount: 0,
       unpaidStudentIds: new Set(),
@@ -177,6 +183,8 @@ export function buildClassFeeSummaries(
     const current = summaries.get(record.class_id) ?? {
       id: record.class_id,
       name: record.class_name,
+      classCategory: null,
+      gradeLevel: null,
       paidStudentIds: new Set<string>(),
       totalAmount: 0,
       unpaidStudentIds: new Set<string>(),
@@ -196,6 +204,8 @@ export function buildClassFeeSummaries(
     .map((summary) => ({
       id: summary.id,
       name: summary.name,
+      classCategory: summary.classCategory,
+      gradeLevel: summary.gradeLevel,
       paidStudentCount: summary.paidStudentIds.size,
       totalAmount: summary.totalAmount,
       unpaidStudentCount: summary.unpaidStudentIds.size,

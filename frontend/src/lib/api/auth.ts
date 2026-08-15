@@ -1,10 +1,10 @@
-﻿import { z } from "zod";
+import { z } from "zod";
 import { apiClient } from "@/lib/api/client";
 import { isPrivateAvatarUrl } from "@/lib/auth/avatar-url";
 
 const sessionResponseSchema = z.object({
   token_type: z.string().optional(),
-  role: z.enum(["admin", "viewer"]),
+  role: z.enum(["admin", "teacher", "dev"]),
   is_owner: z.boolean(),
 });
 
@@ -22,11 +22,12 @@ const userMeSchema = z
   .object({
     id: z.string().uuid(),
     email: z.string().email(),
-    role: z.enum(["admin", "viewer"]),
+    role: z.enum(["admin", "teacher", "dev"]),
     username: z.string().nullable(),
     full_name: z.string().nullable(),
     avatar_url: z.string().nullable(),
     is_owner: z.boolean(),
+    staff_id: z.string().uuid().nullable().optional(),
   })
   .superRefine((user, context) => {
     if (user.avatar_url && !isPrivateAvatarUrl(user.avatar_url, user.id)) {
@@ -48,6 +49,7 @@ export type UserAccount = {
   username: string | null;
   full_name: string | null;
   is_owner: boolean;
+  staff_id?: string | null;
   created_at: string | null;
 };
 
@@ -56,11 +58,12 @@ export type AccountStatus = "pending" | "active" | "disabled";
 const userAccountSchema = z.object({
   id: z.string().min(1),
   email: z.string().email(),
-  role: z.enum(["admin", "viewer"]),
+  role: z.enum(["admin", "teacher", "dev"]),
   account_status: z.enum(["pending", "active", "disabled"]),
   username: z.string().nullable(),
   full_name: z.string().nullable(),
   is_owner: z.boolean(),
+  staff_id: z.string().uuid().nullable().optional(),
   created_at: z.string().nullable(),
 });
 
@@ -108,7 +111,8 @@ export type GoogleOnboardingStartResponse = z.infer<
 const invitationResponseSchema = z.object({
   id: z.string().uuid(),
   email: z.string().email(),
-  role: z.literal("viewer"),
+  role: z.enum(["admin", "teacher"]),
+  staff_id: z.string().uuid().nullable().optional(),
   invite_url: z.string().url(),
   expires_at: z.string().datetime({ offset: true }),
   consumed: z.boolean(),
@@ -266,7 +270,7 @@ export async function getUsers(): Promise<UserAccount[]> {
 
 export async function updateUserRole(
   userId: string,
-  role: "admin" | "viewer",
+  role: "admin" | "teacher",
 ): Promise<UserAccount> {
   const { data } = await apiClient.patch<unknown>(`/auth/users/${userId}/role`, { role });
   return userAccountSchema.parse(data);
@@ -282,7 +286,15 @@ export async function updateUserStatus(
 
 // ─── Invitations ─────────────────────────────────────────────────────────────
 
-export async function createInvitation(email: string): Promise<InvitationResponse> {
-  const { data } = await apiClient.post<unknown>("/auth/invitations", { email });
+export async function createInvitation(
+  email: string,
+  role: "admin" | "teacher" = "teacher",
+  staffId?: string | null,
+): Promise<InvitationResponse> {
+  const { data } = await apiClient.post<unknown>("/auth/invitations", {
+    email,
+    role,
+    staff_id: staffId || null,
+  });
   return invitationResponseSchema.parse(data);
 }

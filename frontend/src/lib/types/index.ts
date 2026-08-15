@@ -1,9 +1,55 @@
-export type ClassType = "MONTHLY" | "COURSE";
+﻿export type ClassType = "MONTHLY" | "COURSE";
+export type ClassIdentityScheme = "LEGACY" | "ACADEMIC_YEAR" | "INTAKE";
+export type ClassCategory = "GENERAL" | "SPECIALIZED" | "IELTS" | "CUSTOM";
+export type ClassGradeMode = "GRADE" | "NONE";
+export type ClassEducationLevel = "PRIMARY" | "MIDDLE" | "HIGH";
+export type ClassEffectiveStatus =
+  | "LEGACY"
+  | "SCHEDULED"
+  | "ACTIVE"
+  | "COMPLETED"
+  | "CANCELLED";
+export type ClassScope =
+  | "operational"
+  | "active"
+  | "enrollable"
+  | "scheduled"
+  | "completed"
+  | "cancelled";
+
+export type MakeupReasonCode = "TEACHER_UNAVAILABLE" | "CENTER_OPERATION" | "OTHER";
+export type ExceptionStatus =
+  | "MAKEUP_PENDING"
+  | "MAKEUP_SCHEDULED"
+  | "MAKEUP_COMPLETED"
+  | "RESTORED"
+  | "CANCELLED";
+export type ExceptionDisplayStatus =
+  | ExceptionStatus
+  | "AWAITING_CONFIRMATION";
+export type OccurrenceKind = "REGULAR" | "POSTPONED" | "MAKEUP";
+export type MakeupErrorCode =
+  | "CLASS_VERSION_CONFLICT"
+  | "OCCURRENCE_NOT_FOUND"
+  | "OCCURRENCE_ALREADY_ADJUSTED"
+  | "INVALID_TRANSITION"
+  | "MAKEUP_DURATION_MISMATCH"
+  | "STAFF_SCHEDULE_CONFLICT"
+  | "CLASS_SCHEDULE_CONFLICT"
+  | "MAKEUP_NOT_FINISHED"
+  | "UNRESOLVED_MAKEUPS"
+  | "RESTORE_NOT_ALLOWED"
+  | "STAFF_INACTIVE"
+  | "REQUEST_ALREADY_PROCESSED";
 
 export type ClassScheduleSlot = {
   day: "Thứ 2" | "Thứ 3" | "Thứ 4" | "Thứ 5" | "Thứ 6" | "Thứ 7" | "Chủ Nhật";
   start: string;
   end: string;
+  teacher_ids?: string[];
+  assistant_ids?: string[];
+  id?: string;
+  version?: number;
 };
 
 export type ClassSchedule = {
@@ -11,22 +57,276 @@ export type ClassSchedule = {
   slots?: ClassScheduleSlot[];
 } | null;
 
+export type ClassScheduleAvailabilityConflict = {
+  class_id: string;
+  class_name: string;
+  class_category: ClassCategory | null;
+  grade_level: number | null;
+  day: ClassScheduleSlot["day"];
+  start: string;
+  end: string;
+  busy_teacher_ids: string[];
+  busy_assistant_ids: string[];
+};
+
+export type ClassScheduleAvailabilityRequest = {
+  class_id?: string | null;
+  start_date: string;
+  end_date: string;
+  teacher_ids: string[];
+  assistant_ids: string[];
+};
+
 export type ClassResponse = {
   id: string;
   name: string;
   type: ClassType;
   base_fee: number;
   billing_cycle_months: number;
+  billing_cycle_weeks?: number | null;
   start_date: string | null;
   end_date: string | null;
+  identity_scheme: ClassIdentityScheme;
+  class_category: ClassCategory | null;
+  grade_mode: ClassGradeMode | null;
+  program_name: string | null;
+  grade_level: number | null;
+  education_level: ClassEducationLevel | null;
+  academic_year_start: number | null;
   schedule: ClassSchedule;
   teacher_id: string | null;
   teacher_ids: string[];
   teacher_name: string | null;
   teacher_names: string[];
+  assistant_ids: string[];
+  assistant_names: string[];
   is_active: boolean;
   student_count: number;
   created_at: string;
+  updated_at: string;
+  version: number;
+  display_name: string;
+  primary_label: string;
+  secondary_label: string | null;
+  effective_status: ClassEffectiveStatus;
+  can_edit_end_date: boolean;
+  can_edit?: boolean;
+  can_cancel?: boolean;
+  can_view_history?: boolean;
+  next_fee_due_date?: string | null;
+  next_fee_due_state?: "OVERDUE" | "UPCOMING" | "NONE";
+  cancelled_at?: string | null;
+  unresolved_makeup_count?: number;
+};
+
+export type ClassOccurrence = {
+  key: string;
+  kind: OccurrenceKind;
+  original_start_at: string;
+  original_end_at: string;
+  source_slot_key: string;
+  teacher_ids: string[];
+  assistant_ids: string[];
+  exception_id: string | null;
+  status: ExceptionDisplayStatus | null;
+  replacement_start_at: string | null;
+  replacement_end_at: string | null;
+  adjustable: boolean;
+  already_adjusted: boolean;
+  passed: boolean;
+};
+
+export type ClassOccurrenceListResponse = {
+  class_id: string;
+  occurrences: ClassOccurrence[];
+};
+
+export type MakeupStaffSnapshot = {
+  staff_id: string;
+  role: "TEACHER" | "ASSISTANT";
+  display_name: string;
+  source_slot_key: string;
+};
+
+export type ClassSessionExceptionResponse = {
+  id: string;
+  adjustment_id: string;
+  class_id: string;
+  original_start_at: string;
+  original_end_at: string;
+  original_timezone: string;
+  status: ExceptionStatus;
+  display_status: ExceptionDisplayStatus;
+  replacement_start_at: string | null;
+  replacement_end_at: string | null;
+  completed_at: string | null;
+  restored_at: string | null;
+  version: number;
+  staff: MakeupStaffSnapshot[];
+  eligible_student_count: number;
+  billing_impact: "NONE";
+  created_at: string;
+  updated_at: string;
+};
+
+export type ClassScheduleAdjustmentResponse = {
+  id: string;
+  class_id: string;
+  reason_code: MakeupReasonCode;
+  reason_note: string | null;
+  affected_from: string;
+  affected_through: string;
+  status: "OPEN" | "CLOSED";
+  created_by: string;
+  request_id: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ClassAdjustmentListResponse = {
+  adjustments: ClassScheduleAdjustmentResponse[];
+  exceptions: ClassSessionExceptionResponse[];
+};
+
+export type PostponementPreviewOption = {
+  key: string;
+  original_start_at: string;
+  original_end_at: string;
+  source_slot_key: string;
+  teacher_ids: string[];
+  assistant_ids: string[];
+  adjustable: boolean;
+  already_adjusted: boolean;
+  passed: boolean;
+};
+
+export type PostponementPreviewResponse = {
+  class_id: string;
+  occurrences: PostponementPreviewOption[];
+  billing_impact: "NONE";
+};
+
+export type MakeupConflictDetail = {
+  code: MakeupErrorCode;
+  message: string;
+  class_id: string | null;
+  class_name: string | null;
+  staff_ids: string[];
+  day: string | null;
+  start: string | null;
+  end: string | null;
+};
+
+export type MakeupSchedulePreviewResponse = {
+  exception_id: string;
+  original_start_at: string;
+  original_end_at: string;
+  duration_minutes: number;
+  replacement_start_at: string;
+  replacement_end_at: string;
+  staff: MakeupStaffSnapshot[];
+  eligible_student_count: number;
+  conflicts: MakeupConflictDetail[];
+  staff_inactive: MakeupStaffSnapshot[];
+  can_schedule: boolean;
+  billing_impact: "NONE";
+};
+
+export type PostponementCreateRequest = {
+  original_start_at: string[];
+  reason_code: MakeupReasonCode;
+  reason_note?: string | null;
+  schedule_now: boolean;
+  request_id: string;
+  retrospective?: boolean;
+};
+
+export type PostponementCreateResponse = {
+  adjustment: ClassScheduleAdjustmentResponse;
+  exceptions: ClassSessionExceptionResponse[];
+  billing_impact: "NONE";
+};
+
+export type MakeupScheduleRequest = {
+  replacement_start_at: string;
+  request_id: string;
+  expected_version: number;
+};
+
+export type MakeupCommandRequest = {
+  request_id: string;
+  expected_version: number;
+};
+
+export type ExceptionCommandResponse = {
+  exception: ClassSessionExceptionResponse;
+  effective_status: ClassEffectiveStatus;
+  billing_impact: "NONE";
+};
+
+export type ClassHistoryTeacherEvent = {
+  teacher_id: string;
+  teacher_name: string;
+  staff_type: "TEACHER" | "ASSISTANT";
+  event_type: "assigned" | "unassigned";
+  occurred_at: string;
+};
+
+export type ClassHistoryEnrollment = {
+  enrollment_id: string;
+  student_id: string;
+  student_name: string;
+  enrollment_date: string | null;
+  ended_at: string | null;
+  status: "active" | "dropped" | "completed" | "cancelled";
+};
+
+export type ClassHistoryEvent = {
+  event_type: string;
+  previous_end_date: string | null;
+  next_end_date: string | null;
+  reason: string | null;
+  occurred_at: string;
+};
+
+export type ClassHistoryAdjustment = {
+  adjustment_id: string;
+  reason_code: MakeupReasonCode;
+  reason_note: string | null;
+  original_start_at: string;
+  original_end_at: string;
+  status: ExceptionStatus;
+  display_status: ExceptionDisplayStatus;
+  replacement_start_at: string | null;
+  replacement_end_at: string | null;
+  completed_at: string | null;
+  restored_at: string | null;
+  version: number;
+};
+
+export type ClassHistory = {
+  id: string;
+  name: string;
+  display_name: string;
+  primary_label: string;
+  secondary_label: string | null;
+  effective_status: ClassEffectiveStatus;
+  start_date: string | null;
+  end_date: string | null;
+  schedule: ClassSchedule;
+  teachers: ClassHistoryTeacherEvent[];
+  enrollments: ClassHistoryEnrollment[];
+  lifecycle_events: ClassHistoryEvent[];
+  adjustments: ClassHistoryAdjustment[];
+};
+
+export type ClassScopeSummary = {
+  operational: number;
+  active: number;
+  scheduled: number;
+  completed: number;
+  cancelled: number;
 };
 
 export type ClassCreate = {
@@ -34,16 +334,51 @@ export type ClassCreate = {
   type: ClassType;
   base_fee: number;
   billing_cycle_months: number;
+  billing_cycle_weeks?: number | null;
+  start_date: string;
+  end_date: string;
+  identity_scheme: Exclude<ClassIdentityScheme, "LEGACY">;
+  class_category: ClassCategory;
+  grade_mode: ClassGradeMode;
+  program_name?: string | null;
+  grade_level?: number | null;
+  academic_year_start?: number | null;
   schedule?: ClassSchedule;
   teacher_id?: string | null;
   teacher_ids?: string[];
+  assistant_ids?: string[];
 };
 
-export type ClassUpdate = Partial<ClassCreate> & {
+export type ClassUpdate = Partial<Omit<ClassCreate, "identity_scheme">> & {
+  identity_scheme?: ClassIdentityScheme;
+  end_date_change_reason?: string;
+  expected_version?: number;
+  expected_fingerprint?: string;
   is_active?: boolean;
 };
 
-export type StudentStatus = "active" | "inactive";
+export type ClassEndDateUpdate = {
+  end_date: string;
+  reason: string;
+  expected_version: number;
+  expected_fingerprint: string;
+};
+
+export type ClassEndDatePreview = {
+  previous_end_date: string;
+  next_end_date: string;
+  total_weeks: number | null;
+  package_count: number | null;
+  affected_student_count: number;
+  mutable_fee_record_count: number;
+  protected_fee_record_count: number;
+  version: number;
+  preview_fingerprint: string;
+  preview_expires_at: string;
+};
+
+export type StudentStatus = "active" | "inactive" | "archived";
+export type StudentListState = "UNASSIGNED" | "CURRENT" | "FORMER" | "ARCHIVED";
 export type StudentHiddenField =
   | "birth_date"
   | "school"
@@ -63,14 +398,20 @@ export type StudentEnrollmentInfo = {
   id: string;
   class_id: string;
   class_name: string;
+  class_category: ClassCategory | null;
+  class_grade_mode: ClassGradeMode | null;
+  class_grade_level: number | null;
+  class_start_date: string | null;
+  class_end_date: string | null;
   custom_fee: number | null;
   effective_fee: number;
   enrollment_date: string | null;
-  status: "active" | "dropped";
+  status: "active" | "dropped" | "completed" | "cancelled";
 };
 
 export type StudentResponse = {
   id: string;
+  student_code?: string | null;
   full_name: string;
   birth_date: string | null;
   school: string | null;
@@ -82,6 +423,9 @@ export type StudentResponse = {
   notes: string | null;
   hidden_fields: StudentHiddenField[];
   status: StudentStatus;
+  list_state?: StudentListState;
+  archived_at?: string | null;
+  archived_reason?: string | null;
   classes: StudentClassInfo[];
   active_enrollments: StudentEnrollmentInfo[];
   created_at: string;
@@ -89,9 +433,9 @@ export type StudentResponse = {
 
 export type StudentCreate = {
   full_name: string;
-  class_id: string;
+  class_id?: string | null;
   custom_fee?: number | null;
-  enrollment_date: string;
+  enrollment_date?: string | null;
   birth_date: string;
   school: string;
   parent_name?: string | null;
@@ -101,6 +445,42 @@ export type StudentCreate = {
   student_phone?: string | null;
   notes?: string | null;
   hidden_fields?: StudentHiddenField[];
+  duplicate_resolution?: StudentDuplicateResolution;
+};
+
+export type StudentDuplicateResolution = {
+  action: "create_new";
+  candidate_ids: string[];
+};
+
+export type StudentIdentityCandidate = {
+  id: string;
+  status: StudentStatus;
+  full_name: string;
+  birth_date: string | null;
+  school: string | null;
+  masked_parent_phone: string | null;
+  masked_student_phone: string | null;
+  previous_classes: {
+    name: string;
+    enrollment_date: string | null;
+  }[];
+  updated_at: string;
+  match_strength: "strong" | "possible";
+  match_reason: string;
+  already_in_target_class: boolean;
+};
+
+export type StudentIdentityConflict = {
+  code: "STUDENT_IDENTITY_CONFLICT" | "STUDENT_IDENTITY_CONFLICT_CHANGED";
+  message: string;
+  target_class_id?: string | null;
+  candidates: StudentIdentityCandidate[];
+};
+
+export type StudentReactivationRequest = {
+  student: Omit<StudentCreate, "duplicate_resolution">;
+  expected_updated_at: string;
 };
 
 export type StudentUpdate = {
@@ -127,9 +507,14 @@ export type EnrollmentResponse = {
   student_id: string;
   class_id: string;
   custom_fee: number | null;
-  status: "active" | "dropped";
+  status: "active" | "dropped" | "completed" | "cancelled";
   enrollment_date: string | null;
   class_name: string;
+  class_category: ClassCategory | null;
+  class_grade_mode: ClassGradeMode | null;
+  class_grade_level: number | null;
+  class_start_date: string | null;
+  class_end_date: string | null;
   effective_fee: number;
 };
 
@@ -193,6 +578,7 @@ export type FeeRecordResponse = {
   class_name: string;
   class_type: "MONTHLY" | "COURSE";
   billing_cycle_months: number;
+  billing_cycle_weeks?: number | null;
   student_phone: string | null;
   student_zalo: string | null;
   student_contact_hidden: boolean;
@@ -365,6 +751,83 @@ export type FeeOperationListResponse = {
   history_complete_from: string | null;
 };
 
+export type FeePaidReceiptRefundState =
+  | "NONE"
+  | "PARTIAL"
+  | "FULL"
+  | "REVERSED";
+
+export type FeePaidReceiptTimelineEvent =
+  | "payment"
+  | "refund"
+  | "refund_reversal"
+  | "payment_reversal";
+
+export type FeePaidReceiptSummary = {
+  receipt_id: string;
+  payment_operation_id: string;
+  student_id: string | null;
+  student_name: string;
+  period: string | null;
+  paid_date: string;
+  paid_at: string;
+  payment_method: FeePaymentMethod;
+  gross_amount: number;
+  refunded_amount: number;
+  net_amount: number;
+  refund_state: FeePaidReceiptRefundState;
+  class_count: number;
+  class_names: string[];
+  actor_name: string | null;
+  actor_username: string | null;
+  actor_role: string | null;
+};
+
+export type FeePaidReportSummary = {
+  gross_amount: number;
+  refunded_amount: number;
+  net_amount: number;
+  receipt_count: number;
+  student_count: number;
+  bank_transfer_net_amount: number;
+  cash_net_amount: number;
+};
+
+export type FeePaidReceiptAllocation = {
+  fee_record_id: string | null;
+  enrollment_id: string | null;
+  class_id: string | null;
+  class_name: string;
+  period: string;
+  gross_amount: number;
+  refunded_amount: number;
+  net_amount: number;
+};
+
+export type FeePaidReceiptTimelineItem = {
+  id: string;
+  event: FeePaidReceiptTimelineEvent;
+  business_date: string;
+  occurred_at: string;
+  amount_delta: number;
+  payment_method: FeePaymentMethod;
+  actor_name: string | null;
+  actor_username: string | null;
+  actor_role: string | null;
+  reason: string | null;
+};
+
+export type FeePaidReceiptDetail = FeePaidReceiptSummary & {
+  allocations: FeePaidReceiptAllocation[];
+  timeline: FeePaidReceiptTimelineItem[];
+};
+
+export type FeePaidReceiptListResponse = {
+  receipts: FeePaidReceiptSummary[];
+  next_cursor: string | null;
+  summary: FeePaidReportSummary;
+};
+
 export type StaffType = "TEACHER" | "ASSISTANT";
 
 export type StaffAssignedClass = {
@@ -388,6 +851,7 @@ export type StaffResponse = {
 export type TeacherOptionResponse = {
   id: string;
   full_name: string;
+  staff_type: StaffType;
 };
 
 export type StaffCreate = {

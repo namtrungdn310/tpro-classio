@@ -1,32 +1,45 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { Suspense, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useDeferredValue, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createPortal } from "react-dom";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
-  ArrowLeft,
-  Download,
-  Eye,
-  EyeOff,
-  LoaderCircle,
-  Pencil,
-  Plus,
-  SearchX,
-  Trash2,
-  UsersRound,
-  X,
-} from "lucide-react";
+  RiArrowLeftLine as ArrowLeft,
+  RiDownload2Line as Download,
+  RiEyeLine as Eye,
+  RiEyeOffLine as EyeOff,
+  RiLoader4Line as LoaderCircle,
+  RiPencilLine as Pencil,
+  RiAddLine as Plus,
+  RiSearchLine as SearchX,
+  RiDeleteBinLine as Trash2,
+  RiTeamLine as UsersRound,
+} from "react-icons/ri";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm, UseFormRegisterReturn } from "react-hook-form";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
-import { InlineFieldDivider } from "@/components/ui/inline-field-divider";
+import {
+  createEntityDialogFrameClassName,
+  FormDialogBody,
+  FormDialogFooter,
+  FormDialogShell,
+} from "@/components/ui/form-dialog-shell";
+import { FormField } from "@/components/ui/form-field";
+import { FormSection } from "@/components/ui/form-section";
+import {
+  formTextControlClassName,
+  formTextControlErrorClassName,
+} from "@/components/ui/form-text-control";
 import { LoadingLabel } from "@/components/ui/loading-label";
+import { QuickActionFab } from "@/components/ui/quick-action-fab";
 import { SaveButton } from "@/components/ui/save-button";
 import { DataSectionEmpty, DataSectionError } from "@/components/ui/data-section-state";
 import { SmartMoneyInput } from "@/components/ui/smart-money-input";
+import { SplitTextField } from "@/components/ui/split-text-field";
+import { FormNotice } from "@/components/ui/form-notice";
 import {
   shouldShowUnsavedChanges,
   UnsavedChangesNotice,
@@ -34,6 +47,8 @@ import {
 import { HeaderControlsPortal } from "@/components/layout/header-controls-portal";
 import { HeaderFilterControls } from "@/components/layout/header-filter-controls";
 import { ClassSelectionView } from "@/components/students/class-selection-view";
+import { StudentReactivationSlide } from "@/components/students/student-reactivation-slide";
+import { EntityActionsDialog } from "@/components/shared/entity-actions-dialog";
 import {
   StudentClassDetailSkeleton,
   StudentTableSkeleton,
@@ -44,16 +59,22 @@ import {
   STUDENTS_TABLE_VIEWER_GRID_CLASS,
 } from "@/components/students/students-table-layout";
 import { getClasses } from "@/lib/api/classes";
+import { classQueryKeys } from "@/lib/classes/query-keys";
 import { getApiErrorMessage } from "@/lib/api/errors";
+import { useClickableRowProps } from "@/lib/ui/click-guard";
 import {
   createEnrollment,
   createStudent,
   dropEnrollment,
+  getStudentIdentityConflict,
   getStudents,
+  reactivateStudent,
   updateEnrollment,
   updateStudent,
 } from "@/lib/api/students";
 import { useAuth } from "@/lib/hooks/useAuth";
+import { isManagementUser } from "@/lib/auth/permissions";
+import { useModalDialog } from "@/lib/hooks/useModalDialog";
 import { usePersistentState } from "@/lib/hooks/usePersistentState";
 import { useScopedTextSelection } from "@/lib/hooks/useScopedTextSelection";
 import {
@@ -65,31 +86,33 @@ import {
 import type {
   ClassResponse,
   ClassType,
+  StudentCreate,
   StudentHiddenField,
+  StudentIdentityCandidate,
+  StudentIdentityConflict,
   StudentEnrollmentInfo,
   StudentResponse,
 } from "@/lib/types";
-import { getClassGroupInfo, getClassSortKey } from "@/lib/utils/class-groups";
+import { cn } from "@/lib/utils";
+import { getClassSortKey } from "@/lib/utils/class-groups";
+import {
+  getClassBillingDurationLabel,
+  getClassGroupInfoForRecord,
+} from "@/lib/classes/presentation";
 import { formatDate } from "@/lib/utils/format";
-import {
-  createPreparedSearchMatcher,
-  prepareSearchCorpus,
-} from "@/lib/utils/search";
 import { validationMessages } from "@/lib/forms/validation-messages";
-import {
-  applySharedEnrollmentDate,
-  type EnrollmentFeeValues,
-} from "@/lib/students/enrollment-fees";
+import type { EnrollmentFeeValues } from "@/lib/students/enrollment-fees";
 import {
   getStudentExportValue,
-  getStudentVisibleValue,
   isStudentFieldHidden,
 } from "@/lib/students/privacy";
 import {
-  type ContactOwner,
+  type ContactSuggestionSource,
   type ContactPairSuggestion,
+  handleContactSuggestionTab,
   useContactPairSuggestion,
-} from "@/lib/students/use-contact-pair-suggestion";
+} from "@/lib/forms/use-contact-pair-suggestion";
+import type { ContactSuggestionOwner } from "@/lib/api/contact-suggestions";
 import {
   getCompleteContactPair,
   getContactPairError,
@@ -99,6 +122,7 @@ import {
   savedInfoAutocomplete,
 } from "@/lib/forms/saved-info-policy";
 import { useFormFieldFeedback } from "@/lib/forms/use-form-field-feedback";
+import { moveFocusByFormArrow } from "@/lib/forms/field-navigation";
 import { useToast } from "@/components/providers/toast-provider";
 import {
   getSlideBackdropStyle,
@@ -118,6 +142,11 @@ type EnrollmentActionMode = "transfer" | "supplement";
 type EnrollmentActionPlan = {
   mode: EnrollmentActionMode;
   targetClassIds: string[];
+};
+
+type PendingStudentIdentityConflict = {
+  conflict: StudentIdentityConflict;
+  values: StudentCreate;
 };
 
 const STUDENT_FEEDBACK_FIELDS = [
@@ -291,7 +320,7 @@ function StudentsContent() {
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const { user } = useAuth();
-  const isAdmin = user?.role === "admin";
+  const isAdmin = isManagementUser(user);
   const [search, setSearch] = usePersistentState("tpro:students:selected-class-search", "");
   const [classSearch, setClassSearch] = usePersistentState("tpro:students:class-search", "");
   const deferredSearch = useDeferredValue(search);
@@ -302,7 +331,10 @@ function StudentsContent() {
   );
   const [editingStudent, setEditingStudent] = useState<StudentResponse | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<StudentResponse | null>(null);
+  const [actionTarget, setActionTarget] = useState<StudentResponse | null>(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [pendingIdentityConflict, setPendingIdentityConflict] =
+    useState<PendingStudentIdentityConflict | null>(null);
   const notify = useToast();
 
   const updateSelectedClass = useCallback(
@@ -324,8 +356,9 @@ function StudentsContent() {
     () => ({
       class_id: classId,
       status: "active" as const,
+      search: deferredSearch.trim() || undefined,
     }),
-    [classId],
+    [classId, deferredSearch],
   );
 
   const studentsQuery = useQuery({
@@ -337,13 +370,13 @@ function StudentsContent() {
   });
 
   const classesQuery = useQuery({
-    queryKey: ["classes", { is_active: true }],
-    queryFn: () => getClasses({ is_active: true }),
+    queryKey: classQueryKeys.list("enrollable"),
+    queryFn: () => getClasses({ scope: "enrollable" }),
     enabled: Boolean(user),
     placeholderData: keepPreviousData,
-    initialData: () => queryClient.getQueryData<ClassResponse[]>(["classes", { is_active: true }]),
+    initialData: () => queryClient.getQueryData<ClassResponse[]>(classQueryKeys.list("enrollable")),
     initialDataUpdatedAt: () =>
-      queryClient.getQueryState(["classes", { is_active: true }])?.dataUpdatedAt,
+      queryClient.getQueryState(classQueryKeys.list("enrollable"))?.dataUpdatedAt,
   });
 
   const createMutation = useMutation({
@@ -354,11 +387,77 @@ function StudentsContent() {
         return [createdStudent, ...nextStudents.filter((item) => item.id !== createdStudent.id)];
       });
       setIsFormOpen(false);
+      setPendingIdentityConflict(null);
       notify.success(`Đã thêm học viên ${variables.full_name.trim()}.`);
       void invalidateStudentDependencies();
     },
-    onError: (error) => {
+    onError: (error, variables) => {
+      const conflict = getStudentIdentityConflict(error);
+      if (conflict) {
+        setPendingIdentityConflict({
+          conflict,
+          values: {
+            ...variables,
+            duplicate_resolution: undefined,
+          },
+        });
+        return;
+      }
       notify.error(getApiErrorMessage(error, "Không thể thêm học viên. Vui lòng thử lại."));
+    },
+  });
+
+  const reactivateMutation = useMutation({
+    mutationFn: ({
+      candidate,
+      values,
+    }: {
+      candidate: StudentIdentityCandidate;
+      values: StudentCreate;
+    }) => {
+      const { duplicate_resolution, ...student } = values;
+      void duplicate_resolution;
+      return reactivateStudent(candidate.id, {
+        student: {
+          ...student,
+        },
+        expected_updated_at: candidate.updated_at,
+      });
+    },
+    onSuccess: (restoredStudent, variables) => {
+      queryClient.setQueryData<StudentResponse[]>(["students", filters], (current) => {
+        const nextStudents = current ?? [];
+        return [
+          restoredStudent,
+          ...nextStudents.filter((item) => item.id !== restoredStudent.id),
+        ];
+      });
+      setPendingIdentityConflict(null);
+      setIsFormOpen(false);
+      setEditingStudent(null);
+      notify.success(
+        variables.candidate.status === "inactive"
+          ? `Đã khôi phục học viên ${restoredStudent.full_name}.`
+          : `Đã thêm ${restoredStudent.full_name} vào lớp.`,
+      );
+      void invalidateStudentDependencies();
+    },
+    onError: (error, variables) => {
+      const conflict = getStudentIdentityConflict(error);
+      if (conflict) {
+        setPendingIdentityConflict({
+          conflict,
+          values: variables.values,
+        });
+        notify.warning("Hồ sơ đã thay đổi. Danh sách vừa được cập nhật.");
+        return;
+      }
+      notify.error(
+        getApiErrorMessage(
+          error,
+          "Không thể khôi phục hồ sơ học viên. Vui lòng thử lại.",
+        ),
+      );
     },
   });
 
@@ -377,23 +476,9 @@ function StudentsContent() {
       let updatedStudent = await updateStudent(id, toStudentPayload(values));
 
       const activeEnrollments = editingStudent?.active_enrollments ?? [];
-      const sharedEnrollmentDate =
-        activeEnrollments
-          .map(
-            (enrollment) =>
-              enrollmentFees[enrollment.id]?.enrollment_date ?? enrollment.enrollment_date,
-          )
-          .find((value): value is string => Boolean(value)) ?? null;
-      const hasSharedEnrollmentDateChange =
-        Boolean(sharedEnrollmentDate) &&
-        activeEnrollments.some(
-          (enrollment) => (enrollment.enrollment_date ?? null) !== sharedEnrollmentDate,
-        );
-
       let didEnrollmentChange = false;
 
-      for (let index = 0; index < activeEnrollments.length; index += 1) {
-        const enrollment = activeEnrollments[index];
+      for (const enrollment of activeEnrollments) {
         const billingValues = enrollmentFees[enrollment.id];
         if (!billingValues) {
           continue;
@@ -403,8 +488,8 @@ function StudentsContent() {
         if (billingValues.custom_fee !== enrollment.custom_fee) {
           payload.custom_fee = billingValues.custom_fee;
         }
-        if (index === 0 && hasSharedEnrollmentDateChange && sharedEnrollmentDate) {
-          payload.enrollment_date = sharedEnrollmentDate;
+        if (billingValues.enrollment_date !== enrollment.enrollment_date) {
+          payload.enrollment_date = billingValues.enrollment_date;
         }
         if (Object.keys(payload).length > 0) {
           await updateEnrollment(enrollment.id, payload);
@@ -413,13 +498,10 @@ function StudentsContent() {
       }
 
       if (enrollmentActionPlan.targetClassIds.length > 0) {
-        const nextEnrollmentDate = sharedEnrollmentDate ?? getTodayInputValue();
-
         for (const targetClassId of enrollmentActionPlan.targetClassIds) {
           await createEnrollment({
             student_id: id,
             class_id: targetClassId,
-            enrollment_date: nextEnrollmentDate,
           });
         }
         didEnrollmentChange = true;
@@ -505,46 +587,60 @@ function StudentsContent() {
     }
 
     setEditingStudent(null);
+    setPendingIdentityConflict(null);
     setIsFormOpen(true);
   }
 
   function openEditForm(student: StudentResponse) {
     setEditingStudent(student);
+    setPendingIdentityConflict(null);
     setIsFormOpen(true);
   }
 
-  const matchesStudentSearch = useMemo(
-    () => createPreparedSearchMatcher(deferredSearch),
-    [deferredSearch],
-  );
   const indexedStudents = useMemo(
     () =>
       [...(studentsQuery.data ?? [])]
         .sort(compareStudentsByCreationOrder)
         .map((student) => ({
-          searchCorpus: prepareSearchCorpus([
-            student.full_name,
-            getStudentVisibleValue(student, "school", student.school),
-            getStudentVisibleValue(student, "parent_contact", student.parent_phone),
-            getStudentVisibleValue(student, "parent_contact", student.parent_zalo),
-            getStudentVisibleValue(student, "student_contact", student.student_phone),
-            getStudentVisibleValue(student, "student_contact", student.student_zalo),
-            getStudentVisibleValue(student, "notes", student.notes),
-            ...student.classes.map((class_) => class_.name),
-          ]),
+          searchCorpus: "",
           student,
         })),
     [studentsQuery.data],
   );
 
+  // R6-D08: tìm kiếm do server thực hiện (indexed, cursor); FE không lọc
+  // toàn bộ danh sách bằng Python/JS.
   const students = useMemo(
-    () =>
-      indexedStudents
-        .filter(({ searchCorpus }) => matchesStudentSearch(searchCorpus))
-        .map(({ student }) => student),
-    [indexedStudents, matchesStudentSearch],
+    () => indexedStudents.map(({ student }) => student),
+    [indexedStudents],
   );
   const studentQueryData = studentsQuery.data;
+  const contactSuggestionSources = useMemo<ContactSuggestionSource[]>(
+    () =>
+      (studentQueryData ?? []).flatMap((student) => {
+        if (student.status !== "active" || student.active_enrollments.length === 0) {
+          return [];
+        }
+
+        const sources: ContactSuggestionSource[] = [];
+        if (!isStudentFieldHidden(student, "student_contact")) {
+          sources.push({
+            owner: "student",
+            phone: student.student_phone,
+            zaloName: student.student_zalo,
+          });
+        }
+        if (!isStudentFieldHidden(student, "parent_contact")) {
+          sources.push({
+            owner: "parent",
+            phone: student.parent_phone,
+            zaloName: student.parent_zalo,
+          });
+        }
+        return sources;
+      }),
+    [studentQueryData],
+  );
   const totalStudentCount = studentQueryData?.length ?? 0;
   const hasStudentQueryData = studentQueryData !== undefined;
   const hasBlockingStudentError = studentsQuery.isError && !hasStudentQueryData;
@@ -552,8 +648,9 @@ function StudentsContent() {
   const classes = useMemo(() => classesQuery.data ?? [], [classesQuery.data]);
   const selectedClass = classes.find((class_) => class_.id === classId) ?? null;
   const isResolvingSelectedClass = Boolean(classId) && classesQuery.isLoading && !selectedClass;
-  const isMutating =
-    createMutation.isPending || updateMutation.isPending || dropEnrollmentMutation.isPending;
+  const isStudentFormSaving =
+    (createMutation.isPending && pendingIdentityConflict === null) ||
+    updateMutation.isPending;
 
   useEffect(() => {
     if (!user) {
@@ -713,8 +810,7 @@ function StudentsContent() {
                   currentClassId={selectedClass.id}
                   students={students}
                   isAdmin={isAdmin}
-                  onDelete={setDeleteTarget}
-                  onEdit={openEditForm}
+                  onRowClick={setActionTarget}
                 />
               ) : hasSearch && totalStudentCount > 0 ? (
                 <DataSectionEmpty
@@ -746,14 +842,16 @@ function StudentsContent() {
       {isFormOpen ? (
         <StudentFormDialog
           classes={classes}
+          contactSuggestionSources={contactSuggestionSources}
           currentClassId={selectedClass?.id ?? null}
-          isSaving={isMutating}
+          isSaving={isStudentFormSaving}
           student={editingStudent}
           onClose={() => {
             setIsFormOpen(false);
             setEditingStudent(null);
+            setPendingIdentityConflict(null);
           }}
-          onSubmit={(values, enrollmentFees, enrollmentActionPlan) => {
+          onSubmit={(values, enrollmentFees, enrollmentActionPlan, slotIds) => {
             if (editingStudent) {
               updateMutation.mutate({
                 enrollmentActionPlan,
@@ -762,7 +860,9 @@ function StudentsContent() {
                 enrollmentFees,
               });
             } else {
-              createMutation.mutate(toStudentCreatePayload(values, selectedClass!.id));
+              createMutation.mutate(
+                toStudentCreatePayload(values, selectedClass!.id, slotIds),
+              );
             }
           }}
         />
@@ -770,6 +870,7 @@ function StudentsContent() {
 
       {deleteTarget ? (
         <RemoveFromClassDialog
+          className={selectedClass?.name ?? "lớp đang chọn"}
           isDeleting={dropEnrollmentMutation.isPending}
           student={deleteTarget}
           onClose={() => setDeleteTarget(null)}
@@ -781,6 +882,44 @@ function StudentsContent() {
           }}
         />
       ) : null}
+
+      {actionTarget && !isFormOpen && !deleteTarget && !pendingIdentityConflict ? (
+        <EntityActionsDialog
+          open
+          title={`Thao tác với học viên ${actionTarget.full_name}`}
+          onClose={() => setActionTarget(null)}
+          actions={[
+            { label: "Sửa học viên", icon: <Pencil className="h-4 w-4" aria-hidden="true" />, onClick: () => openEditForm(actionTarget) },
+            { label: `Xoá ${actionTarget.full_name} khỏi lớp`, icon: <Trash2 className="h-4 w-4" aria-hidden="true" />, tone: "danger" as const, onClick: () => setDeleteTarget(actionTarget) },
+          ]}
+        />
+      ) : null}
+
+      <StudentReactivationSlide
+        className={selectedClass?.name ?? "lớp đang chọn"}
+        conflict={pendingIdentityConflict?.conflict ?? null}
+        isPending={createMutation.isPending || reactivateMutation.isPending}
+        onClose={() => setPendingIdentityConflict(null)}
+        onCreateNew={(candidateIds) => {
+          if (!pendingIdentityConflict) return;
+          createMutation.mutate({
+            ...pendingIdentityConflict.values,
+            duplicate_resolution: {
+              action: "create_new",
+              candidate_ids: candidateIds,
+            },
+          });
+        }}
+        onReactivate={(candidate) => {
+          if (!pendingIdentityConflict) return;
+          reactivateMutation.mutate({
+            candidate,
+            values: pendingIdentityConflict.values,
+          });
+        }}
+      />
+
+      {isAdmin ? <QuickActionFab label="Thêm học viên" onClick={openCreateForm} /> : null}
 
     </div>
   );
@@ -798,7 +937,7 @@ function AddStudentButton({
       type="button"
       onClick={onClick}
       aria-label="Thêm học viên"
-      className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md bg-gray-950 px-2.5 text-sm font-medium text-white transition hover:bg-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-300"
+      className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md bg-primary px-2.5 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
     >
       <Plus className="h-4 w-4" aria-hidden="true" />
       {compact ? "Thêm" : "Thêm học viên"}
@@ -837,7 +976,7 @@ function SelectedClassBar({
   onChangeClass: () => void;
   onExportStudents: () => void;
 }) {
-  const group = getClassGroupInfo(class_.name);
+  const group = getClassGroupInfoForRecord(class_);
   const teacherNames = Array.from(
     new Set(
       (class_.teacher_names?.length ? class_.teacher_names : [class_.teacher_name])
@@ -861,7 +1000,7 @@ function SelectedClassBar({
           </span>
           <span className="hidden h-4 w-px bg-gray-200 sm:block" aria-hidden="true" />
           <span className="whitespace-nowrap text-sm font-medium text-gray-700">
-            {formatCurrencyVnd(class_.base_fee)} <span className="text-gray-500">/ {getBillingLabel(class_)}</span>
+            {formatCurrencyVnd(class_.base_fee)} <span className="text-gray-500">/ {getClassBillingDurationLabel(class_)}</span>
           </span>
         </div>
 
@@ -915,13 +1054,6 @@ function StudentListStatus({
   );
 }
 
-const CONTACT_MODAL_GRID_CLASS =
-  "grid w-full min-w-0 grid-cols-[minmax(0,1fr)_1px_minmax(0,1fr)] items-center";
-
-function ContactDivider() {
-  return <InlineFieldDivider />;
-}
-
 function HiddenStudentValue() {
   return (
     <span className="inline-flex select-none items-center gap-1 text-[13px] font-medium text-gray-400">
@@ -969,13 +1101,26 @@ function StudentCustomFeeLine({
     return null;
   }
 
+  const isHidden = isStudentFieldHidden(student, "custom_fee");
+
   return (
-    <div className="mt-0.5 flex min-w-0 items-center gap-1 text-[13px] font-medium leading-4 text-gray-500">
-      <span className="shrink-0 select-none">Học phí:</span>
-      {isStudentFieldHidden(student, "custom_fee") ? (
-        <HiddenStudentValue />
+    <div
+      className={`mt-0.5 min-w-0 text-[13px] font-medium leading-4 text-gray-500 ${
+        isHidden
+          ? "flex select-none items-center gap-1"
+          : "text-selection-scope text-selection-scope--inline"
+      }`}
+      data-text-selection-scope={isHidden ? undefined : "true"}
+    >
+      {isHidden ? (
+        <>
+          <span className="shrink-0">Học phí:</span>
+          <HiddenStudentValue />
+        </>
       ) : (
-        <SelectableStudentValue inline value={formatCurrencyVnd(customFee)} />
+        <span className="text-selection-value" data-text-selection-value="true">
+          Học phí: {formatCurrencyVnd(customFee)}
+        </span>
       )}
     </div>
   );
@@ -1172,9 +1317,9 @@ function BirthDateInput({
 
   return (
     <div>
-      <Field controlId="student-birth-date" label="Ngày sinh" error={error} errorId="student-birth-date-error">
+      <FormField controlId="student-birth-date" label="Ngày sinh" error={error} errorId="student-birth-date-error">
         <div
-          className={`relative flex h-8 w-full items-center rounded-md border bg-white px-3 transition-shadow focus-within:ring-2 ${error ? "border-red-400 focus-within:border-red-500 focus-within:ring-red-100" : "border-gray-200 focus-within:border-gray-400 focus-within:ring-gray-200"}`}
+          className={`relative flex h-8 w-full items-center rounded-md border bg-white px-3 transition-shadow focus-within:ring-2 ${error ? "border-destructive focus-within:border-destructive focus-within:ring-destructive/15" : "border-gray-200 focus-within:border-primary/60 focus-within:ring-primary/15"}`}
           style={{ paddingRight: privacyToggle ? "2.5rem" : undefined }}
         >
           <div className={`form-input-text pointer-events-none absolute left-3 flex items-center whitespace-pre text-left ${privacyToggle ? "right-10" : "right-3"}`}>
@@ -1200,7 +1345,7 @@ function BirthDateInput({
             <div className="absolute inset-y-0 right-1 z-20 flex items-center">{privacyToggle}</div>
           ) : null}
       </div>
-      </Field>
+      </FormField>
     </div>
   );
 }
@@ -1238,25 +1383,25 @@ function ContactFields({
     .filter(Boolean)
     .join(" ") || undefined;
 
-  function handleSuggestionKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
-    if (event.key === "Tab" && !event.shiftKey && suggestion) {
-      onAcceptSuggestion?.();
-    }
-  }
-
   return (
     <div className="sm:col-span-2">
       <div className="block space-y-1">
         <span className="form-label-text block select-none text-[15px] text-gray-700">{label}</span>
-        <div
+        <SplitTextField
           role="group"
           aria-describedby={describedBy}
+          onKeyDown={(event) =>
+            handleContactSuggestionTab(
+              event,
+              suggestion,
+              () => onAcceptSuggestion?.(),
+            )
+          }
           onBlur={(event) => {
             if (!event.currentTarget.contains(event.relatedTarget)) onBlur?.();
           }}
-          className={`${CONTACT_MODAL_GRID_CLASS} relative h-8 w-full rounded-md border bg-white transition-shadow focus-within:ring-2 ${error ? "border-red-400 focus-within:border-red-500 focus-within:ring-red-100" : "border-gray-200 focus-within:border-gray-400 focus-within:ring-gray-200"}`}
-        >
-          <div className="h-full min-w-0">
+          className={`relative h-8 rounded-md border bg-white transition-shadow focus-within:ring-2 ${error ? "border-destructive focus-within:border-destructive focus-within:ring-destructive/15" : "border-gray-200 focus-within:border-primary/60 focus-within:ring-primary/15"}`}
+          left={
             <input
               {...zaloField}
               aria-label={zaloPlaceholder}
@@ -1269,14 +1414,12 @@ function ContactFields({
               aria-invalid={Boolean(error)}
               aria-describedby={describedBy}
               aria-autocomplete={suggestion?.target === "zalo" ? "inline" : undefined}
-              aria-keyshortcuts={suggestion?.target === "zalo" ? "Tab" : undefined}
-              onKeyDown={handleSuggestionKeyDown}
-              data-contact-suggestion={suggestion?.target === "zalo" ? "true" : undefined}
-              className="form-input-text h-full w-full min-w-0 bg-transparent px-3 pr-4 text-gray-900 outline-none placeholder:font-normal placeholder:text-gray-400"
+              aria-keyshortcuts={suggestion ? "Tab" : undefined}
+              data-contact-part="zalo"
+              className="form-input-text h-full w-full min-w-0 bg-transparent px-3 py-0 text-gray-900 outline-none placeholder:font-normal placeholder:text-gray-400"
             />
-          </div>
-          <ContactDivider />
-          <div className="h-full min-w-0">
+          }
+          right={
             <input
               {...phoneField}
               aria-label={`Số điện thoại ${zaloPlaceholder.replace("Zalo ", "")}`}
@@ -1291,21 +1434,22 @@ function ContactFields({
               aria-invalid={Boolean(error)}
               aria-describedby={describedBy}
               aria-autocomplete={suggestion?.target === "phone" ? "inline" : undefined}
-              aria-keyshortcuts={suggestion?.target === "phone" ? "Tab" : undefined}
-              onKeyDown={handleSuggestionKeyDown}
-              data-contact-suggestion={suggestion?.target === "phone" ? "true" : undefined}
+              aria-keyshortcuts={suggestion ? "Tab" : undefined}
+              data-contact-part="phone"
               data-row={dataRow}
               data-col={1}
               data-private-hidden={isContentHidden}
-              className={`form-input-text h-full w-full min-w-0 bg-transparent px-4 text-gray-900 outline-none placeholder:font-normal placeholder:text-gray-400 ${privacyToggle ? "pr-10" : "pr-3"}`}
+              className={`form-input-text h-full w-full min-w-0 bg-transparent px-3 py-0 text-gray-900 outline-none placeholder:font-normal placeholder:text-gray-400 ${privacyToggle ? "pr-10" : ""}`}
             />
-          </div>
-          {privacyToggle ? (
-            <div className="absolute inset-y-0 right-1 flex items-center">{privacyToggle}</div>
-          ) : null}
-        </div>
+          }
+          endAdornment={
+            privacyToggle ? (
+              <div className="absolute inset-y-0 right-1 flex items-center">{privacyToggle}</div>
+            ) : null
+          }
+        />
         {error && (
-          <span id={errorId} role="alert" className="helper-text block text-red-600">{error}</span>
+          <span id={errorId} role="alert" className="helper-text block text-destructive">{error}</span>
         )}
         {suggestion ? (
           <span id={suggestionId} className="sr-only" aria-live="polite">
@@ -1340,7 +1484,7 @@ function StudentContactFields({
     <ContactFields
       phoneKey="student_phone"
       zaloPlaceholder="Zalo học sinh"
-      label="Thông tin học viên"
+      label="Liên hệ học viên"
       zaloField={zaloField}
       phoneField={phoneField}
       error={error}
@@ -1377,7 +1521,7 @@ function ParentContactFields({
     <ContactFields
       phoneKey="parent_phone"
       zaloPlaceholder="Zalo phụ huynh"
-      label="Thông tin phụ huynh"
+      label="Liên hệ phụ huynh"
       zaloField={zaloField}
       phoneField={phoneField}
       error={error}
@@ -1394,14 +1538,12 @@ function ParentContactFields({
 function StudentsTable({
   currentClassId,
   isAdmin,
-  onDelete,
-  onEdit,
+  onRowClick,
   students,
 }: {
   currentClassId: string;
   isAdmin: boolean;
-  onDelete: (student: StudentResponse) => void;
-  onEdit: (student: StudentResponse) => void;
+  onRowClick: (student: StudentResponse) => void;
   students: StudentResponse[];
 }) {
   const selectionContainerRef = useRef<HTMLDivElement>(null);
@@ -1414,63 +1556,7 @@ function StudentsTable({
     <div ref={selectionContainerRef} className="text-selection-container scrollbar-hidden overflow-x-hidden md:h-full md:min-h-0 md:overflow-y-auto md:overscroll-contain xl:overflow-hidden">
       <div className="grid gap-3 xl:hidden">
         {students.map((student) => (
-          <article key={student.id} className="rounded-md border border-gray-200 bg-white p-4">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <h2 className="break-words text-base font-semibold text-gray-900">
-                  <SelectableStudentValue value={student.full_name} />
-                </h2>
-                <StudentCustomFeeLine classId={currentClassId} student={student} />
-                <p className="mt-1 break-words text-[15px] font-medium text-gray-600">
-                  <SelectableStudentValue {...getStudentCardSummary(student)} />
-                </p>
-              </div>
-              {isAdmin ? (
-                <div className="flex shrink-0 gap-2">
-                  <IconButton label="Sửa học viên" onClick={() => onEdit(student)}>
-                    <Pencil className="h-4 w-4" />
-                  </IconButton>
-                  <IconButton label="Xoá học viên" tone="danger" onClick={() => onDelete(student)}>
-                    <Trash2 className="h-4 w-4" />
-                  </IconButton>
-                </div>
-              ) : null}
-            </div>
-            <dl className="mt-4 grid grid-cols-2 gap-x-3 gap-y-3 text-[15px] font-medium">
-              <div className="min-w-0">
-                <dt className="text-xs font-medium uppercase text-gray-500">Ngày bắt đầu</dt>
-                <dd className="mt-1 text-gray-800">
-                  {isStudentFieldHidden(student, "enrollment_date")
-                    ? <HiddenStudentValue />
-                    : <SelectableStudentValue value={formatDate(getEnrollmentDateForClass(student, currentClassId))} />}
-                </dd>
-              </div>
-              <div className="min-w-0">
-                <dt className="text-xs font-medium uppercase text-gray-500">Thông tin học viên</dt>
-                <dd className="mt-1 break-words text-gray-800">
-                  {isStudentFieldHidden(student, "student_contact")
-                    ? <HiddenStudentValue />
-                    : <SelectableStudentValue value={formatContactText(student.student_zalo, student.student_phone)} />}
-                </dd>
-              </div>
-              <div className="col-span-2 min-w-0">
-                <dt className="text-xs font-medium uppercase text-gray-500">Thông tin phụ huynh</dt>
-                <dd className="mt-1 min-w-0 text-gray-800">
-                  {isStudentFieldHidden(student, "parent_contact")
-                    ? <HiddenStudentValue />
-                    : <span className="block break-words"><SelectableStudentValue value={formatContactText(student.parent_zalo, student.parent_phone)} /></span>}
-                </dd>
-              </div>
-              <div className="col-span-2 min-w-0">
-                <dt className="text-xs font-medium uppercase text-gray-500">Ghi chú</dt>
-                <dd className="mt-1 break-words text-gray-800">
-                  {isStudentFieldHidden(student, "notes")
-                    ? <HiddenStudentValue />
-                    : <SelectableStudentValue value={student.notes} />}
-                </dd>
-              </div>
-            </dl>
-          </article>
+          <StudentCard key={student.id} currentClassId={currentClassId} isAdmin={isAdmin} student={student} onRowClick={onRowClick} />
         ))}
       </div>
 
@@ -1479,8 +1565,8 @@ function StudentsTable({
         aria-label="Danh sách học viên trong lớp"
         className="hidden overflow-hidden rounded-lg border border-gray-200 bg-white xl:h-full xl:min-h-0 xl:flex xl:flex-col"
       >
-        <div role="rowgroup" className="shrink-0 border-b border-gray-200 bg-gray-50">
-          <div role="row" className={`${tableGridClass} table-heading-text text-left text-gray-700`}>
+        <div role="rowgroup" className="shrink-0 border-b border-gray-200 bg-gray-100">
+          <div role="row" className={`${tableGridClass} table-heading-text text-left text-gray-800`}>
             <div role="columnheader" className="whitespace-nowrap px-2.5 py-3">Họ tên</div>
             <div role="columnheader" className="whitespace-nowrap px-2.5 py-3">Ngày sinh</div>
             <div role="columnheader" className="whitespace-nowrap px-2.5 py-3">Trường</div>
@@ -1488,49 +1574,13 @@ function StudentsTable({
             <div role="columnheader" className="whitespace-nowrap py-3 pl-4 pr-2.5">Thông tin học viên</div>
             <div role="columnheader" className="whitespace-nowrap px-2.5 py-3">Thông tin phụ huynh</div>
             <div role="columnheader" className="whitespace-nowrap px-2.5 py-3">Ghi chú</div>
-            {isAdmin ? <div role="columnheader" className="whitespace-nowrap px-2 py-3 text-center">Thao tác</div> : null}
           </div>
         </div>
 
         <div role="rowgroup" className="scrollbar-hidden min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain bg-white">
-          <div role="presentation" className="divide-y divide-gray-100 text-[15px] font-medium leading-5">
+          <div role="presentation" className="divide-y divide-gray-200 text-[15px] font-medium leading-5">
             {students.map((student) => (
-              <div role="row" key={student.id} className={`${tableGridClass} cv-auto items-start hover:bg-gray-50`}>
-                <div role="cell" className="min-w-0 break-words px-2.5 py-3 font-medium text-gray-900">
-                  <SelectableStudentValue value={student.full_name} />
-                  <StudentCustomFeeLine classId={currentClassId} student={student} />
-                </div>
-                <div role="cell" className="min-w-0 whitespace-nowrap px-2.5 py-3 text-gray-700">
-                  {isStudentFieldHidden(student, "birth_date")
-                    ? <HiddenStudentValue />
-                    : <SelectableStudentValue value={formatDate(student.birth_date)} />}
-                </div>
-                <div role="cell" className="min-w-0 break-words px-2.5 py-3 text-gray-700">
-                  {isStudentFieldHidden(student, "school") ? <HiddenStudentValue /> : <SelectableStudentValue value={student.school} />}
-                </div>
-                <div role="cell" className="min-w-0 whitespace-nowrap px-2.5 py-3 text-gray-700">
-                  {isStudentFieldHidden(student, "enrollment_date")
-                    ? <HiddenStudentValue />
-                    : <SelectableStudentValue value={formatDate(getEnrollmentDateForClass(student, currentClassId))} />}
-                </div>
-                <div role="cell" className="min-w-0 py-3 pl-4 pr-2.5">{formatContactCell(student, "student_contact", student.student_zalo, student.student_phone)}</div>
-                <div role="cell" className="min-w-0 px-2.5 py-3">{formatContactCell(student, "parent_contact", student.parent_zalo, student.parent_phone)}</div>
-                <div role="cell" className="min-w-0 break-words px-2.5 py-3 text-gray-700">
-                  {isStudentFieldHidden(student, "notes") ? <HiddenStudentValue /> : <SelectableStudentValue value={student.notes} />}
-                </div>
-                {isAdmin ? (
-                  <div role="cell" className="flex self-stretch items-center justify-center px-2 py-3">
-                    <div className="flex items-center justify-center gap-1.5">
-                      <IconButton label="Sửa học viên" onClick={() => onEdit(student)}>
-                        <Pencil className="h-4 w-4" />
-                      </IconButton>
-                      <IconButton label="Xoá học viên" tone="danger" onClick={() => onDelete(student)}>
-                        <Trash2 className="h-4 w-4" />
-                      </IconButton>
-                    </div>
-                  </div>
-                ) : null}
-              </div>
+              <StudentTableRow key={student.id} currentClassId={currentClassId} isAdmin={isAdmin} student={student} onRowClick={onRowClick} tableGridClass={tableGridClass} />
             ))}
           </div>
         </div>
@@ -1539,8 +1589,140 @@ function StudentsTable({
   );
 }
 
+function StudentCard({
+  currentClassId,
+  isAdmin,
+  onRowClick,
+  student,
+}: {
+  currentClassId: string;
+  isAdmin: boolean;
+  onRowClick: (student: StudentResponse) => void;
+  student: StudentResponse;
+}) {
+  const clickableProps = useClickableRowProps(isAdmin ? () => onRowClick(student) : undefined);
+  return (
+    <article
+      {...clickableProps}
+      tabIndex={isAdmin ? 0 : undefined}
+      onKeyDown={(event) => {
+        if (isAdmin && (event.key === "Enter" || event.key === " ")) {
+          event.preventDefault();
+          onRowClick(student);
+        }
+      }}
+      className={`rounded-md border border-gray-200 bg-white p-4 ${isAdmin ? "cursor-pointer transition hover:bg-gray-100/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/30" : ""}`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="break-words text-base font-semibold text-gray-900">
+            <SelectableStudentValue value={student.full_name} />
+          </h2>
+          {student.student_code ? (
+            <p className="mt-0.5 text-[13px] font-medium tabular-nums text-gray-500">
+              Mã: <SelectableStudentValue value={student.student_code} />
+            </p>
+          ) : null}
+          <StudentCustomFeeLine classId={currentClassId} student={student} />
+          <p className="mt-1 break-words text-[15px] font-medium text-gray-600">
+            <SelectableStudentValue {...getStudentCardSummary(student)} />
+          </p>
+        </div>
+      </div>
+      <dl className="mt-4 grid grid-cols-2 gap-x-3 gap-y-3 text-[15px] font-medium">
+        <div className="min-w-0">
+          <dt className="text-xs font-medium uppercase text-gray-500">Ngày bắt đầu</dt>
+          <dd className="mt-1 text-gray-800">
+            {isStudentFieldHidden(student, "enrollment_date")
+              ? <HiddenStudentValue />
+              : <SelectableStudentValue value={formatDate(getEnrollmentDateForClass(student, currentClassId))} />}
+          </dd>
+        </div>
+        <div className="min-w-0">
+          <dt className="text-xs font-medium uppercase text-gray-500">Thông tin học viên</dt>
+          <dd className="mt-1 break-words text-gray-800">
+            {isStudentFieldHidden(student, "student_contact")
+              ? <HiddenStudentValue />
+              : <SelectableStudentValue value={formatContactText(student.student_zalo, student.student_phone)} />}
+          </dd>
+        </div>
+        <div className="col-span-2 min-w-0">
+          <dt className="text-xs font-medium uppercase text-gray-500">Thông tin phụ huynh</dt>
+          <dd className="mt-1 min-w-0 text-gray-800">
+            {isStudentFieldHidden(student, "parent_contact")
+              ? <HiddenStudentValue />
+              : <span className="block break-words"><SelectableStudentValue value={formatContactText(student.parent_zalo, student.parent_phone)} /></span>}
+          </dd>
+        </div>
+        <div className="col-span-2 min-w-0">
+          <dt className="text-xs font-medium uppercase text-gray-500">Ghi chú</dt>
+          <dd className="mt-1 break-words text-gray-800">
+            {isStudentFieldHidden(student, "notes")
+              ? <HiddenStudentValue />
+              : <SelectableStudentValue value={student.notes} />}
+          </dd>
+        </div>
+      </dl>
+    </article>
+  );
+}
+
+function StudentTableRow({
+  currentClassId,
+  isAdmin,
+  onRowClick,
+  student,
+  tableGridClass,
+}: {
+  currentClassId: string;
+  isAdmin: boolean;
+  onRowClick: (student: StudentResponse) => void;
+  student: StudentResponse;
+  tableGridClass: string;
+}) {
+  const clickableProps = useClickableRowProps(isAdmin ? () => onRowClick(student) : undefined);
+  return (
+    <div
+      role="row"
+      {...clickableProps}
+      tabIndex={isAdmin ? 0 : undefined}
+      onKeyDown={(event) => {
+        if (isAdmin && (event.key === "Enter" || event.key === " ")) {
+          event.preventDefault();
+          onRowClick(student);
+        }
+      }}
+      className={`${tableGridClass} cv-auto items-start ${isAdmin ? "cursor-pointer hover:bg-gray-100/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/30" : ""}`}
+    >
+      <div role="cell" className="min-w-0 break-words px-2.5 py-3 font-medium text-gray-900">
+        <SelectableStudentValue value={student.full_name} />
+        <StudentCustomFeeLine classId={currentClassId} student={student} />
+      </div>
+      <div role="cell" className="min-w-0 whitespace-nowrap px-2.5 py-3 text-gray-700">
+        {isStudentFieldHidden(student, "birth_date")
+          ? <HiddenStudentValue />
+          : <SelectableStudentValue value={formatDate(student.birth_date)} />}
+      </div>
+      <div role="cell" className="min-w-0 break-words px-2.5 py-3 text-gray-700">
+        {isStudentFieldHidden(student, "school") ? <HiddenStudentValue /> : <SelectableStudentValue value={student.school} />}
+      </div>
+      <div role="cell" className="min-w-0 whitespace-nowrap px-2.5 py-3 text-gray-700">
+        {isStudentFieldHidden(student, "enrollment_date")
+          ? <HiddenStudentValue />
+          : <SelectableStudentValue value={formatDate(getEnrollmentDateForClass(student, currentClassId))} />}
+      </div>
+      <div role="cell" className="min-w-0 py-3 pl-4 pr-2.5">{formatContactCell(student, "student_contact", student.student_zalo, student.student_phone)}</div>
+      <div role="cell" className="min-w-0 px-2.5 py-3">{formatContactCell(student, "parent_contact", student.parent_zalo, student.parent_phone)}</div>
+      <div role="cell" className="min-w-0 break-words px-2.5 py-3 text-gray-700">
+        {isStudentFieldHidden(student, "notes") ? <HiddenStudentValue /> : <SelectableStudentValue value={student.notes} />}
+      </div>
+    </div>
+  );
+}
+
 function StudentFormDialog({
   classes,
+  contactSuggestionSources,
   currentClassId,
   isSaving,
   onClose,
@@ -1548,6 +1730,7 @@ function StudentFormDialog({
   student,
 }: {
   classes: ClassResponse[];
+  contactSuggestionSources: ContactSuggestionSource[];
   currentClassId: string | null;
   isSaving: boolean;
   onClose: () => void;
@@ -1555,11 +1738,11 @@ function StudentFormDialog({
     values: StudentFormValues,
     enrollmentFees: EnrollmentFeeValues,
     enrollmentActionPlan: EnrollmentActionPlan,
+    selectedSlotIds: string[],
   ) => void;
   student: StudentResponse | null;
 }) {
   const [mounted, setMounted] = useState(false);
-  const mouseDownOnBackdrop = useRef(false);
   const [enrollmentFees, setEnrollmentFees] = useState<EnrollmentFeeValues>({});
   const [enrollmentFeeDraftError, setEnrollmentFeeDraftError] = useState("");
   const [enrollmentActionMode, setEnrollmentActionMode] =
@@ -1570,27 +1753,28 @@ function StudentFormDialog({
   const [draftTransferTargetClassIds, setDraftTransferTargetClassIds] = useState<string[]>([]);
   const [transferError, setTransferError] = useState("");
   const [isEnrollmentTransferOpen, setIsEnrollmentTransferOpen] = useState(false);
-  const [datePickerTarget, setDatePickerTarget] = useState<"initial" | "shared" | null>(null);
-  const dialogRef = useRef<HTMLDivElement>(null);
-  const previouslyFocusedElement = useRef<HTMLElement | null>(null);
+  const [datePickerTarget, setDatePickerTarget] = useState<"initial" | `enrollment:${string}` | null>(null);
+  const [selectedSlotIds, setSelectedSlotIds] = useState<string[]>([]);
+  const currentClass = useMemo(
+    () => classes.find((class_) => class_.id === currentClassId) ?? null,
+    [classes, currentClassId],
+  );
   const initialCreateFormKeyRef = useRef(normalizedStudentCreateFormKey(defaultStudentValues));
 
   useEffect(() => {
     setMounted(true);
-
-    previouslyFocusedElement.current = document.activeElement as HTMLElement | null;
-    const previousBodyOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const focusFrame = window.requestAnimationFrame(() => {
-      dialogRef.current?.querySelector<HTMLElement>("[data-dialog-initial-focus]")?.focus();
-    });
-
-    return () => {
-      window.cancelAnimationFrame(focusFrame);
-      document.body.style.overflow = previousBodyOverflow;
-      previouslyFocusedElement.current?.focus();
-    };
   }, []);
+
+  // R6-D09: mặc định chọn toàn bộ buổi của lớp khi mở form tạo (bắt user review).
+  useEffect(() => {
+    if (student) return;
+    const defaultSlotIds =
+      currentClass?.schedule?.slots
+        ?.filter((slot) => slot.id)
+        .map((slot) => slot.id as string) ?? [];
+    setSelectedSlotIds(defaultSlotIds);
+  }, [currentClass, student]);
+
   const {
     clearErrors,
     formState: { errors, isSubmitted },
@@ -1628,9 +1812,9 @@ function StudentFormDialog({
           notes: student.notes ?? "",
           hidden_fields: student.hidden_fields ?? [],
           custom_fee: null,
-          enrollment_date: getTodayInputValue(),
+          enrollment_date: getDefaultEnrollmentDate(currentClass),
         }
-      : { ...defaultStudentValues, enrollment_date: getTodayInputValue() };
+      : { ...defaultStudentValues, enrollment_date: getDefaultEnrollmentDate(currentClass) };
 
     if (!student) {
       initialCreateFormKeyRef.current = normalizedStudentCreateFormKey(nextValues);
@@ -1639,7 +1823,7 @@ function StudentFormDialog({
     reset(nextValues);
     setEnrollmentFeeDraftError("");
     resetFeedback();
-  }, [reset, resetFeedback, student]);
+  }, [currentClass, reset, resetFeedback, student]);
 
   useEffect(() => {
     if (!student) {
@@ -1677,7 +1861,6 @@ function StudentFormDialog({
     activeEnrollments.find((enrollment) => enrollment.class_id === currentClassId) ??
     activeEnrollments[0] ??
     null;
-  const sharedEnrollmentDate = getSharedEnrollmentDate(activeEnrollments, enrollmentFees);
   const activeEnrollmentClassIds = new Set(activeEnrollments.map((enrollment) => enrollment.class_id));
   const availableTransferClasses = classes.filter((class_) => {
     if (!student || !class_.is_active) {
@@ -1732,12 +1915,14 @@ function StudentFormDialog({
   const hiddenFields = watch("hidden_fields");
   const studentContactSuggestion = useContactPairSuggestion({
     enabled: !hiddenFields.includes("student_contact"),
+    localSources: contactSuggestionSources,
     owner: "student",
     phoneValue: studentPhoneValue,
     zaloValue: studentZaloValue,
   });
   const parentContactSuggestion = useContactPairSuggestion({
     enabled: !hiddenFields.includes("parent_contact"),
+    localSources: contactSuggestionSources,
     owner: "parent",
     phoneValue: parentPhoneValue,
     zaloValue: parentZaloValue,
@@ -1854,7 +2039,7 @@ function StudentFormDialog({
   }
 
   function acceptContactSuggestion(
-    owner: ContactOwner,
+    owner: Exclude<ContactSuggestionOwner, "staff">,
     suggestion: ContactPairSuggestion | null,
   ) {
     if (!suggestion) {
@@ -1874,7 +2059,15 @@ function StudentFormDialog({
     ].filter(Boolean));
   }
 
-  function requestClose() {
+  function smartRequestClose() {
+    if (datePickerTarget) {
+      setDatePickerTarget(null);
+      return;
+    }
+    if (isEnrollmentTransferOpen) {
+      closeEnrollmentTransfer();
+      return;
+    }
     if (!isSaving) {
       onClose();
     }
@@ -1892,82 +2085,88 @@ function StudentFormDialog({
     setIsEnrollmentTransferOpen(false);
   }
 
-  function handleDialogKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      if (datePickerTarget) {
-        setDatePickerTarget(null);
-      } else if (isEnrollmentTransferOpen) {
-        closeEnrollmentTransfer();
-      } else {
-        requestClose();
-      }
-      return;
-    }
-
-    if (event.key !== "Tab" || !dialogRef.current) {
-      return;
-    }
-
-    const focusableElements = Array.from(
-      dialogRef.current.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      ),
-    ).filter(
-      (element) => element.offsetParent !== null && !element.closest("[inert]"),
-    );
-    const firstElement = focusableElements[0];
-    const lastElement = focusableElements.at(-1);
-    if (!firstElement || !lastElement) {
-      return;
-    }
-
-    if (event.shiftKey && document.activeElement === firstElement) {
-      event.preventDefault();
-      lastElement.focus();
-    } else if (!event.shiftKey && document.activeElement === lastElement) {
-      event.preventDefault();
-      firstElement.focus();
-    }
-  }
-
   if (!mounted) return null;
 
-  return createPortal(
-    <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 px-0 sm:items-center sm:px-4"
-      onKeyDown={handleDialogKeyDown}
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) {
-          mouseDownOnBackdrop.current = true;
-        } else {
-          mouseDownOnBackdrop.current = false;
-        }
+  return (
+    <FormDialogShell
+      title={student ? "Chỉnh sửa học viên" : "Thêm học viên"}
+      width={student ? "lg" : "standard"}
+      isBusy={isSaving}
+      dirty={hasUnsavedChanges}
+      onClose={smartRequestClose}
+      suspended={isEnrollmentTransferOpen || datePickerTarget !== null}
+      frameProps={{
+        className: student ? undefined : createEntityDialogFrameClassName,
+        inert: isEnrollmentTransferOpen || datePickerTarget !== null,
       }}
-      onMouseUp={(e) => {
-        if (mouseDownOnBackdrop.current && e.target === e.currentTarget) {
-          if (!isSaving) {
-            requestClose();
-          }
-        }
-        mouseDownOnBackdrop.current = false;
-      }}
-    >
-      <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="student-dialog-title"
-        aria-busy={isSaving}
-        className="relative flex h-[100dvh] max-h-[100dvh] w-full flex-col overflow-hidden rounded-t-xl bg-white shadow-xl sm:h-fit sm:max-h-[calc(100dvh-32px)] sm:max-w-[544px] sm:rounded-xl"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="contents" inert={isEnrollmentTransferOpen || datePickerTarget !== null}>
-          <DialogHeader
-            title={student ? "Chỉnh sửa học viên" : "Thêm học viên"}
-            isSaving={isSaving}
-            onClose={requestClose}
+      overlayExtra={
+        <>
+          {student ? (
+            <EnrollmentTransferSlide
+              availableClasses={availableTransferClasses}
+              currentClassId={currentClassId}
+              transferError={transferError}
+              isOpen={isEnrollmentTransferOpen}
+              mode={draftEnrollmentActionMode}
+              selectedClasses={draftSelectedTransferClasses}
+              onAddClass={(classId) => {
+                setTransferError("");
+                setDraftTransferTargetClassIds((current) =>
+                  current.includes(classId) ? current : [...current, classId],
+                );
+              }}
+              onClose={closeEnrollmentTransfer}
+              onConfirm={() => {
+                if (draftEnrollmentActionMode === "transfer" && draftTransferTargetClassIds.length === 0) {
+                  setTransferError("Vui lòng chọn ít nhất một lớp mới để chuyển học viên.");
+                  return;
+                }
+                setEnrollmentActionMode(draftEnrollmentActionMode);
+                setTransferTargetClassIds([...draftTransferTargetClassIds]);
+                setTransferError("");
+                setIsEnrollmentTransferOpen(false);
+              }}
+              onModeChange={(mode) => {
+                setTransferError("");
+                setDraftEnrollmentActionMode(mode);
+              }}
+              onRemoveClass={(classId) =>
+                setDraftTransferTargetClassIds((current) => current.filter((id) => id !== classId))
+              }
+            />
+          ) : null}
+
+          <DatePickerSlide
+            isOpen={datePickerTarget !== null}
+            onClose={() => setDatePickerTarget(null)}
+            currentValue={getDatePickerCurrentValue(datePickerTarget, watch("enrollment_date"), activeEnrollments, enrollmentFees)}
+            minDate={getEnrollmentDateBounds(datePickerTarget, currentClass, activeEnrollments).minDate}
+            maxDate={getEnrollmentDateBounds(datePickerTarget, currentClass, activeEnrollments).maxDate}
+            onSelectDate={(dateStr) => {
+              if (datePickerTarget === "initial") {
+                markInput("enrollment_date", dateStr);
+                setValue("enrollment_date", dateStr, {
+                  shouldDirty: true,
+                  shouldValidate: true,
+                });
+                return;
+              }
+
+              if (datePickerTarget?.startsWith("enrollment:")) {
+                const enrollmentId = datePickerTarget.slice("enrollment:".length);
+                setEnrollmentFees((current) => ({
+                  ...current,
+                  [enrollmentId]: {
+                    ...(current[enrollmentId] ?? { custom_fee: null, enrollment_date: null }),
+                    enrollment_date: dateStr,
+                  },
+                }));
+              }
+            }}
           />
+        </>
+      }
+    >
           <form
           {...noSavedInfoFormProps}
           noValidate
@@ -1978,103 +2177,8 @@ function StudentFormDialog({
               if (target.tagName === "INPUT") {
                 e.preventDefault();
               }
-            } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-              const activeEl = document.activeElement as HTMLElement;
-              if (activeEl && (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA")) {
-                const rowAttr = activeEl.getAttribute("data-row");
-                if (rowAttr !== null) {
-                  e.preventDefault();
-                  const currentRow = parseInt(rowAttr, 10);
-                  const currentCol = parseInt(activeEl.getAttribute("data-col") || "0", 10);
-                  const form = e.currentTarget;
-                  const inputs = Array.from(
-                    form.querySelectorAll("input[data-row], textarea[data-row]"),
-                  ) as Array<HTMLInputElement | HTMLTextAreaElement>;
-
-                  const rowMap: Record<number, Array<HTMLInputElement | HTMLTextAreaElement>> = {};
-                  inputs.forEach((input) => {
-                    const r = parseInt(input.getAttribute("data-row") || "0", 10);
-                    if (!rowMap[r]) rowMap[r] = [];
-                    rowMap[r].push(input);
-                  });
-
-                  Object.keys(rowMap).forEach((r) => {
-                    rowMap[Number(r)].sort((a, b) => {
-                      const colA = parseInt(a.getAttribute("data-col") || "0", 10);
-                      const colB = parseInt(b.getAttribute("data-col") || "0", 10);
-                      if (colA !== colB) return colA - colB;
-                      return 0;
-                    });
-                  });
-
-                  const availableRows = Object.keys(rowMap)
-                    .map(Number)
-                    .sort((a, b) => a - b);
-
-                  const currentRowIndex = availableRows.indexOf(currentRow);
-                  if (currentRowIndex !== -1) {
-                    let targetRow: number | null = null;
-                    if (e.key === "ArrowDown") {
-                      if (currentRowIndex < availableRows.length - 1) {
-                        targetRow = availableRows[currentRowIndex + 1];
-                      }
-                    } else {
-                      if (currentRowIndex > 0) {
-                        targetRow = availableRows[currentRowIndex - 1];
-                      }
-                    }
-
-                    if (targetRow !== null) {
-                      const targetInputs = rowMap[targetRow];
-                      let targetInput = targetInputs.find(
-                        (input) => parseInt(input.getAttribute("data-col") || "0", 10) === currentCol
-                      );
-                      if (!targetInput) {
-                        targetInput = targetInputs[0];
-                      }
-                      if (targetInput) {
-                        targetInput.focus();
-                        const valLen = targetInput.value.length;
-                        targetInput.setSelectionRange(valLen, valLen);
-                      }
-                    }
-                  }
-                }
-              }
-            } else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-              const activeEl = document.activeElement as HTMLInputElement;
-              if (activeEl && activeEl.tagName === "INPUT" && activeEl.hasAttribute("data-row")) {
-                const rowAttr = activeEl.getAttribute("data-row");
-                const colAttr = activeEl.getAttribute("data-col");
-                if (rowAttr !== null && colAttr !== null) {
-                  const currentRow = parseInt(rowAttr, 10);
-                  const isAtStart = activeEl.selectionStart === 0 && activeEl.selectionEnd === 0;
-                  const isAtEnd = activeEl.selectionStart === activeEl.value.length;
-
-                  if (e.key === "ArrowLeft" && isAtStart) {
-                    const form = e.currentTarget;
-                    const siblings = Array.from(form.querySelectorAll(`input[data-row="${currentRow}"]`)) as HTMLInputElement[];
-                    const currentIndex = siblings.indexOf(activeEl);
-                    if (currentIndex > 0) {
-                      e.preventDefault();
-                      const targetInput = siblings[currentIndex - 1];
-                      targetInput.focus();
-                      const valLen = targetInput.value.length;
-                      targetInput.setSelectionRange(valLen, valLen);
-                    }
-                  } else if (e.key === "ArrowRight" && isAtEnd) {
-                    const form = e.currentTarget;
-                    const siblings = Array.from(form.querySelectorAll(`input[data-row="${currentRow}"]`)) as HTMLInputElement[];
-                    const currentIndex = siblings.indexOf(activeEl);
-                    if (currentIndex !== -1 && currentIndex < siblings.length - 1) {
-                      e.preventDefault();
-                      const targetInput = siblings[currentIndex + 1];
-                      targetInput.focus();
-                      targetInput.setSelectionRange(0, 0);
-                    }
-                  }
-                }
-              }
+            } else if (moveFocusByFormArrow(e)) {
+              return;
             }
           }}
           onSubmit={(event) => {
@@ -2104,19 +2208,18 @@ function StudentFormDialog({
               }
 
               setTransferError("");
-              onSubmit(values, enrollmentFees, enrollmentActionPlan);
+              onSubmit(values, enrollmentFees, enrollmentActionPlan, selectedSlotIds);
             })(event);
           }}
         >
-          <div className="min-h-0 flex-1 overflow-hidden px-4 py-3 sm:px-5">
-            <div className="space-y-3">
-                <section>
+          <FormDialogBody>
+                <FormSection label="Hồ sơ học viên" order={1}>
                   <div className="grid gap-x-3 gap-y-2 sm:grid-cols-2">
-              <Field controlId="student-full-name" label="Họ và tên" error={fullNameError} errorId="student-full-name-error">
+              <FormField controlId="student-full-name" label="Họ và tên" error={fullNameError} errorId="student-full-name-error">
                 <input
                   {...fullNameField}
                   id="student-full-name"
-                  data-dialog-initial-focus
+                  data-dialog-autofocus
                   aria-invalid={Boolean(fullNameError)}
                   aria-describedby={fullNameError ? "student-full-name-error" : undefined}
                   autoComplete={savedInfoAutocomplete.disabled}
@@ -2125,7 +2228,7 @@ function StudentFormDialog({
                   data-row={0}
                   data-col={0}
                 />
-              </Field>
+              </FormField>
               <BirthDateInput
                 value={watch("birth_date") ?? null}
                 onChange={(val) => {
@@ -2143,7 +2246,7 @@ function StudentFormDialog({
                 isContentHidden={hiddenFields.includes("birth_date")}
               />
               <div>
-                <Field controlId="student-school" label="Trường" error={schoolError} errorId="student-school-error">
+                <FormField controlId="student-school" label="Trường" error={schoolError} errorId="student-school-error">
                   <div className="relative">
                     <input
                       {...schoolField}
@@ -2163,11 +2266,11 @@ function StudentFormDialog({
                       </div>
                     ) : null}
                   </div>
-                </Field>
+                </FormField>
               </div>
               {student && primaryEnrollment ? (
                 <div>
-                  <Field
+                  <FormField
                     controlId="student-enrollment-custom-fee"
                     label="Học phí riêng"
                     error={visibleEnrollmentFeeDraftError}
@@ -2212,10 +2315,10 @@ function StudentFormDialog({
                       isContentHidden={hiddenFields.includes("custom_fee")}
                       trailingControl={renderPrivacyToggle("custom_fee", "Học phí riêng")}
                     />
-                  </Field>
+                  </FormField>
                 </div>
               ) : (
-                <Field controlId="student-custom-fee" label="Học phí riêng" error={customFeeError} errorId="student-custom-fee-error">
+                <FormField controlId="student-custom-fee" label="Học phí riêng" error={customFeeError} errorId="student-custom-fee-error">
                   <SmartMoneyInput
                     id="student-custom-fee"
                     ariaInvalid={Boolean(customFeeError)}
@@ -2244,12 +2347,12 @@ function StudentFormDialog({
                     dataRow={1}
                     dataCol={1}
                   />
-                </Field>
+                </FormField>
               )}
                   </div>
-                </section>
+                </FormSection>
 
-                <section className="border-t border-gray-100 pt-3">
+                <FormSection label="Thông tin liên hệ" order={2}>
                   <div className="grid gap-x-3 gap-y-2 sm:grid-cols-2">
                     <StudentContactFields
                       zaloField={studentZaloField}
@@ -2260,7 +2363,7 @@ function StudentFormDialog({
                       onAcceptSuggestion={() =>
                         acceptContactSuggestion("student", studentContactSuggestion)
                       }
-                      privacyToggle={renderPrivacyToggle("student_contact", "Thông tin học viên")}
+                      privacyToggle={renderPrivacyToggle("student_contact", "Liên hệ học viên")}
                       isContentHidden={hiddenFields.includes("student_contact")}
                     />
                     <ParentContactFields
@@ -2272,13 +2375,13 @@ function StudentFormDialog({
                       onAcceptSuggestion={() =>
                         acceptContactSuggestion("parent", parentContactSuggestion)
                       }
-                      privacyToggle={renderPrivacyToggle("parent_contact", "Thông tin phụ huynh")}
+                      privacyToggle={renderPrivacyToggle("parent_contact", "Liên hệ phụ huynh")}
                       isContentHidden={hiddenFields.includes("parent_contact")}
                     />
                   </div>
-                </section>
+                </FormSection>
 
-              <section className={`border-t border-gray-100 ${student ? "pt-4" : "pt-3"}`}>
+              <FormSection label="Quá trình học" order={3}>
                 <div className="w-full">
             {!student ? (
               <InitialEnrollmentFields
@@ -2286,6 +2389,22 @@ function StudentFormDialog({
                 error={enrollmentDateError}
                 onBlur={() => markBlur("enrollment_date")}
                 onEnrollmentDateClick={() => setDatePickerTarget("initial")}
+              />
+            ) : null}
+
+            {!student ? (
+              <SessionSelector
+                class_={currentClass}
+                selectedSlotIds={selectedSlotIds}
+                onChange={setSelectedSlotIds}
+              />
+            ) : null}
+
+            {!student ? (
+              <SessionSelector
+                class_={currentClass}
+                selectedSlotIds={selectedSlotIds}
+                onChange={setSelectedSlotIds}
               />
             ) : null}
 
@@ -2297,14 +2416,14 @@ function StudentFormDialog({
                 onTransferOpen={openEnrollmentTransfer}
                 enrollmentActionMode={enrollmentActionMode}
                 selectedTransferClasses={selectedTransferClasses}
-                sharedEnrollmentDate={sharedEnrollmentDate}
-                onEnrollmentDateClick={() => setDatePickerTarget("shared")}
+                enrollmentFees={enrollmentFees}
+                onEnrollmentDateClick={(enrollmentId) => setDatePickerTarget(`enrollment:${enrollmentId}`)}
                 privacyToggle={renderPrivacyToggle("enrollment_date", "Ngày bắt đầu")}
               />
             ) : null}
 
                 <div className="mt-2">
-                  <Field controlId="student-notes" label="Ghi chú" error={notesError} errorId="student-notes-error">
+                  <FormField controlId="student-notes" label="Ghi chú" error={notesError} errorId="student-notes-error">
                     <div className="relative">
                       <textarea
                         {...notesField}
@@ -2326,95 +2445,39 @@ function StudentFormDialog({
                         </div>
                       ) : null}
                     </div>
-                  </Field>
+                  </FormField>
                 </div>
                 </div>
-              </section>
-            </div>
-          </div>
+              </FormSection>
+          </FormDialogBody>
 
-            {shouldShowUnsavedNotice ? (
-              <div className="shrink-0 px-4 pb-3 sm:px-5">
+          <FormDialogFooter
+            left={
+              shouldShowUnsavedNotice ? (
                 <UnsavedChangesNotice
                   hasChanges={hasUnsavedChanges}
                   hasErrors={unsavedNoticeHasErrors}
                   isSaving={isSaving}
                 />
-              </div>
-            ) : null}
-            <DialogActions
-              disabled={Boolean(student && !hasUnsavedChanges)}
-              isSaving={isSaving}
-              onClose={requestClose}
-            />
-          </form>
-        </div>
-
-        {student ? (
-          <EnrollmentTransferSlide
-            availableClasses={availableTransferClasses}
-            currentClassId={currentClassId}
-            transferError={transferError}
-            isOpen={isEnrollmentTransferOpen}
-            mode={draftEnrollmentActionMode}
-            selectedClasses={draftSelectedTransferClasses}
-            onAddClass={(classId) => {
-              setTransferError("");
-              setDraftTransferTargetClassIds((current) =>
-                current.includes(classId) ? current : [...current, classId],
-              );
-            }}
-            onClose={closeEnrollmentTransfer}
-            onConfirm={() => {
-              if (draftEnrollmentActionMode === "transfer" && draftTransferTargetClassIds.length === 0) {
-                setTransferError("Vui lòng chọn ít nhất một lớp mới để chuyển học viên.");
-                return;
-              }
-              setEnrollmentActionMode(draftEnrollmentActionMode);
-              setTransferTargetClassIds([...draftTransferTargetClassIds]);
-              setTransferError("");
-              setIsEnrollmentTransferOpen(false);
-            }}
-            onModeChange={(mode) => {
-              setTransferError("");
-              setDraftEnrollmentActionMode(mode);
-            }}
-            onRemoveClass={(classId) =>
-              setDraftTransferTargetClassIds((current) => current.filter((id) => id !== classId))
+              ) : null
+            }
+            right={
+              <>
+                <Button type="button" variant="outline" className="h-8 rounded-md px-3 text-sm" disabled={isSaving} onClick={smartRequestClose}>
+                  Huỷ
+                </Button>
+                <SaveButton
+                  type="submit"
+                  isSaving={isSaving}
+                  disabled={Boolean(student && !hasUnsavedChanges)}
+                />
+              </>
             }
           />
-        ) : null}
-
-        <DatePickerSlide
-          isOpen={datePickerTarget !== null}
-          onClose={() => setDatePickerTarget(null)}
-          currentValue={
-            datePickerTarget === "initial"
-              ? watch("enrollment_date") ?? undefined
-              : sharedEnrollmentDate ?? undefined
-          }
-          onSelectDate={(dateStr) => {
-            if (datePickerTarget === "initial") {
-              markInput("enrollment_date", dateStr);
-              setValue("enrollment_date", dateStr, {
-                shouldDirty: true,
-                shouldValidate: true,
-              });
-              return;
-            }
-
-            if (datePickerTarget === "shared") {
-              setEnrollmentFees((current) =>
-                applySharedEnrollmentDate(activeEnrollments, current, dateStr),
-              );
-            }
-          }}
-        />
-      </div>
-    </div>,
-    document.body
-  );
-}
+        </form>
+      </FormDialogShell>
+    );
+  }
 
 function PrivacyToggleButton({
   field,
@@ -2466,7 +2529,7 @@ function InitialEnrollmentFields({
 }) {
   return (
     <div>
-      <Field
+      <FormField
         error={error}
         errorId="initial-enrollment-date-error"
         label="Ngày bắt đầu"
@@ -2476,7 +2539,7 @@ function InitialEnrollmentFields({
           type="button"
           onBlur={onBlur}
           onClick={onEnrollmentDateClick}
-          className={`${datePickerButtonClassName} ${error ? "border-red-400 ring-2 ring-red-100" : ""}`}
+          className={`${datePickerButtonClassName} ${error ? "border-destructive ring-2 ring-destructive/15" : ""}`}
           aria-haspopup="dialog"
           data-invalid={error ? "true" : undefined}
           aria-describedby={error ? "initial-enrollment-date-error" : undefined}
@@ -2484,7 +2547,71 @@ function InitialEnrollmentFields({
         >
           <span id="initial-enrollment-date-value">{formatDate(enrollmentDateValue)}</span>
         </button>
-      </Field>
+      </FormField>
+    </div>
+  );
+}
+
+function SessionSelector({
+  class_,
+  selectedSlotIds,
+  onChange,
+}: {
+  class_: ClassResponse | null;
+  selectedSlotIds: string[];
+  onChange: (slotIds: string[]) => void;
+}) {
+  const slots = class_?.schedule?.slots?.filter((slot) => slot.id) ?? [];
+  if (class_ === null || slots.length === 0) {
+    return null;
+  }
+  const availableIds = slots.map((slot) => slot.id as string);
+  const allSelected = availableIds.every((id) => selectedSlotIds.includes(id));
+  const noneSelected = selectedSlotIds.length === 0;
+
+  return (
+    <div className="mt-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="table-heading-text text-gray-600">Chọn buổi học trong tuần ({slots.length} buổi)</p>
+        <button
+          type="button"
+          className="h-7 rounded-md px-2 text-xs font-medium text-primary hover:bg-primary-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+          onClick={() => onChange(allSelected ? [] : availableIds)}
+        >
+          {allSelected ? "Bỏ chọn tất cả" : "Chọn tất cả"}
+        </button>
+      </div>
+      <div role="group" aria-label="Chọn buổi học trong tuần" className="mt-2 flex flex-wrap gap-2">
+        {slots.map((slot) => {
+          const id = slot.id as string;
+          const checked = selectedSlotIds.includes(id);
+          return (
+            <button
+              key={id}
+              type="button"
+              role="checkbox"
+              aria-checked={checked}
+              aria-label={`${slot.day} ${slot.start}–${slot.end}`}
+              onClick={() =>
+                onChange(checked ? selectedSlotIds.filter((item) => item !== id) : [...selectedSlotIds, id])
+              }
+              className={`inline-flex min-h-8 items-center gap-1.5 rounded-md border px-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 ${
+                checked
+                  ? "border-primary bg-primary-soft text-primary"
+                  : "border-gray-200 bg-white text-gray-600 hover:border-primary/40 hover:bg-primary-soft/40"
+              }`}
+            >
+              <span aria-hidden="true">{checked ? "✓" : ""}</span>
+              {slot.day} {slot.start}–{slot.end}
+            </button>
+          );
+        })}
+      </div>
+      {noneSelected ? (
+        <p className="helper-text mt-1 text-amber-700" role="alert">
+          Vui lòng chọn ít nhất một buổi học.
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -2598,7 +2725,7 @@ function EnrollmentTransferSlide({
         className={`relative z-10 flex h-full w-full flex-col bg-white shadow-2xl transition-transform motion-reduce:transition-none sm:w-[78vw] lg:w-[70vw] xl:w-[64vw] 2xl:w-[58vw] ${isOpen ? "translate-x-0" : "translate-x-full"
           }`}
       >
-        <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4">
+        <div className="flex items-center justify-between border-b border-primary/15 bg-primary-soft/60 px-5 py-3.5">
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -2606,11 +2733,11 @@ function EnrollmentTransferSlide({
               aria-label="Đóng phần chuyển hoặc thêm lớp"
               title="Đóng"
               onClick={onClose}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-500 transition hover:bg-primary-soft hover:text-primary"
             >
               <ArrowLeft className="h-4 w-4" aria-hidden="true" />
             </button>
-            <h3 id="enrollment-transfer-title" className="text-base font-semibold text-gray-900">Chuyển / thêm lớp</h3>
+            <h3 id="enrollment-transfer-title" className="section-title-text text-primary">Chuyển / thêm lớp</h3>
           </div>
 
         </div>
@@ -2636,8 +2763,8 @@ function EnrollmentTransferSlide({
                           aria-pressed={selected}
                           onClick={() => onModeChange(option.value)}
                           className={`whitespace-nowrap rounded-[5px] px-2 text-sm font-medium transition-colors sm:px-3 ${selected
-                            ? "bg-gray-900 text-white"
-                            : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                            ? "bg-primary text-primary-foreground"
+                            : "text-gray-600 hover:bg-primary-soft hover:text-primary"
                             }`}
                         >
                           {option.label}
@@ -2670,13 +2797,13 @@ function EnrollmentTransferSlide({
                 </div>
 
                 {mode === "transfer" && currentClassId ? (
-                  <p className="w-full whitespace-nowrap text-center text-sm text-gray-500">
-                    * Lưu xong, học viên sẽ rời lớp hiện tại.
-                  </p>
+                  <FormNotice>
+                    Lưu xong, học viên sẽ rời lớp hiện tại.
+                  </FormNotice>
                 ) : null}
 
                 {transferError ? (
-                  <p id="enrollment-transfer-error" role="alert" className="text-sm text-red-600">
+                  <p id="enrollment-transfer-error" role="alert" className="text-sm text-destructive">
                     {transferError}
                   </p>
                 ) : null}
@@ -2703,7 +2830,7 @@ function EnrollmentTransferSlide({
                   <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                     {sortedAvailableClasses.map((class_) => {
                       const selected = selectedClasses.some((item) => item.id === class_.id);
-                      const group = getClassGroupInfo(class_.name);
+                      const group = getClassGroupInfoForRecord(class_);
                       const backgroundColor = selected
                         ? `color-mix(in srgb, ${group.color.background} 62%, ${group.color.border})`
                         : group.color.background;
@@ -2732,7 +2859,7 @@ function EnrollmentTransferSlide({
                             </span>
                           </div>
                           <p className="mt-2 text-sm opacity-85">
-                            {formatCurrencyVnd(class_.base_fee)} / {getBillingLabel(class_)}
+                            {formatCurrencyVnd(class_.base_fee)} / {getClassBillingDurationLabel(class_)}
                           </p>
                         </button>
                       );
@@ -2744,10 +2871,10 @@ function EnrollmentTransferSlide({
           </div>
         </div>
 
-        <div className="border-t border-gray-200 bg-gray-50 p-4">
+        <div className="border-t border-gray-200 bg-gray-100 p-4">
           <Button
             type="button"
-            className="w-full rounded-md bg-gray-950 text-white hover:bg-black"
+            className="w-full rounded-md bg-primary text-primary-foreground hover:bg-primary/90"
             onClick={onConfirm}
             aria-describedby={transferError ? "enrollment-transfer-error" : undefined}
           >
@@ -2766,7 +2893,7 @@ function SelectedClassChip({
   class_: ClassResponse;
   onRemove: () => void;
 }) {
-  const group = getClassGroupInfo(class_.name);
+  const group = getClassGroupInfoForRecord(class_);
 
   return (
     <button
@@ -2792,19 +2919,19 @@ function EnrollmentFeeSection({
   isLoading,
   onTransferOpen,
   onEnrollmentDateClick,
+  enrollmentFees,
   privacyToggle,
   selectedTransferClasses,
-  sharedEnrollmentDate,
 }: {
   currentClassId: string | null;
   enrollmentActionMode: EnrollmentActionMode;
   enrollments: StudentEnrollmentInfo[];
   isLoading: boolean;
   onTransferOpen: () => void;
-  onEnrollmentDateClick: () => void;
+  onEnrollmentDateClick: (enrollmentId: string) => void;
+  enrollmentFees: EnrollmentFeeValues;
   privacyToggle?: React.ReactNode;
   selectedTransferClasses: ClassResponse[];
-  sharedEnrollmentDate: string | null;
 }) {
   const sortedEnrollments = useMemo(() => {
     return [...enrollments].sort((left, right) => {
@@ -2861,11 +2988,15 @@ function EnrollmentFeeSection({
                 {sortedEnrollments.length > 0 ? (
                   <>
                     {visibleEnrollments.map((enrollment) => {
-                      const color = getClassGroupInfo(enrollment.class_name).color;
+                      const color = getClassGroupInfoForRecord({
+                        name: enrollment.class_name,
+                        class_category: enrollment.class_category,
+                        grade_level: enrollment.class_grade_level,
+                      } as ClassResponse).color;
                       return (
                         <span
                           key={enrollment.id}
-                          className="inline-flex h-7 select-text items-center rounded-md border px-2 text-[13px] font-medium"
+                          className="inline-flex h-7 select-text items-center rounded-md border px-2 text-[13px] font-semibold"
                           style={{
                             backgroundColor: color.background,
                             borderColor: color.border,
@@ -2902,32 +3033,29 @@ function EnrollmentFeeSection({
             ) : null}
           </div>
 
-          {enrollments.length > 0 ? (
-            <div>
-              <Field label="Ngày bắt đầu" labelId="shared-enrollment-date-label">
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={onEnrollmentDateClick}
-                    className={`${datePickerButtonClassName} ${privacyToggle ? "!pr-10" : ""}`}
-                    aria-haspopup="dialog"
-                    aria-labelledby="shared-enrollment-date-label shared-enrollment-date-value"
-                    aria-describedby={enrollments.length > 1 ? "shared-enrollment-date-help" : undefined}
-                  >
-                    <span id="shared-enrollment-date-value">
-                      {sharedEnrollmentDate ? formatDate(sharedEnrollmentDate) : "Nhiều ngày khác nhau"}
-                    </span>
-                  </button>
-                  {privacyToggle ? (
-                    <div className="absolute inset-y-0 right-1 z-20 flex items-center">{privacyToggle}</div>
-                  ) : null}
-                </div>
-              </Field>
-              {enrollments.length > 1 ? (
-                <p id="shared-enrollment-date-help" className="helper-text mt-1 text-gray-500">
-                  Ngày mới sẽ áp dụng đồng thời cho tất cả {enrollments.length} lớp.
-                </p>
-              ) : null}
+          {sortedEnrollments.length > 0 ? (
+            <div className="grid gap-2 sm:grid-cols-2">
+              {sortedEnrollments.map((enrollment) => {
+                const value = enrollmentFees[enrollment.id]?.enrollment_date ?? enrollment.enrollment_date;
+                return (
+                  <FormField key={enrollment.id} label={`Ngày bắt đầu · ${enrollment.class_name}`} labelId={`enrollment-date-${enrollment.id}-label`}>
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => onEnrollmentDateClick(enrollment.id)}
+                        className={`${datePickerButtonClassName} ${privacyToggle ? "!pr-10" : ""}`}
+                        aria-haspopup="dialog"
+                        aria-labelledby={`enrollment-date-${enrollment.id}-label enrollment-date-${enrollment.id}-value`}
+                      >
+                        <span id={`enrollment-date-${enrollment.id}-value`}>{formatDate(value)}</span>
+                      </button>
+                      {privacyToggle ? (
+                        <div className="absolute inset-y-0 right-1 z-20 flex items-center">{privacyToggle}</div>
+                      ) : null}
+                    </div>
+                  </FormField>
+                );
+              })}
             </div>
           ) : null}
         </>
@@ -2937,17 +3065,27 @@ function EnrollmentFeeSection({
 }
 
 function RemoveFromClassDialog({
+  className,
   isDeleting,
   onClose,
   onConfirm,
   student,
 }: {
+  className: string;
   isDeleting: boolean;
   onClose: () => void;
   onConfirm: () => void;
   student: StudentResponse;
 }) {
   const [mounted, setMounted] = useState(false);
+  const titleId = useId();
+  const descriptionId = useId();
+  const isLastActiveClass = student.active_enrollments.length <= 1;
+  const { backdropPointerDownRef, dialogRef, requestClose } = useModalDialog({
+    isBusy: isDeleting,
+    onClose,
+  });
+
   useEffect(() => {
     setMounted(true);
   }, []);
@@ -2957,157 +3095,56 @@ function RemoveFromClassDialog({
   return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4"
-      onClick={() => {
-        if (!isDeleting) {
-          onClose();
+      onPointerDown={(event) => {
+        backdropPointerDownRef.current = event.target === event.currentTarget;
+      }}
+      onPointerUp={(event) => {
+        if (backdropPointerDownRef.current && event.target === event.currentTarget) {
+          requestClose();
         }
+        backdropPointerDownRef.current = false;
       }}
     >
       <div
+        ref={dialogRef}
         role="alertdialog"
         aria-modal="true"
-        aria-labelledby="remove-student-from-class-title"
-        aria-describedby="remove-student-from-class-description"
-        className="w-full max-w-md rounded-md bg-white p-5 shadow-xl"
-        onClick={(event) => event.stopPropagation()}
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+        aria-busy={isDeleting}
+        tabIndex={-1}
+        className="relative w-full max-w-md overflow-hidden rounded-xl bg-white shadow-xl"
       >
-        <h2 id="remove-student-from-class-title" className="section-title-text text-gray-900">Xoá khỏi lớp</h2>
-        <p id="remove-student-from-class-description" className="mt-2 text-sm leading-6 text-gray-600">
-          Bạn có chắc muốn xoá học viên {student.full_name} khỏi lớp này? Các lớp khác vẫn sẽ được giữ nguyên.
-        </p>
-        <div className="mt-5 flex justify-end gap-2">
-          <Button type="button" variant="outline" className="h-8 rounded-md px-3 text-sm" onClick={onClose}>
-            Huỷ
-          </Button>
-          <Button
-            type="button"
-            variant="destructive"
-            className="h-8 rounded-md bg-red-600 px-3 text-sm text-white hover:bg-red-700"
-            disabled={isDeleting}
-            onClick={onConfirm}
-          >
-            <LoadingLabel
-              label="Đang xoá"
-              isLoading={isDeleting}
-              idleLabel="Xoá khỏi lớp"
-            />
-          </Button>
+        <div className="border-b border-destructive/15 bg-destructive-soft/60 px-5 py-3.5">
+          <h2 id={titleId} className="section-title-text select-none text-destructive">Xoá khỏi lớp</h2>
+        </div>
+        <div className="p-5">
+          <p id={descriptionId} className="text-sm font-normal leading-6 text-gray-600">
+            Học viên <strong className="font-semibold text-gray-800">{student.full_name}</strong> sẽ
+            được xoá khỏi lớp <strong className="font-semibold text-gray-800">{className}</strong>.{" "}
+            {isLastActiveClass
+              ? "Đây là lớp đang học cuối cùng nên hồ sơ cũng sẽ được xoá khỏi danh sách học viên. Lịch sử học phí vẫn được giữ nguyên."
+              : "Hồ sơ và các lớp đang học khác vẫn được giữ nguyên."}
+          </p>
+          <div className="mt-5 flex justify-end gap-2">
+            <Button type="button" variant="outline" className="h-8 rounded-md px-3 text-sm" disabled={isDeleting} onClick={requestClose}>
+              Huỷ
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              className="h-8 rounded-md bg-destructive px-3 text-sm text-destructive-foreground hover:bg-destructive/90"
+              disabled={isDeleting}
+              onClick={onConfirm}
+              data-dialog-autofocus
+            >
+              {isDeleting ? <LoadingLabel label="Đang xoá" /> : "Xoá khỏi lớp"}
+            </Button>
+          </div>
         </div>
       </div>
     </div>,
     document.body
-  );
-}
-
-function DialogHeader({
-  isSaving,
-  onClose,
-  title,
-}: {
-  isSaving: boolean;
-  onClose: () => void;
-  title: string;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-4 border-b border-gray-200 py-3 pl-4 pr-4 sm:pl-5">
-      <h2 id="student-dialog-title" className="section-title-text min-w-0 text-gray-900">{title}</h2>
-      <button
-        type="button"
-        title="Đóng"
-        aria-label="Đóng"
-        disabled={isSaving}
-        onClick={onClose}
-        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        <X className="h-4 w-4" />
-      </button>
-    </div>
-  );
-}
-
-function DialogActions({
-  disabled,
-  isSaving,
-  onClose,
-  submitLabel = "Lưu",
-}: {
-  disabled?: boolean;
-  isSaving: boolean;
-  onClose: () => void;
-  submitLabel?: string;
-}) {
-  return (
-    <div className="flex shrink-0 justify-end gap-2 border-t border-gray-200 bg-gray-50 px-4 py-3 sm:px-5">
-      <Button type="button" variant="outline" className="h-8 rounded-md px-3 text-sm" disabled={isSaving} onClick={onClose}>
-        Huỷ
-      </Button>
-      <SaveButton
-        type="submit"
-        disabled={disabled}
-        idleLabel={submitLabel}
-        isSaving={isSaving}
-      />
-    </div>
-  );
-}
-
-function Field({
-  children,
-  controlId,
-  error,
-  errorId,
-  label,
-  labelId,
-}: {
-  children: React.ReactNode;
-  controlId?: string;
-  error?: string;
-  errorId?: string;
-  label: string;
-  labelId?: string;
-}) {
-  return (
-    <div className="block space-y-1">
-      {controlId ? (
-        <label htmlFor={controlId} className="form-label-text block select-none text-[15px] text-gray-700">
-          {label}
-        </label>
-      ) : (
-        <span id={labelId} className="form-label-text block select-none text-[15px] text-gray-700">
-          {label}
-        </span>
-      )}
-      {children}
-      {error ? <span id={errorId} role="alert" className="helper-text block text-red-600">{error}</span> : null}
-    </div>
-  );
-}
-
-function IconButton({
-  children,
-  label,
-  onClick,
-  tone = "default",
-}: {
-  children: React.ReactNode;
-  label: string;
-  onClick: () => void;
-  tone?: "default" | "danger";
-}) {
-  return (
-    <button
-      type="button"
-      title={label}
-      aria-label={label}
-      onClick={onClick}
-      className={
-        tone === "danger"
-          ? "inline-flex h-7 w-7 items-center justify-center rounded-md border border-red-600 bg-red-600 text-white hover:bg-red-700"
-          : "inline-flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50 hover:text-gray-900"
-      }
-    >
-      {children}
-    </button>
   );
 }
 
@@ -3147,7 +3184,11 @@ function normalizedStudentCreateFormKey(values: StudentFormValues) {
   });
 }
 
-function toStudentCreatePayload(values: StudentFormValues, classId: string) {
+function toStudentCreatePayload(
+  values: StudentFormValues,
+  classId: string,
+  selectedSlotIds: string[],
+) {
   return {
     ...toStudentPayload(values),
     class_id: classId,
@@ -3157,15 +3198,22 @@ function toStudentCreatePayload(values: StudentFormValues, classId: string) {
     parent_phone: normalizeOptionalText(values.parent_phone) ?? "",
     parent_zalo: normalizeOptionalText(values.parent_zalo) ?? "",
     enrollment_date: values.enrollment_date || getTodayInputValue(),
+    selected_slot_ids: selectedSlotIds,
   };
 }
 
 function getTodayInputValue() {
-  const today = new Date();
-  const year = today.getFullYear();
-  const month = String(today.getMonth() + 1).padStart(2, "0");
-  const day = String(today.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
+function getDefaultEnrollmentDate(class_: ClassResponse | null) {
+  const today = getTodayInputValue();
+  return class_?.start_date && class_.start_date > today ? class_.start_date : today;
 }
 
 function isValidBirthDate(value: string) {
@@ -3216,20 +3264,44 @@ function isValidVietnamMobilePhone(value: string) {
   return /^0(?:3|5|7|8|9)\d{8}$/.test(normalized);
 }
 
-function getSharedEnrollmentDate(
+function getDatePickerCurrentValue(
+  target: "initial" | `enrollment:${string}` | null,
+  initialValue: string | undefined,
   enrollments: StudentEnrollmentInfo[],
   feeValues: EnrollmentFeeValues,
 ) {
-  if (enrollments.length === 0) {
-    return null;
-  }
+  if (target === "initial") return initialValue;
+  if (!target?.startsWith("enrollment:")) return undefined;
+  const enrollmentId = target.slice("enrollment:".length);
+  const enrollment = enrollments.find((item) => item.id === enrollmentId);
+  return feeValues[enrollmentId]?.enrollment_date ?? enrollment?.enrollment_date ?? undefined;
+}
 
-  const dates = enrollments.map(
-    (enrollment) => feeValues[enrollment.id]?.enrollment_date ?? enrollment.enrollment_date ?? null,
-  );
+function getEnrollmentDateBounds(
+  target: "initial" | `enrollment:${string}` | null,
+  initialClass: ClassResponse | null,
+  enrollments: StudentEnrollmentInfo[],
+) {
+  const classRange = target === "initial"
+    ? initialClass
+    : enrollments.find((item) => target === `enrollment:${item.id}`);
+  const startDate = classRange && "start_date" in classRange
+    ? classRange.start_date
+    : classRange?.class_start_date;
+  const endDate = classRange && "end_date" in classRange
+    ? classRange.end_date
+    : classRange?.class_end_date;
+  if (!startDate || !endDate) return { minDate: undefined, maxDate: undefined };
+  return {
+    minDate: startDate,
+    maxDate: addIsoDays(endDate, -1),
+  };
+}
 
-  const firstDate = dates[0];
-  return dates.every((date) => date === firstDate) ? firstDate : null;
+function addIsoDays(value: string, amount: number) {
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day + amount));
+  return date.toISOString().slice(0, 10);
 }
 
 function compareStudentsByCreationOrder(left: StudentResponse, right: StudentResponse) {
@@ -3329,25 +3401,6 @@ function getCurrentMonthKey() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 }
 
-function getBillingLabel(class_: ClassResponse) {
-  return class_.type === "COURSE"
-    ? `${getCourseWeeks(class_.billing_cycle_months)} tuần`
-    : "1 tháng";
-}
-
-function getCourseWeeks(billingCycleMonths: number) {
-  if (billingCycleMonths === 2) {
-    return 8;
-  }
-  if (billingCycleMonths === 6) {
-    return 24;
-  }
-  if (billingCycleMonths === 12) {
-    return 48;
-  }
-  return 12;
-}
-
 function formatCurrencyVnd(value: number) {
   return `${value.toLocaleString("vi-VN")}đ`;
 }
@@ -3372,21 +3425,18 @@ function sanitizeFileName(value: string) {
     .replace(/\s+/g, "_");
 }
 
-const formControlBaseClassName =
-  "form-input-text h-8 w-full rounded-md border border-gray-200 bg-white px-3 outline-none focus:border-gray-400 focus:ring-2 focus:ring-gray-200";
-const inputClassName = `${formControlBaseClassName} select-text`;
-const datePickerButtonClassName = `${formControlBaseClassName} select-none text-left`;
+const inputClassName = `${formTextControlClassName} select-text`;
+const datePickerButtonClassName = `${formTextControlClassName} select-none text-left`;
 const numberInputClassName =
-  "form-input-text h-8 w-full rounded-md border border-gray-200 bg-white px-3 outline-none [appearance:textfield] focus:border-gray-400 focus:ring-2 focus:ring-gray-200 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none select-text";
+  cn(
+    formTextControlClassName,
+    "[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none",
+  );
 
 function getFormInputClass(hasError: boolean) {
-  return hasError
-    ? `${inputClassName} border-red-400 focus:border-red-500 focus:ring-red-100`
-    : inputClassName;
+  return cn(inputClassName, hasError && formTextControlErrorClassName);
 }
 
 function getNumberInputClass(hasError: boolean) {
-  return hasError
-    ? `${numberInputClassName} border-red-400 focus:border-red-500 focus:ring-red-100`
-    : numberInputClassName;
+  return cn(numberInputClassName, hasError && formTextControlErrorClassName);
 }

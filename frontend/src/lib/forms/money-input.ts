@@ -52,26 +52,43 @@ export function getFormattedMoneyCaretPosition(
 
 export function parseSmartMoneyInput(text: string): ParsedSmartMoney {
   const normalized = text.toLowerCase().replace(/\s+/g, "");
-  if (normalized.includes(",") || normalized.includes("k")) {
+  if (normalized.includes(",") || /[^0-9.trmk]/.test(normalized)) {
     return { value: null, preview: null };
   }
 
-  const splitMillionMatch = normalized.match(/^(\d+)tr(\d{1,3})$/);
+  const splitMillionMatch = normalized.match(/^(\d+)(?:tr|m)(\d{1,3})$/);
   if (splitMillionMatch) {
+    const wholeMillions = Number(splitMillionMatch[1]) * 1_000_000;
     const fractionalThousands = Number(splitMillionMatch[2].padEnd(3, "0")) * 1_000;
-    const value =
-      Number(splitMillionMatch[1]) * 1_000_000 +
-      fractionalThousands;
+    const value = wholeMillions + fractionalThousands;
     return { value, preview: formatMoneyInput(value) };
   }
 
-  const decimalMillionMatch = normalized.match(/^(\d+)(?:\.(\d{1,3}))?tr$/);
+  const decimalMillionMatch = normalized.match(/^(\d+)(?:\.(\d{1,3}))?(?:tr|m)$/);
   if (decimalMillionMatch) {
     const wholeMillions = Number(decimalMillionMatch[1]) * 1_000_000;
     const fractionalThousands = decimalMillionMatch[2]
       ? Number(decimalMillionMatch[2].padEnd(3, "0")) * 1_000
       : 0;
     const value = wholeMillions + fractionalThousands;
+    return { value, preview: formatMoneyInput(value) };
+  }
+
+  const splitThousandMatch = normalized.match(/^(\d+)k(\d{1,3})$/);
+  if (splitThousandMatch) {
+    const wholeThousands = Number(splitThousandMatch[1]) * 1_000;
+    const fractionalHundreds = Number(splitThousandMatch[2].padEnd(3, "0"));
+    const value = wholeThousands + fractionalHundreds;
+    return { value, preview: formatMoneyInput(value) };
+  }
+
+  const decimalThousandMatch = normalized.match(/^(\d+)(?:\.(\d{1,3}))?k$/);
+  if (decimalThousandMatch) {
+    const wholeThousands = Number(decimalThousandMatch[1]) * 1_000;
+    const fractionalHundreds = decimalThousandMatch[2]
+      ? Number(decimalThousandMatch[2].padEnd(3, "0"))
+      : 0;
+    const value = wholeThousands + fractionalHundreds;
     return { value, preview: formatMoneyInput(value) };
   }
 

@@ -1,4 +1,4 @@
-export type SettingsRoleKey = "dev" | "admin" | "viewer";
+export type SettingsRoleKey = "dev" | "admin" | "teacher" | "unknown";
 
 type RoleSource = {
   is_owner: boolean;
@@ -8,12 +8,15 @@ type RoleSource = {
 const ROLE_PRESENTATIONS = {
   dev: "Dev",
   admin: "Admin",
-  viewer: "Viewer",
+  teacher: "Giáo viên",
+  unknown: "Không xác định",
 } satisfies Record<SettingsRoleKey, string>;
 
 export function getSettingsRole(source: RoleSource): SettingsRoleKey {
   if (source.is_owner) return "dev";
-  return source.role === "admin" ? "admin" : "viewer";
+  if (source.role === "admin") return "admin";
+  if (source.role === "teacher") return "teacher";
+  return "unknown";
 }
 
 export function getSettingsRoleLabel(source: RoleSource) {

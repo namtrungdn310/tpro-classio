@@ -12,13 +12,22 @@ type ClassScheduleListProps = {
   variant?: "table" | "field";
 };
 
-const SCHEDULE_TYPOGRAPHY_CLASS =
+const SCHEDULE_FIELD_TYPOGRAPHY_CLASS =
   "font-body-ui text-[15px] font-medium leading-5";
+
+const SCHEDULE_DAY_CLASS =
+  "inline-flex max-w-full items-center justify-center whitespace-nowrap rounded-md bg-gray-100 px-1.5 py-0.5 font-body-ui text-[12px] font-semibold leading-4 text-gray-700";
+
+const SCHEDULE_TIME_CLASS =
+  "mt-0.5 block whitespace-nowrap font-body-ui text-[13px] font-medium leading-[18px] tabular-nums text-gray-700";
+
+const MAX_SCHEDULE_TRACKS = 4;
 
 /**
  * A compact schedule renderer shared by the classes table and class form.
- * Each session remains a distinct, familiar two-line unit while the neutral
- * background is limited to the day label instead of filling the whole card.
+ * The table variant always reserves four flexible tracks: one to four
+ * sessions sit on a single row in track order, and anything beyond four is
+ * surfaced as a data error instead of being trimmed.
  */
 export function ClassScheduleList({
   activeDay,
@@ -29,81 +38,107 @@ export function ClassScheduleList({
   const normalized = normalizeClassScheduleSlots(slots).filter(
     (slot) => !activeDay || slot.day === activeDay,
   );
-  const limit = normalizeLimit(maxVisibleSlots, normalized.length);
-  const hasOverflow = normalized.length > limit;
-  const visibleLimit = hasOverflow ? Math.max(0, limit - 1) : limit;
-  const visibleSlots = normalized.slice(0, visibleLimit);
-  const hiddenCount = normalized.length - visibleSlots.length;
   const fullLabel = getClassScheduleSlotsLabel(normalized);
 
   if (normalized.length === 0) {
     return null;
   }
 
+  if (variant === "field") {
+    const limit = normalizeLimit(maxVisibleSlots, normalized.length);
+    const hasOverflow = normalized.length > limit;
+    const visibleLimit = hasOverflow ? Math.max(0, limit - 1) : limit;
+    const visibleSlots = normalized.slice(0, visibleLimit);
+    const hiddenCount = normalized.length - visibleSlots.length;
+
+    return (
+      <span
+        role="list"
+        aria-label={`Lịch học: ${fullLabel}`}
+        title={fullLabel}
+        className="grid min-w-0 grid-cols-4 items-stretch gap-2 overflow-hidden"
+      >
+        {visibleSlots.map((slot) => (
+          <span
+            role="listitem"
+            aria-label={`${slot.day}, ${slot.start} đến ${slot.end}`}
+            key={`${slot.day}-${slot.start}-${slot.end}`}
+            className="grid min-w-0 grid-cols-[var(--inline-field-divider-width)_minmax(0,1fr)] items-center gap-x-2.5 py-0.5"
+          >
+            <ScheduleDivider variant={variant} />
+            <span className="min-w-0 text-center">
+              <span
+                className={`inline-flex max-w-full items-center justify-center whitespace-nowrap rounded-md bg-gray-100 px-2 py-0.5 text-gray-800 ${SCHEDULE_FIELD_TYPOGRAPHY_CLASS}`}
+              >
+                {slot.day}
+              </span>
+              <span
+                className={`mt-0.5 block whitespace-nowrap tabular-nums text-gray-800 ${SCHEDULE_FIELD_TYPOGRAPHY_CLASS}`}
+              >
+                {slot.start}–{slot.end}
+              </span>
+            </span>
+          </span>
+        ))}
+        {hiddenCount > 0 ? (
+          <span
+            role="listitem"
+            aria-label={`Còn ${hiddenCount} buổi học khác`}
+            className="grid min-w-0 grid-cols-[var(--inline-field-divider-width)_minmax(0,1fr)] items-center gap-x-2.5 py-0.5"
+          >
+            <ScheduleDivider variant={variant} />
+            <span className="min-w-0 text-center">
+              <span
+                className={`inline-flex max-w-full items-center justify-center whitespace-nowrap rounded-md bg-gray-100 px-2 py-0.5 text-gray-800 ${SCHEDULE_FIELD_TYPOGRAPHY_CLASS}`}
+              >
+                +{hiddenCount} ca
+              </span>
+              <span className={`mt-0.5 block whitespace-nowrap text-gray-500 ${SCHEDULE_FIELD_TYPOGRAPHY_CLASS}`}>
+                Còn lại
+              </span>
+            </span>
+          </span>
+        ) : null}
+      </span>
+    );
+  }
+
+  const visibleSlots = normalized.slice(0, MAX_SCHEDULE_TRACKS);
+  const overflowCount = normalized.length - visibleSlots.length;
+
   return (
     <span
       role="list"
       aria-label={`Lịch học: ${fullLabel}`}
       title={fullLabel}
-      className={
-        variant === "field"
-          ? "grid min-w-0 grid-cols-4 items-stretch gap-2 overflow-hidden"
-          : "grid min-w-0 grid-cols-[repeat(4,102px)] items-stretch gap-2.5 overflow-hidden"
-      }
+      className="grid min-w-0 grid-cols-[repeat(4,minmax(0,1fr))] items-start gap-2"
     >
       {visibleSlots.map((slot) => (
         <span
           role="listitem"
           aria-label={`${slot.day}, ${slot.start} đến ${slot.end}`}
           key={`${slot.day}-${slot.start}-${slot.end}`}
-          className={scheduleItemClass(variant)}
+          className="grid min-w-0 grid-cols-[var(--inline-field-divider-width)_minmax(0,1fr)] items-center gap-x-1"
         >
           <ScheduleDivider variant={variant} />
-          <span className={scheduleContentClass(variant)}>
-            <span
-              className={`inline-flex max-w-full items-center justify-center whitespace-nowrap rounded-md bg-gray-100 px-2 py-0.5 text-gray-800 ${SCHEDULE_TYPOGRAPHY_CLASS}`}
-            >
-              {slot.day}
-            </span>
-            <span
-              className={`mt-0.5 block whitespace-nowrap tabular-nums text-gray-800 ${SCHEDULE_TYPOGRAPHY_CLASS}`}
-            >
+          <span className="min-w-0 text-left">
+            <span className={SCHEDULE_DAY_CLASS}>{slot.day}</span>
+            <span className={SCHEDULE_TIME_CLASS}>
               {slot.start}–{slot.end}
             </span>
           </span>
         </span>
       ))}
-      {hiddenCount > 0 ? (
+      {overflowCount > 0 ? (
         <span
           role="listitem"
-          aria-label={`Còn ${hiddenCount} buổi học khác`}
-          className={scheduleItemClass(variant)}
+          className="col-span-full inline-flex w-fit items-center rounded-md bg-amber-50 px-2 py-0.5 text-[12px] font-semibold leading-4 text-amber-700"
         >
-          <ScheduleDivider variant={variant} />
-          <span className={scheduleContentClass(variant)}>
-            <span
-              className={`inline-flex max-w-full items-center justify-center whitespace-nowrap rounded-md bg-gray-100 px-2 py-0.5 text-gray-800 ${SCHEDULE_TYPOGRAPHY_CLASS}`}
-            >
-              +{hiddenCount} ca
-            </span>
-            <span className={`mt-0.5 block whitespace-nowrap text-gray-500 ${SCHEDULE_TYPOGRAPHY_CLASS}`}>
-              Còn lại
-            </span>
-          </span>
+          Lịch học vượt quá {MAX_SCHEDULE_TRACKS} buổi — kiểm tra dữ liệu
         </span>
       ) : null}
     </span>
   );
-}
-
-function scheduleItemClass(variant: "table" | "field"): string {
-  return variant === "field"
-    ? "grid min-w-0 grid-cols-[1px_minmax(0,1fr)] items-center gap-x-1.5 py-0.5"
-    : "grid min-w-0 grid-cols-[1px_minmax(0,1fr)] items-center gap-x-1.5";
-}
-
-function scheduleContentClass(variant: "table" | "field"): string {
-  return variant === "field" ? "min-w-0 text-center" : "min-w-0 text-left";
 }
 
 function ScheduleDivider({ variant }: { variant: "table" | "field" }) {

@@ -2,14 +2,14 @@
 
 import { useRef } from "react";
 import {
-  Bell,
-  Check,
-  Clipboard,
-  EyeOff,
-  LoaderCircle,
-  RotateCcw,
-} from "lucide-react";
+  RiCheckLine as Check,
+  RiClipboardLine as Clipboard,
+  RiEyeOffLine as EyeOff,
+  RiLoader4Line as LoaderCircle,
+  RiArrowGoBackLine as RotateCcw,
+} from "react-icons/ri";
 import { RefundIcon } from "@/components/ui/refund-icon";
+import { NotifiedBellIcon } from "@/components/ui/notified-bell-icon";
 import { getFeesTableGridClass } from "@/components/fees/table-layout";
 import type {
   FeeMutationAction,
@@ -107,7 +107,7 @@ export function FeesTable({
           >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <h2 className="break-words text-base font-medium text-gray-900">
+                <h2 className="break-words text-base font-semibold text-gray-900">
                   <SelectableFeeValue value={group.student_name} />
                 </h2>
                 <MobileFeeDateSummary
@@ -173,10 +173,10 @@ export function FeesTable({
         aria-label="Danh sách học phí"
         className="hidden overflow-hidden rounded-lg border border-gray-200 bg-white xl:flex xl:h-full xl:min-h-0 xl:flex-col"
       >
-        <div role="rowgroup" className="shrink-0 border-b border-gray-200 bg-gray-50">
+        <div role="rowgroup" className="shrink-0 border-b border-gray-200 bg-gray-100">
           <div
             role="row"
-            className={`${gridClass} table-heading-text select-none text-left text-gray-700`}
+            className={`${gridClass} table-heading-text select-none text-left text-gray-800`}
           >
             <div role="columnheader" className="whitespace-nowrap px-2.5 py-3">
               Học viên
@@ -227,13 +227,13 @@ export function FeesTable({
         <div
           role="rowgroup"
           tabIndex={0}
-          className="scrollbar-hidden min-h-0 flex-1 touch-pan-y divide-y divide-gray-100 overflow-x-hidden overflow-y-auto overscroll-contain bg-white text-[15px] font-medium leading-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gray-200"
+          className="scrollbar-hidden min-h-0 flex-1 touch-pan-y divide-y divide-gray-200 overflow-x-hidden overflow-y-auto overscroll-contain bg-white text-[15px] font-medium leading-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gray-200"
         >
           {groups.map((group) => (
             <div
               role="row"
               key={group.student_id}
-              className={`${gridClass} cv-auto items-start hover:bg-gray-50/80`}
+              className={`${gridClass} cv-auto items-start hover:bg-gray-100/60`}
             >
               <div
                 role="cell"
@@ -380,6 +380,7 @@ function FeeClassDetails({ group }: { group: StudentFeeGroup }) {
               value={formatFeeBillingLabel(
                 record.class_type,
                 record.billing_cycle_months,
+                record.billing_cycle_weeks,
               )}
             />
           </div>
@@ -420,9 +421,12 @@ function FeeActions({
         (record.notification_state === "UNNOTIFIED" ||
           record.notification_state === "NOTIFIED_UNPAID"),
     );
+  const isUnpayDisabled = disabled || group.refunded_amount > 0;
 
   return (
-    <div className="flex items-center justify-center gap-1.5">
+    <div
+      className="flex select-none items-center justify-center gap-1.5"
+    >
       <button
         type="button"
         title={
@@ -457,7 +461,7 @@ function FeeActions({
           {pendingAction === "notify" ? (
             <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
           ) : (
-            <Bell className="h-4 w-4" aria-hidden="true" />
+            <NotifiedBellIcon className="h-4 w-4" aria-hidden="true" />
           )}
         </button>
       ) : null}
@@ -468,7 +472,7 @@ function FeeActions({
           aria-label="Chuyển khoản học phí về trạng thái chưa báo"
           disabled={disabled}
           onClick={() => onUnnotify(group)}
-          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50 hover:text-gray-900 disabled:opacity-50"
+          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-rose-200 bg-rose-50 text-rose-800 transition hover:bg-rose-100 disabled:opacity-50"
         >
           {pendingAction === "unnotify" ? (
             <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -492,7 +496,7 @@ function FeeActions({
               ? "Ghi nhận đã nộp"
               : "Không thể ghi nhận đã nộp cho khoản học phí này"
           }
-          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-emerald-600 bg-emerald-600 text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-400"
+          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-emerald-200 bg-emerald-50 text-emerald-800 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-400"
         >
           {pendingAction === "pay" ? (
             <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -509,7 +513,7 @@ function FeeActions({
             (group.refundable_amount <= 0 && group.refunded_amount <= 0)
           }
           onClick={() => onRefund(group)}
-          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-sky-200 bg-sky-50 text-sky-700 transition-colors hover:border-sky-300 hover:bg-sky-100 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-400"
+          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-400"
           title={
             group.refundable_amount > 0
               ? group.refunded_amount > 0
@@ -528,16 +532,23 @@ function FeeActions({
           {pendingAction === "refund" ? (
             <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
           ) : (
-            <RefundIcon />
+            <RefundIcon className="h-4 w-4" aria-hidden="true" />
           )}
         </button>
       ) : null}
       {activeTab === "paid" ? (
         <button
           type="button"
-          disabled={disabled || group.refunded_amount > 0}
-          onClick={() => onUnpay(group)}
-          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50 hover:text-gray-900 disabled:opacity-50"
+          aria-disabled={isUnpayDisabled}
+          tabIndex={isUnpayDisabled ? -1 : undefined}
+          onClick={() => {
+            if (!isUnpayDisabled) onUnpay(group);
+          }}
+          className={`relative isolate inline-flex h-7 w-7 appearance-none items-center justify-center overflow-hidden rounded-md border border-transparent bg-transparent p-0 text-gray-600 opacity-100 ${
+            isUnpayDisabled
+              ? "cursor-not-allowed"
+              : "cursor-pointer"
+          }`}
           title={
             group.refunded_amount > 0
               ? "Không thể sửa sai thanh toán sau khi đã phát sinh hoàn phí"
@@ -549,10 +560,28 @@ function FeeActions({
               : "Hoàn tác ghi nhận đã nộp"
           }
         >
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 z-0 rounded-md bg-amber-200"
+          />
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 z-0 rounded-md bg-rose-200 [clip-path:polygon(0_0,100%_0,0_100%)]"
+          />
+          {/* A 28px control needs one stronger surface step than the large
+              metrics to remain optically equivalent beside the gray glyph. */}
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-px z-10 rounded-[5px] bg-amber-100"
+          />
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-px z-10 rounded-[5px] bg-rose-100 [clip-path:polygon(0_0,100%_0,0_100%)]"
+          />
           {pendingAction === "unpay" ? (
-            <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
+            <LoaderCircle className="relative z-20 h-4 w-4 animate-spin text-gray-600" aria-hidden="true" />
           ) : (
-            <RotateCcw className="h-4 w-4" aria-hidden="true" />
+            <RotateCcw className="relative z-20 h-4 w-4 text-gray-600" aria-hidden="true" />
           )}
         </button>
       ) : null}

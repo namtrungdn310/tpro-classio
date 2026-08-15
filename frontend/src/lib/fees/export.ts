@@ -83,6 +83,7 @@ export function buildFeeSummaryRows(
           `${record.class_name}: ${formatFeeBillingLabel(
             record.class_type,
             record.billing_cycle_months,
+            record.billing_cycle_weeks,
           )}`,
       )
       .join("; "),
@@ -136,6 +137,7 @@ export function buildFeeDetailRows(
       "Hình thức học phí": formatFeeBillingLabel(
         record.class_type,
         record.billing_cycle_months,
+        record.billing_cycle_weeks,
       ),
       "Zalo học viên": group.student_zalo ?? "",
       "SĐT học viên": group.student_phone ?? "",

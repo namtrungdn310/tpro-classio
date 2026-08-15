@@ -1,7 +1,7 @@
 "use client";
 
 import { useLayoutEffect, useEffect, useRef, useState } from "react";
-import { Search, SlidersHorizontal } from "lucide-react";
+import { RiSearchLine as Search, RiEqualizer2Line as SlidersHorizontal } from "react-icons/ri";
 import { savedInfoAutocomplete } from "@/lib/forms/saved-info-policy";
 import { formTextControlHeaderClassName } from "@/components/ui/form-text-control";
 
@@ -133,13 +133,13 @@ export function HeaderFilterControls({
               onClick={() => setIsOpen((current) => !current)}
               className={`relative inline-flex h-6 w-8 items-center justify-center rounded-[5px] transition ${
                 activeFilters.length > 0 || isOpen
-                  ? "bg-gray-100 text-gray-950"
-                  : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                  ? "bg-primary-soft text-primary"
+                  : "text-gray-600 hover:bg-primary-soft/70 hover:text-primary"
               }`}
             >
               <SlidersHorizontal className="h-3.5 w-3.5" />
               {activeFilters.length > 0 ? (
-                <span className="absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-gray-900 px-1 text-[10px] font-semibold text-white">
+                <span className="absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground">
                   {activeFilters.length}
                 </span>
               ) : null}
@@ -177,8 +177,8 @@ export function HeaderFilterControls({
                         }}
                         className={`inline-flex h-8 shrink-0 items-center rounded-full px-2.5 text-[12px] transition ${
                           selected
-                            ? "bg-gray-100 font-medium text-gray-950"
-                            : "bg-gray-50 text-gray-700 hover:bg-gray-100"
+                            ? "bg-primary-soft font-medium text-primary"
+                            : "bg-gray-50 text-gray-700 hover:bg-primary-soft/60"
                         }`}
                       >
                         {option.label}
@@ -193,7 +193,7 @@ export function HeaderFilterControls({
             <button
               type="button"
               onClick={clearFilters}
-              className="mt-2 inline-flex text-[12px] text-gray-600 underline underline-offset-2 hover:text-gray-950"
+              className="mt-2 inline-flex text-[12px] text-gray-600 underline underline-offset-2 hover:text-primary"
             >
               Xoá lọc
             </button>

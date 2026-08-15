@@ -55,7 +55,7 @@ const PROGRAM_GROUPS = {
     border: "#FDA4AF",
     text: "#BE123C",
   }),
-  specialized: buildGroup("specialized", "Thi chuyên", 8100, {
+  specialized: buildGroup("specialized", "Thi Chuyên", 8100, {
     background: "#F5F3FF",
     border: "#C4B5FD",
     text: "#6D28D9",
@@ -155,7 +155,7 @@ export function abbreviateClassName(className: string, maxLength = 14): string {
       shortName = "TA THPT";
       break;
     default:
-      shortName = abbreviateUnknownName(fullName);
+      shortName = abbreviateUnknownName(fullName, maxLength);
   }
 
   return fitShortName(shortName, maxLength);
@@ -301,10 +301,17 @@ function abbreviateSchoolName(fullName: string, normalizedName: string, grade: n
   return [compactCode ?? `L${grade ?? ""}`, ...modifiers].join(" ");
 }
 
-function abbreviateUnknownName(fullName: string): string {
-  const [firstWord, ...rest] = fullName.split(/\s+/);
-  const initials = toInitials(rest.join(" "));
-  return initials ? `${firstWord} ${initials}` : firstWord;
+function abbreviateUnknownName(fullName: string, maxLength: number): string {
+  // Keep whole words instead of cryptic initials: "Tiếng Anh giao tiếp..." ->
+  // "Tiếng Anh giao" is far more recognizable than "Tiếng AGT...". Punctuation
+  // tokens like "-" are dropped so they never leak into the result.
+  const meaningfulWords = fullName
+    .split(/\s+/)
+    .filter((word) => /[a-z0-9đ]/iu.test(word));
+  if (meaningfulWords.length === 0) {
+    return Array.from(fullName).slice(0, maxLength).join("");
+  }
+  return fitShortName(meaningfulWords.join(" "), maxLength);
 }
 
 function fitShortName(value: string, maxLength: number): string {

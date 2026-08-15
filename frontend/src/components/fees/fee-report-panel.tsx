@@ -1,14 +1,14 @@
 "use client";
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { RiArrowLeftSLine as ChevronLeft, RiArrowRightSLine as ChevronRight } from "react-icons/ri";
 import type {
   ClassFeeSummary,
   FeeSummaryMetrics,
   FeeTab,
   UnpaidStage,
 } from "@/lib/fees/types";
-import { getClassGroupInfo } from "@/lib/utils/class-groups";
+import { getClassGroupInfoForRecord } from "@/lib/classes/presentation";
 import { formatCurrency } from "@/lib/utils/format";
 import {
   DEFAULT_FEE_CLASS_CARDS_PER_ROW,
@@ -110,7 +110,7 @@ export function FeeReportPanel({
       <section className="flex flex-col gap-2 overflow-visible">
         <div className="relative flex flex-1 flex-col overflow-hidden rounded-md border border-gray-200 bg-slate-50/30 px-4 py-3 shadow-sm">
           <span
-            className="absolute inset-y-0 left-0 w-1 bg-gray-900"
+            className="absolute inset-y-0 left-0 w-1 bg-primary"
             aria-hidden="true"
           />
           <div className="flex items-center justify-between gap-3 pl-1">
@@ -172,7 +172,7 @@ export function FeeReportPanel({
       </section>
 
       <section className="flex min-h-0 flex-col rounded-md border border-gray-200">
-        <div className="flex h-9 shrink-0 items-center justify-between gap-3 border-b border-gray-200 bg-gray-50/50 px-3">
+        <div className="flex h-9 shrink-0 items-center justify-between gap-3 border-b border-gray-200 bg-gray-100/60 px-3">
           <p className="text-sm font-semibold text-gray-900">Theo lớp</p>
           <div className="flex items-center gap-1.5">
             <span className="min-w-9 text-center text-[11px] font-medium tabular-nums text-gray-500" aria-live="polite">
@@ -216,7 +216,11 @@ export function FeeReportPanel({
           ) : null}
           {pageItems.map((item) => {
             const selected = activeClassId === item.id;
-            const color = getClassGroupInfo(item.name).color;
+            const color = getClassGroupInfoForRecord({
+              name: item.name,
+              class_category: item.classCategory,
+              grade_level: item.gradeLevel,
+            }).color;
 
             return (
               <button
@@ -241,7 +245,7 @@ export function FeeReportPanel({
                     {item.name}
                   </span>
                 </div>
-                <div className="mt-0.5 flex items-center justify-between gap-2 pl-3.5 text-[11px] text-gray-500">
+                <div className="mt-0.5 flex items-center justify-between gap-2 pl-3.5 text-xs text-gray-500">
                   <span title="Chưa nộp / Tổng số">
                     {item.unpaidStudentCount}/
                     {item.paidStudentCount + item.unpaidStudentCount}
@@ -294,14 +298,14 @@ function FeeMetric({
 
   const content = (
     <>
-      <p className="text-[10px] font-bold uppercase leading-tight opacity-70">
+      <p className="text-[11px] font-bold uppercase leading-tight opacity-75">
         {label}
       </p>
       <p className="mt-0.5 flex-1 text-lg font-semibold leading-tight">
         {value}
       </p>
       {hint ? (
-        <p className="mt-1 text-[10px] font-medium leading-tight opacity-60">
+        <p className="mt-1 text-[11px] font-medium leading-tight opacity-70">
           {hint}
         </p>
       ) : null}

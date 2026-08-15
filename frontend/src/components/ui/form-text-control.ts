@@ -2,21 +2,22 @@
  * FormTextControl — shared input styling token for all text controls in the
  * dashboard: Header search, Settings fields, and add/edit Dialog forms.
  *
- * Using a single className constant ensures that every text input has
- * identical font, height, padding, focus ring and autofill styles, which
- * eliminates compositor-layer and sub-pixel differences that caused caret
- * inconsistency across Header (fixed + composited), Settings (scroll
- * container), and Dialog (portalled to body).
+ * Using a single className constant keeps typography, height, padding, focus
+ * ring and autofill stable across Header, Settings and portalled dialogs. The
+ * shared caret provider reads the same typography tokens but owns caret
+ * geometry independently from these presentation classes.
  */
+
+import { cn } from "@/lib/utils";
 
 /** Base class for all dashboard text inputs. */
 export const formTextControlClassName =
-  "form-input-text h-8 w-full rounded-md border border-gray-200 bg-white px-3 text-gray-900 outline-none transition focus:border-gray-400 focus:ring-2 focus:ring-gray-200 disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-400";
+  "form-input-text h-8 w-full select-text rounded-md border border-gray-200 bg-white px-3 py-0 text-gray-900 outline-none transition placeholder:font-normal placeholder:text-gray-400 focus:border-primary/60 focus:ring-2 focus:ring-primary/15 disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-400";
 
 /** Appended alongside formTextControlClassName when the field has a validation error. */
 export const formTextControlErrorClassName =
-  "border-red-500 focus:border-red-500 focus:ring-red-100";
+  "border-destructive focus:border-destructive focus:ring-destructive/15";
 
 /** Narrower variant used in the header search bar (overrides `w-full` for md breakpoint). */
 export const formTextControlHeaderClassName =
-  "form-input-text h-8 w-full min-w-0 rounded-md border border-gray-200 bg-white pl-7 pr-10 text-gray-900 outline-none transition focus:border-gray-400 focus:ring-2 focus:ring-gray-200 md:w-[min(20vw,260px)]";
+  cn(formTextControlClassName, "min-w-0 pl-7 pr-10 md:w-[min(20vw,260px)]");

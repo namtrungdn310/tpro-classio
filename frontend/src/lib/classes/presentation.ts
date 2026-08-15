@@ -1,6 +1,7 @@
-import type { ClassResponse, ClassScheduleSlot, ClassType } from "@/lib/types";
-import { getClassGroupInfo, getClassSortKey } from "@/lib/utils/class-groups";
-import { formatClassType, formatCurrency } from "@/lib/utils/format";
+import type { ClassCategory, ClassEffectiveStatus, ClassResponse, ClassScheduleSlot, ClassType } from "@/lib/types";
+import { getClassGroupInfo, getClassSortKey, type ClassGroupInfo } from "@/lib/utils/class-groups";
+import { differenceInIsoDays } from "@/lib/classes/package-cycle";
+import { differenceInIsoMonths, formatClassType, formatCurrency } from "@/lib/utils/format";
 import {
   createPreparedSearchMatcher,
   prepareSearchCorpus,
@@ -17,18 +18,13 @@ export const CLASS_DAYS = [
   "Chủ Nhật",
 ] as const;
 
-export const COURSE_DURATION_OPTIONS = [
-  { label: "8 tuần", months: 2, weeks: 8 },
-  { label: "12 tuần", months: 3, weeks: 12 },
-  { label: "24 tuần", months: 6, weeks: 24 },
-  { label: "48 tuần", months: 12, weeks: 48 },
-] as const;
-
 export type ClassFilters = {
   search?: string | null;
   type?: ClassType | "" | null;
   courseDuration?: string | number | null;
   day?: string | null;
+  category?: ClassCategory | "" | null;
+  status?: ClassEffectiveStatus | "" | null;
 };
 
 export type ClassScheduleSummaryOptions = {
@@ -46,15 +42,105 @@ const CLASS_DAY_SET = new Set<string>(CLASS_DAYS);
 const CLASS_DAY_ORDER = new Map<string, number>(
   CLASS_DAYS.map((day, index) => [day, index]),
 );
-const COURSE_MONTHS = new Set<number>(COURSE_DURATION_OPTIONS.map((option) => option.months));
+const LEGACY_COURSE_MONTHS = new Set([2, 3, 6, 12]);
 const TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 
 export function getClassTeacherIds(class_: ClassResponse | null | undefined): string[] {
   return getSafeStringList(class_, "teacher_ids", "teacher_id");
 }
 
+export function getClassAssistantIds(class_: ClassResponse | null | undefined): string[] {
+  return getSafeStringList(class_, "assistant_ids", "assistant_id");
+}
+
+export function getClassGroupInfoForRecord(
+  class_:
+    | (Pick<ClassResponse, "name"> &
+        Partial<Pick<ClassResponse, "class_category" | "grade_level">>)
+    | null
+    | undefined,
+): ClassGroupInfo {
+  const record = asRecord(class_);
+  const category = getTrimmedString(record?.class_category);
+  const gradeLevel = getFiniteNumber(record?.grade_level);
+
+  if (category === "GENERAL" && gradeLevel !== null) {
+    return getClassGroupInfo(`Lớp ${gradeLevel}`);
+  }
+  if (category === "SPECIALIZED") {
+    return getClassGroupInfo("Chuyên");
+  }
+  if (category === "IELTS") {
+    return getClassGroupInfo("IELTS");
+  }
+  if (category === "CUSTOM") {
+    return getClassGroupInfo("Custom");
+  }
+  if (gradeLevel !== null) {
+    return getClassGroupInfo(`Lớp ${gradeLevel}`);
+  }
+  return getClassGroupInfo(getTrimmedString(record?.name) ?? "");
+}
+
+export function getClassCategoryLabel(
+  class_: ClassResponse | null | undefined,
+): string {
+  const category = getTrimmedString(asRecord(class_)?.class_category);
+  const label = {
+    GENERAL: "Phổ thông",
+    SPECIALIZED: "Thi Chuyên",
+    IELTS: "IELTS",
+    CUSTOM: "Custom",
+  }[category ?? ""];
+  if (label) return label;
+  return class_?.identity_scheme === "LEGACY" ? "Lớp cũ" : "Chưa phân loại";
+}
+
+export function getClassPeriodLabel(
+  class_: ClassResponse | null | undefined,
+): string | null {
+  if (!class_) return null;
+  // Lớp không có khối và năm học (IELTS/Custom) không hiển thị nhãn thời gian
+  // phụ ("Mở lớp tháng/năm") ở cột Thời gian.
+  if (!class_.grade_level && !class_.academic_year_start) return null;
+  if (class_.class_category === "IELTS") {
+    return class_.start_date
+      ? `Mở lớp ${class_.start_date.slice(5, 7)}/${class_.start_date.slice(0, 4)}`
+      : null;
+  }
+  if (class_.identity_scheme === "ACADEMIC_YEAR" && class_.academic_year_start) {
+    const gradeLabel = class_.grade_level ? `Khối ${class_.grade_level}` : "Không theo khối";
+    return `${gradeLabel} · Năm học ${class_.academic_year_start}–${class_.academic_year_start + 1}`;
+  }
+  return class_.secondary_label;
+}
+
+export function getClassGradeYearLabel(
+  class_: ClassResponse | null | undefined,
+): string | null {
+  if (!class_) return null;
+  const parts: string[] = [];
+  if (class_.grade_level) parts.push(`Khối ${class_.grade_level}`);
+  if (class_.academic_year_start) {
+    parts.push(`Năm học ${class_.academic_year_start}–${class_.academic_year_start + 1}`);
+  }
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+export function getClassInfoLine(class_: ClassResponse | null | undefined): string | null {
+  if (!class_) return null;
+  const parts = [getClassGradeYearLabel(class_), `${class_.student_count} học viên`].filter(
+    (part): part is string => Boolean(part),
+  );
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
 export function getClassTeacherNames(class_: ClassResponse | null | undefined): string[] {
   return getSafeStringList(class_, "teacher_names", "teacher_name");
+}
+
+export function getClassAssistantNames(class_: ClassResponse | null | undefined): string[] {
+  return getSafeStringList(class_, "assistant_names", "assistant_name");
 }
 
 export function getClassScheduleSlots(
@@ -103,6 +189,31 @@ export function normalizeClassScheduleSlots(
       seen.add(key);
       return true;
     });
+}
+
+/**
+ * Teacher effective của một slot — quy tắc fallback DUY NHẤT cho frontend:
+ * slot khai rõ teacher_ids thì dùng đúng danh sách đó; thiếu/rỗng (dữ liệu
+ * legacy) fallback sang pool giáo viên cấp lớp (sẽ được materialize bởi
+ * migration 051 và normalize phía backend).
+ */
+export function getSlotEffectiveTeacherIds(
+  slot: { teacher_ids?: readonly string[] },
+  classTeacherPool: readonly string[],
+): string[] {
+  const explicit = slot.teacher_ids;
+  return explicit && explicit.length > 0 ? [...explicit] : [...classTeacherPool];
+}
+
+/**
+ * Assistant effective của một slot — KHÔNG fallback: thiếu hoặc rỗng đều có
+ * nghĩa là buổi đó không có trợ giảng.
+ */
+export function getSlotEffectiveAssistantIds(
+  slot: { assistant_ids?: readonly string[] },
+): string[] {
+  const explicit = slot.assistant_ids;
+  return explicit && explicit.length > 0 ? [...explicit] : [];
 }
 
 export function getClassScheduleSlotsLabel(
@@ -159,14 +270,26 @@ export function getClassScheduleSummary(
 }
 
 export function normalizeCourseBillingMonths(value: number | null | undefined): number {
-  return typeof value === "number" && Number.isInteger(value) && COURSE_MONTHS.has(value)
+  return typeof value === "number" && Number.isInteger(value) && LEGACY_COURSE_MONTHS.has(value)
     ? value
     : 3;
 }
 
-export function getCourseDurationLabel(value: number | null | undefined): string {
-  const normalized = normalizeCourseBillingMonths(value);
-  return COURSE_DURATION_OPTIONS.find((option) => option.months === normalized)?.label ?? "12 tuần";
+export function normalizeCourseBillingWeeks(
+  value: number | null | undefined,
+  legacyMonths?: number | null,
+): number {
+  if (typeof value === "number" && Number.isInteger(value) && value > 0) {
+    return value;
+  }
+  return normalizeCourseBillingMonths(legacyMonths) * 4;
+}
+
+export function getCourseDurationLabel(
+  value: number | null | undefined,
+  legacyMonths?: number | null,
+): string {
+  return `${normalizeCourseBillingWeeks(value, legacyMonths)} tuần`;
 }
 
 export function getClassBillingDurationLabel(
@@ -176,7 +299,46 @@ export function getClassBillingDurationLabel(
   if (record?.type === "MONTHLY") {
     return "1 tháng";
   }
-  return getCourseDurationLabel(getFiniteNumber(record?.billing_cycle_months));
+  return getCourseDurationLabel(
+    getFiniteNumber(record?.billing_cycle_weeks),
+    getFiniteNumber(record?.billing_cycle_months),
+  );
+}
+
+export function getClassBillingModeLabel(
+  class_: ClassResponse | null | undefined,
+): string {
+  const record = asRecord(class_);
+  if (record?.type === "MONTHLY") {
+    return "Theo tháng";
+  }
+  return `Theo gói · ${getCourseDurationLabel(
+    getFiniteNumber(record?.billing_cycle_weeks),
+    getFiniteNumber(record?.billing_cycle_months),
+  )}`;
+}
+
+/** Tổng thời lượng của khóa học: "(X tháng)" theo tháng hoặc "(X tuần)" theo gói. */
+export function getClassTotalDurationLabel(
+  class_: ClassResponse | null | undefined,
+): string | null {
+  const record = asRecord(class_);
+  const start = getTrimmedString(record?.start_date);
+  const end = getTrimmedString(record?.end_date);
+  if (!start || !end) return null;
+  if (record?.type === "MONTHLY") {
+    return `${differenceInIsoMonths(start, end)} tháng`;
+  }
+  const totalWeeks = differenceInIsoDays(start, end) / 7;
+  if (Number.isInteger(totalWeeks) && totalWeeks >= 1) {
+    return `${totalWeeks} tuần`;
+  }
+  // Khóa học kéo dài không chia hết theo tuần (vd lớp IELTS dài kỳ) → dùng số
+  // tuần theo chu kỳ thanh toán làm tổng thời lượng hiển thị.
+  return getCourseDurationLabel(
+    getFiniteNumber(record?.billing_cycle_weeks),
+    getFiniteNumber(record?.billing_cycle_months),
+  );
 }
 
 export function getClassEarliestStartMinutes(
@@ -204,21 +366,37 @@ export function prepareClassSearchCorpus(
 ): PreparedSearchCorpus {
   const record = asRecord(class_);
   const name = getTrimmedString(record?.name) ?? "";
+  const displayName = getTrimmedString(record?.display_name) ?? name;
+  const primaryLabel = getTrimmedString(record?.primary_label) ?? name;
+  const secondaryLabel = getTrimmedString(record?.secondary_label);
   const type = isClassType(record?.type) ? record.type : null;
   const baseFee = getFiniteNumber(record?.base_fee);
   const billingCycleMonths = getFiniteNumber(record?.billing_cycle_months);
+  const billingCycleWeeks = getFiniteNumber(record?.billing_cycle_weeks);
 
   return prepareSearchCorpus([
     name,
-    ...getClassTeacherNames(class_),
-    getClassScheduleSummary(class_),
-    getClassScheduleText(class_),
+    displayName,
+    primaryLabel,
+    secondaryLabel,
+    getClassTeacherNames(class_).join(" "),
+    getClassScheduleSummary(class_) || null,
+    getClassScheduleText(class_) || null,
     type,
     type ? formatClassType(type) : null,
-    getClassBillingDurationLabel(class_),
+    getClassBillingDurationLabel(class_) || null,
+    getClassCategoryLabel(class_) || null,
     billingCycleMonths,
+    billingCycleWeeks,
     baseFee === null ? null : formatCurrency(baseFee),
-    getClassGroupInfo(name).label,
+    getClassGroupInfoForRecord(class_).label || null,
+    getTrimmedString(record?.start_date),
+    getTrimmedString(record?.end_date),
+    getTrimmedString(record?.effective_status),
+    record?.grade_level === null || record?.grade_level === undefined
+      ? null
+      : `Khối ${record.grade_level}`,
+    getFiniteNumber(record?.academic_year_start),
   ]);
 }
 
@@ -249,6 +427,8 @@ export function filterAndSortPreparedClasses(
   const selectedDay = getTrimmedString(filters.day);
   const selectedDuration = parsePositiveInteger(filters.courseDuration);
   const selectedType = isClassType(filters.type) ? filters.type : null;
+  const selectedCategory = getTrimmedString(filters.category);
+  const selectedStatus = getTrimmedString(filters.status);
 
   const safeRecords = records.flatMap((candidate) => {
     const record = asRecord(candidate);
@@ -274,7 +454,17 @@ export function filterAndSortPreparedClasses(
       if (selectedType && record.type !== selectedType) {
         return false;
       }
-      if (selectedDuration !== null && record.billing_cycle_months !== selectedDuration) {
+      if (selectedCategory && record.class_category !== selectedCategory) {
+        return false;
+      }
+      if (selectedStatus && record.effective_status !== selectedStatus) {
+        return false;
+      }
+      const recordWeeks = normalizeCourseBillingWeeks(
+        getFiniteNumber(record.billing_cycle_weeks),
+        getFiniteNumber(record.billing_cycle_months),
+      );
+      if (selectedDuration !== null && recordWeeks !== selectedDuration) {
         return false;
       }
       if (selectedDay && !classMatchesDay(class_, selectedDay)) {
@@ -341,8 +531,8 @@ function compareScheduleSlots(left: ClassScheduleSlot, right: ClassScheduleSlot)
 
 function getSafeStringList(
   value: unknown,
-  listKey: "teacher_ids" | "teacher_names",
-  fallbackKey: "teacher_id" | "teacher_name",
+  listKey: "teacher_ids" | "teacher_names" | "assistant_ids" | "assistant_names",
+  fallbackKey: "teacher_id" | "teacher_name" | "assistant_id" | "assistant_name",
 ): string[] {
   const record = asRecord(value);
   const list = Array.isArray(record?.[listKey]) ? record[listKey] : [];

@@ -19,7 +19,7 @@ export function SettingsCard({
         className,
       )}
     >
-      <header className="flex shrink-0 select-none items-center gap-2.5 border-b border-gray-200 bg-gray-50/45 px-4 py-3 sm:px-5">
+      <header className="flex shrink-0 select-none items-center gap-2.5 border-b border-gray-200 bg-gray-100/50 px-4 py-3 sm:px-5">
         {icon ? (
           <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-700 [&_svg]:h-4 [&_svg]:w-4">
             {icon}
@@ -60,7 +60,7 @@ export function SettingsField({
         <div className="min-w-0 w-full max-w-[360px] flex-1">
           {children}
           {error ? (
-            <p id={errorId} role="alert" className="form-message-text mt-1 text-red-600">
+            <p id={errorId} role="alert" className="form-message-text mt-1 text-destructive">
               {error}
             </p>
           ) : null}

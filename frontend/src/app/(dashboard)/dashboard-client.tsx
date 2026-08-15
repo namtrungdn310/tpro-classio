@@ -7,9 +7,9 @@ import {
   type UseQueryResult,
 } from "@tanstack/react-query";
 import {
-  LoaderCircle,
-  RefreshCw,
-} from "lucide-react";
+  RiLoader4Line as LoaderCircle,
+  RiRefreshLine as RefreshCw,
+} from "react-icons/ri";
 import { DashboardFeeSummaryCard } from "@/components/dashboard/dashboard-fee-summary";
 import { DashboardMetricCard } from "@/components/dashboard/dashboard-metric-card";
 import { DashboardMetricsSkeleton } from "@/components/dashboard/dashboard-overview-skeleton";
@@ -20,7 +20,12 @@ import {
 } from "@/components/layout/weekly-schedule-board";
 import { Button } from "@/components/ui/button";
 import { DataSectionError } from "@/components/ui/data-section-state";
-import { getClasses } from "@/lib/api/classes";
+import {
+  getClasses,
+  getEffectiveOccurrences,
+  type EffectiveOccurrenceSummary,
+} from "@/lib/api/classes";
+import { classQueryKeys } from "@/lib/classes/query-keys";
 import { getDashboardOverview } from "@/lib/api/dashboard";
 import { getApiErrorMessage } from "@/lib/api/errors";
 import { useAuth } from "@/lib/hooks/useAuth";
@@ -38,7 +43,7 @@ const WeeklyScheduleBoard = dynamic(
     loading: () => (
       <WeeklyScheduleBoardSkeleton
         className="h-full min-h-0"
-        detailWidthClassName="lg:grid-cols-[minmax(0,1fr)_150px]"
+        detailWidthClassName="lg:grid-cols-[minmax(0,1fr)_220px]"
       />
     ),
   },
@@ -52,10 +57,36 @@ export default function DashboardPage() {
     enabled: Boolean(user),
   });
   const classesQuery = useQuery({
-    queryKey: ["classes", { is_active: true }],
-    queryFn: () => getClasses({ is_active: true }),
+    queryKey: classQueryKeys.list("active"),
+    queryFn: () => getClasses({ scope: "active" }),
     enabled: Boolean(user),
   });
+
+  const weekRange = useMemo(() => {
+    const now = new Date();
+    const start = new Date(now);
+    const day = (now.getDay() + 6) % 7;
+    start.setDate(now.getDate() - day);
+    const end = new Date(start);
+    end.setDate(start.getDate() + 6);
+    return {
+      from: `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}-${String(start.getDate()).padStart(2, "0")}`,
+      to: `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, "0")}-${String(end.getDate()).padStart(2, "0")}`,
+    };
+  }, []);
+  const occurrencesQuery = useQuery({
+    queryKey: classQueryKeys.effectiveOccurrences(weekRange.from, weekRange.to),
+    queryFn: () => getEffectiveOccurrences(weekRange.from, weekRange.to),
+    enabled: Boolean(user),
+    staleTime: 30_000,
+  });
+  const occurrencesByClass = useMemo(() => {
+    const map = new Map<string, EffectiveOccurrenceSummary["occurrences"]>();
+    for (const entry of occurrencesQuery.data ?? []) {
+      map.set(entry.class_id, entry.occurrences);
+    }
+    return map;
+  }, [occurrencesQuery.data]);
 
   const overview = overviewQuery.data;
   const classes = useMemo(
@@ -104,34 +135,42 @@ export default function DashboardPage() {
         </Button>
       </div>
 
-      <div className="dashboard-overview-no-selection grid h-full min-h-0 gap-3 xl:grid-cols-[minmax(430px,0.82fr)_minmax(0,1.85fr)] 2xl:grid-cols-[500px_minmax(0,1fr)]">
-        <OverviewMetricsSection query={overviewQuery} />
+      <div className="dashboard-overview-no-selection flex h-full min-h-0 flex-col gap-4">
+        <section className="shrink-0">
+          <OverviewTopSection query={overviewQuery} />
+        </section>
 
-        <section className="min-h-0">
-          {classesQuery.data ? (
-            <WeeklyScheduleBoard
-              classes={classes}
-              detailDay={today}
-              className="h-full min-h-0"
-              detailWidthClassName="lg:grid-cols-[minmax(0,1fr)_150px]"
-            />
-          ) : classesQuery.isLoading ? (
-            <WeeklyScheduleBoardSkeleton
-              className="h-full min-h-0"
-              detailWidthClassName="lg:grid-cols-[minmax(0,1fr)_150px]"
-            />
-          ) : (
-            <DataSectionError
-              className="h-full min-h-[520px]"
-              title="Chưa tải được lịch học"
-              description={getApiErrorMessage(
-                classesQuery.error,
-                "Không thể tải lịch học. Vui lòng thử lại.",
-              )}
-              isRetrying={classesQuery.isFetching}
-              onRetry={() => void classesQuery.refetch()}
-            />
-          )}
+        <section className="flex min-h-0 flex-1 flex-col gap-2.5">
+          <ScheduleToolbar
+            weeklySessionCount={overview?.summary.weekly_session_count}
+          />
+          <div className="min-h-0 flex-1">
+            {classesQuery.data ? (
+              <WeeklyScheduleBoard
+                classes={classes}
+                detailDay={today}
+                className="h-full min-h-0"
+                detailWidthClassName="lg:grid-cols-[minmax(0,1fr)_220px]"
+                occurrencesByClass={occurrencesByClass}
+              />
+            ) : classesQuery.isLoading ? (
+              <WeeklyScheduleBoardSkeleton
+                className="h-full min-h-0"
+                detailWidthClassName="lg:grid-cols-[minmax(0,1fr)_220px]"
+              />
+            ) : (
+              <DataSectionError
+                className="h-full min-h-[360px]"
+                title="Chưa tải được lịch học"
+                description={getApiErrorMessage(
+                  classesQuery.error,
+                  "Không thể tải lịch học. Vui lòng thử lại.",
+                )}
+                isRetrying={classesQuery.isFetching}
+                onRetry={() => void classesQuery.refetch()}
+              />
+            )}
+          </div>
         </section>
       </div>
     </>
@@ -187,7 +226,7 @@ function DashboardHeaderStatus({
   );
 }
 
-function OverviewMetricsSection({
+function OverviewTopSection({
   query,
 }: {
   query: UseQueryResult<DashboardOverviewResponse, Error>;
@@ -201,7 +240,7 @@ function OverviewMetricsSection({
   if (!overview) {
     return (
       <DataSectionError
-        className="xl:h-full"
+        className="min-h-[180px]"
         title="Chưa tải được số liệu tổng quan"
         description={getApiErrorMessage(
           query.error,
@@ -213,48 +252,64 @@ function OverviewMetricsSection({
     );
   }
 
-  return <OverviewMetrics overview={overview} />;
+  return (
+    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(300px,0.35fr)_minmax(0,0.65fr)]">
+      <OverviewMetrics overview={overview} />
+      <DashboardFeeSummaryCard
+        fees={overview.fees}
+        className="h-full"
+      />
+    </div>
+  );
 }
 
 function OverviewMetrics({ overview }: { overview: DashboardOverviewResponse }) {
-  const teachingStaffCount =
-    overview.summary.active_teacher_count + overview.summary.active_assistant_count;
+  const summary = overview.summary;
 
   return (
-    <section className="flex shrink-0 flex-col gap-3 xl:h-full xl:min-h-0">
-      <div className="grid grid-cols-3 gap-2.5">
-        <DashboardMetricCard
-          delayMs={0}
-          label="Học viên"
-          value={String(overview.summary.active_student_count)}
-          hint={
-            overview.summary.active_student_count > 0
-              ? "Đang học"
-              : "Chưa có dữ liệu"
-          }
-        />
-        <DashboardMetricCard
-          delayMs={55}
-          label="Lớp học"
-          value={String(overview.summary.active_class_count)}
-          hint={`${overview.summary.weekly_session_count} ca / tuần`}
-        />
-        <DashboardMetricCard
-          delayMs={110}
-          label="Đội ngũ"
-          value={String(teachingStaffCount)}
-          hint={
-            `${overview.summary.active_teacher_count} giáo viên · ` +
-            `${overview.summary.active_assistant_count} trợ giảng`
-          }
-        />
-      </div>
-
-      <DashboardFeeSummaryCard
-        fees={overview.fees}
-        revenueTrend={overview.revenue_trend}
+    <div className="grid auto-rows-fr grid-cols-2 gap-3">
+      <DashboardMetricCard
+        delayMs={0}
+        label="Học viên"
+        value={String(summary.active_student_count)}
+        hint="Đang học"
       />
-    </section>
+      <DashboardMetricCard
+        delayMs={55}
+        label="Lớp học"
+        value={String(summary.active_class_count)}
+        hint={`${summary.weekly_session_count} ca / tuần`}
+      />
+      <DashboardMetricCard
+        delayMs={110}
+        label="Giáo viên"
+        value={String(summary.active_teacher_count)}
+        hint="Đang hoạt động"
+      />
+      <DashboardMetricCard
+        delayMs={165}
+        label="Trợ giảng"
+        value={String(summary.active_assistant_count)}
+        hint="Đang hoạt động"
+      />
+    </div>
+  );
+}
+
+function ScheduleToolbar({
+  weeklySessionCount,
+}: {
+  weeklySessionCount?: number;
+}) {
+  return (
+    <div className="flex shrink-0 items-center justify-between gap-3 px-0.5">
+      <h2 className="section-title-text text-gray-900">Lịch học tuần</h2>
+      {typeof weeklySessionCount === "number" ? (
+        <span className="caption-text rounded-md bg-gray-100 px-2 py-1 text-gray-600">
+          {weeklySessionCount} ca / tuần
+        </span>
+      ) : null}
+    </div>
   );
 }
 

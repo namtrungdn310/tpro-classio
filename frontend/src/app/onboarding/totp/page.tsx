@@ -89,7 +89,7 @@ export default function OnboardingTotpPage() {
           <div className="flex flex-col gap-4 pt-2">
             <p
               role="alert"
-              className="form-message-text rounded-md border border-red-200 bg-red-50 px-3 py-2 text-red-700"
+              className="form-message-text rounded-md border border-destructive/20 bg-destructive-soft px-3 py-2 text-destructive"
             >
               {error}
             </p>
@@ -154,7 +154,7 @@ export default function OnboardingTotpPage() {
                 layout="auth"
               />
               {error ? (
-                <p id="onboarding-totp-error" role="alert" className="form-message-text mt-1.5 text-red-600">
+                <p id="onboarding-totp-error" role="alert" className="form-message-text mt-1.5 text-destructive">
                   {error}
                 </p>
               ) : null}

@@ -6,13 +6,9 @@ import {
   feeMessageTemplatesResponseSchema,
   feePeriodListResponseSchema,
   feeRecordListResponseSchema,
-  feeTransactionListResponseSchema,
   feeTransactionBatchResponseSchema,
 } from "@/lib/schemas/fees";
-import {
-  verifyFeeTransactionBatch,
-  verifyFeeTransactionHistory,
-} from "@/lib/fees/transaction-integrity";
+import { verifyFeeTransactionBatch } from "@/lib/fees/transaction-integrity";
 import type {
   FeeBatchActionResponse,
   FeeNotificationState,
@@ -25,7 +21,6 @@ import type {
   FeeRefundRequest,
   FeeRefundReversalRequest,
   FeeRefundReversalResponse,
-  FeeTransactionListResponse,
   FeeTransactionBatchResponse,
   FeeUnpayTargetState,
 } from "@/lib/types";
@@ -121,16 +116,6 @@ export async function refundFeeRecords(
     throw new Error("Biên nhận hoàn phí không khớp với yêu cầu vừa gửi.");
   }
   return result;
-}
-
-export async function getFeeTransactions(
-  feeRecordId: string,
-): Promise<FeeTransactionListResponse> {
-  const { data } = await apiClient.get<unknown>(`/fees/${feeRecordId}/transactions`);
-  return verifyFeeTransactionHistory(
-    feeTransactionListResponseSchema.parse(data),
-    feeRecordId,
-  );
 }
 
 export async function getFeeTransactionBatch(

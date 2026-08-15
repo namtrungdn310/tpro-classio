@@ -2,18 +2,18 @@
 
 import { useDeferredValue, useMemo } from "react";
 import {
-  ChevronRight,
-  GraduationCap,
-  LoaderCircle,
-  RefreshCw,
-  SearchX,
-  UsersRound,
-} from "lucide-react";
+  RiArrowRightSLine as ChevronRight,
+  RiGraduationCapLine as GraduationCap,
+  RiLoader4Line as LoaderCircle,
+  RiRefreshLine as RefreshCw,
+  RiSearchLine as SearchX,
+  RiTeamLine as UsersRound,
+} from "react-icons/ri";
 import { HeaderControlsPortal } from "@/components/layout/header-controls-portal";
 import { HeaderFilterControls } from "@/components/layout/header-filter-controls";
 import { DataSectionEmpty, DataSectionError } from "@/components/ui/data-section-state";
 import type { ClassResponse, ClassType } from "@/lib/types";
-import { getClassGroupInfo } from "@/lib/utils/class-groups";
+import { getClassGroupInfoForRecord } from "@/lib/classes/presentation";
 import { formatCurrency, getCourseWeeks } from "@/lib/utils/format";
 import { filterAndSortClassSelection } from "@/lib/students/class-selection";
 
@@ -65,13 +65,15 @@ export function ClassSelectionView({
         new Set(
           classes
             .filter((class_) => class_.type === "COURSE")
-            .map((class_) => class_.billing_cycle_months),
+            .flatMap((class_) =>
+              [getCourseWeeks(class_.billing_cycle_months, class_.billing_cycle_weeks)],
+            ),
         ),
       )
         .sort((first, second) => first - second)
-        .map((months) => ({
-          label: `${getCourseWeeks(months)} tuần`,
-          value: String(months),
+        .map((weeks) => ({
+          label: `${weeks} tuần`,
+          value: String(weeks),
         })),
     [classes],
   );
@@ -224,26 +226,26 @@ function ClassSelectionCard({
   onPrefetch: () => void;
   onSelect: () => void;
 }) {
-  const group = getClassGroupInfo(class_.name);
+  const group = getClassGroupInfoForRecord(class_);
   const teacherNames = class_.teacher_names?.length
     ? class_.teacher_names
     : class_.teacher_name
       ? [class_.teacher_name]
       : [];
   const billingLabel = class_.type === "COURSE"
-    ? `${getCourseWeeks(class_.billing_cycle_months)} tuần`
+    ? `${getCourseWeeks(class_.billing_cycle_months, class_.billing_cycle_weeks)} tuần`
     : "tháng";
 
   return (
     <button
       type="button"
-      title={class_.name}
-      aria-label={`Mở lớp ${class_.name}, ${class_.student_count} học viên`}
+      title={class_.display_name}
+      aria-label={`Mở lớp ${class_.display_name}, ${class_.student_count} học viên`}
       onFocus={onPrefetch}
       onMouseEnter={onPrefetch}
       onTouchStart={onPrefetch}
       onClick={onSelect}
-      className="group relative flex min-h-[128px] flex-col overflow-hidden rounded-lg border px-4 py-3.5 text-left shadow-[0_1px_2px_rgba(15,23,42,0.035)] transition-shadow duration-150 hover:shadow-[0_3px_10px_rgba(15,23,42,0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#1967D2]/30"
+      className="group relative flex min-h-[128px] flex-col overflow-hidden rounded-lg border px-4 py-3.5 text-left shadow-[0_1px_2px_rgba(15,23,42,0.035)] transition-shadow duration-150 hover:shadow-[0_3px_10px_rgba(15,23,42,0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/30"
       style={{
         backgroundColor: group.color.background,
         borderColor: group.color.border,
@@ -252,8 +254,13 @@ function ClassSelectionCard({
       <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
         <div className="min-w-0">
           <h2 className="font-ui line-clamp-2 text-[16px] font-semibold leading-5 text-gray-950">
-            {class_.name}
+            {class_.primary_label}
           </h2>
+          {class_.secondary_label && (class_.grade_level || class_.academic_year_start) ? (
+            <p className="mt-0.5 truncate text-xs font-medium text-gray-500">
+              {class_.secondary_label}
+            </p>
+          ) : null}
           <p className="mt-1 truncate text-xs text-gray-600">
             {teacherNames.length > 0 ? teacherNames.join(", ") : "Chưa phân công giáo viên"}
           </p>

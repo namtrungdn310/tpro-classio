@@ -24,7 +24,7 @@ export function FeesPageSkeleton({
           </div>
         </div>
         <div className="h-[209px] overflow-hidden rounded-md border border-gray-200 bg-white">
-          <div className="flex h-9 items-center justify-between border-b border-gray-200 bg-gray-50/50 px-3">
+          <div className="flex h-9 items-center justify-between border-b border-gray-200 bg-gray-100/60 px-3">
             <div className="h-3 w-20 rounded bg-gray-200" />
             <div className="flex items-center gap-1.5">
               <div className="h-3 w-7 rounded bg-gray-100" />
@@ -79,7 +79,7 @@ function FeesSkeleton({
       </div>
 
       <div className="hidden h-full min-h-0 flex-col overflow-hidden rounded-lg border border-gray-200 xl:flex">
-        <div className="shrink-0 border-b border-gray-200 bg-gray-50">
+        <div className="shrink-0 border-b border-gray-200 bg-gray-100">
           <div className={`${gridClass} items-center`}>
             {[96, 120, 86, 82, 78, 72, 80, 72]
               .slice(0, columnCount)

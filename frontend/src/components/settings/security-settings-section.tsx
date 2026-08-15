@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { CheckCircle2, ShieldAlert, ShieldCheck } from "lucide-react";
+import { RiCheckboxCircleLine as CheckCircle2, RiShieldFlashLine as ShieldAlert, RiShieldCheckLine as ShieldCheck } from "react-icons/ri";
 import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 import { useToast } from "@/components/providers/toast-provider";
@@ -296,7 +296,7 @@ export function SecuritySettingsSection({ user }: { user: UserMe }) {
               <Button
                 type="submit"
                 disabled={isVerifying}
-                className="h-8 rounded-md bg-gray-950 px-3 text-sm text-white hover:bg-black"
+                className="h-8 rounded-md bg-primary px-3 text-sm text-primary-foreground hover:bg-primary/90"
               >
                 {isVerifying ? <LoadingLabel label="Đang kiểm tra" /> : "Kiểm tra"}
               </Button>
@@ -488,7 +488,7 @@ export function SecuritySettingsSection({ user }: { user: UserMe }) {
                   )}
                 />
                 {otpSent && (!otpExpired || !otpError) ? (
-                  <p className={cn("caption-text mt-1", otpExpired ? "text-red-600" : "text-gray-500")}>
+                  <p className={cn("caption-text mt-1", otpExpired ? "text-destructive" : "text-gray-500")}>
                     {otpExpired
                       ? "Mã OTP đã hết hạn. Hãy gửi lại mã mới."
                       : `Mã OTP còn hiệu lực ${formatOtpRemaining(otpRemainingSeconds)}.`}
@@ -504,7 +504,7 @@ export function SecuritySettingsSection({ user }: { user: UserMe }) {
               <p>Đổi mật khẩu sẽ đăng xuất các phiên đang hoạt động trên những thiết bị khác.</p>
             </div>
             {formError ? (
-              <p role="alert" className="mt-2 text-[13px] font-medium leading-5 text-red-600">
+              <p role="alert" className="mt-2 text-[13px] font-medium leading-5 text-destructive">
                 {formError}
               </p>
             ) : null}
@@ -512,7 +512,7 @@ export function SecuritySettingsSection({ user }: { user: UserMe }) {
               <Button
                 type="submit"
                 disabled={!otpSent || otpExpired || isSubmitting}
-                className="h-8 rounded-md bg-gray-950 px-4 text-sm text-white hover:bg-black"
+                className="h-8 rounded-md bg-primary px-4 text-sm text-primary-foreground hover:bg-primary/90"
               >
                 {isSubmitting ? <LoadingLabel label="Đang cập nhật" /> : "Cập nhật mật khẩu"}
               </Button>

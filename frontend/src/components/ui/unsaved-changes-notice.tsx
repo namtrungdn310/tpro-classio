@@ -1,4 +1,4 @@
-import { AlertCircle } from "lucide-react";
+import { RiAlertLine as AlertCircle } from "react-icons/ri";
 import { cn } from "@/lib/utils";
 
 type UnsavedChangesNoticeProps = {
@@ -42,10 +42,7 @@ export function UnsavedChangesNotice({
         aria-hidden="true"
       />
       <p className="form-message-text">
-        <span className="font-semibold">Thay đổi chưa được lưu.</span>{" "}
-        <span className={variant === "inline" ? "sr-only" : undefined}>
-          Nhấn Lưu để áp dụng.
-        </span>
+        <span className="font-semibold">Thay đổi chưa được lưu.</span>
       </p>
     </div>
   );

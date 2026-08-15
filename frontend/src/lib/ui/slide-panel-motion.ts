@@ -7,9 +7,9 @@ import {
   type RefObject,
 } from "react";
 
-const MIN_SLIDE_DURATION_MS = 320;
-const MAX_SLIDE_DURATION_MS = 520;
-const SLIDE_SPEED_PX_PER_MS = 2.15;
+const MIN_SLIDE_DURATION_MS = 290;
+const MAX_SLIDE_DURATION_MS = 480;
+const SLIDE_SPEED_PX_PER_MS = 2.35;
 
 export const SLIDE_PANEL_EASING = "cubic-bezier(0.22, 1, 0.36, 1)";
 

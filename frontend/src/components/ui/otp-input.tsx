@@ -43,6 +43,7 @@ export const OtpInput = forwardRef<HTMLInputElement, OtpInputProps>(function Otp
   layout = "compact",
 }: OtpInputProps, forwardedRef) {
   const inputRefs = useRef<Array<HTMLInputElement | null>>([]);
+  const autoFocusedOnceRef = useRef(false);
   const normalizedLength = normalizeOtpLength(length);
   const latestValueRef = useRef("");
   const normalizedValue = useMemo(
@@ -62,8 +63,13 @@ export const OtpInput = forwardRef<HTMLInputElement, OtpInputProps>(function Otp
     latestValueRef.current = normalizedValue;
   }, [normalizedValue]);
 
+  // Auto-focus exactly once on the first enabled render. Without the guard,
+  // toggling `disabled` (e.g. during a submit that re-enables the inputs while
+  // navigation is in flight) re-focuses the first cell and selects its digit,
+  // painting a brief blue selection highlight before the page unmounts.
   useEffect(() => {
-    if (!autoFocus || disabled) return;
+    if (!autoFocus || disabled || autoFocusedOnceRef.current) return;
+    autoFocusedOnceRef.current = true;
     inputRefs.current[0]?.focus();
   }, [autoFocus, disabled]);
 
@@ -233,7 +239,7 @@ export const OtpInput = forwardRef<HTMLInputElement, OtpInputProps>(function Otp
           className={cn(
             "otp-digit-text aspect-square w-full min-w-0 rounded-lg border border-gray-300 bg-white text-center text-gray-950 outline-none transition-[border-color,box-shadow,background-color] duration-150 enabled:hover:border-gray-400 focus:border-gray-500 focus:ring-2 focus:ring-gray-200 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-400",
             layout === "compact" && "max-w-11",
-            invalid && "border-red-500 focus:border-red-500 focus:ring-red-100",
+            invalid && "border-destructive focus:border-destructive focus:ring-destructive/15",
           )}
         />
       ))}

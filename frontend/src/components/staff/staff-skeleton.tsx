@@ -18,7 +18,7 @@ export function StaffSkeleton({
     : canViewPrivate
       ? STAFF_PRIVATE_VIEWER_GRID
       : STAFF_PUBLIC_VIEWER_GRID;
-  const columnCount = canManage ? 5 : canViewPrivate ? 4 : 3;
+  const columnCount = canViewPrivate ? 4 : 3;
 
   return (
     <div aria-hidden="true" className="h-full min-h-0 animate-pulse overflow-hidden">
@@ -40,14 +40,14 @@ export function StaffSkeleton({
       </div>
 
       <div className="hidden h-full min-h-0 overflow-hidden rounded-lg border border-gray-200 bg-white xl:flex xl:flex-col">
-        <div className={`grid ${gridClass} shrink-0 border-b border-gray-200 bg-gray-50`}>
+        <div className={`grid ${gridClass} shrink-0 border-b border-gray-200 bg-gray-100`}>
           {Array.from({ length: columnCount }, (_, index) => (
             <div key={index} className="px-2.5 py-3">
               <div className="h-3 w-16 rounded bg-gray-200" />
             </div>
           ))}
         </div>
-        <div className="min-h-0 flex-1 divide-y divide-gray-100 overflow-hidden">
+        <div className="min-h-0 flex-1 divide-y divide-gray-200 overflow-hidden">
           {Array.from({ length: 9 }, (_, row) => (
             <div key={row} className={`grid ${gridClass} items-center`}>
               {Array.from({ length: columnCount }, (_, cell) => (

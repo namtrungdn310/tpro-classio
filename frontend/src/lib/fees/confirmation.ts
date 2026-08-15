@@ -12,12 +12,10 @@ export type FeeConfirmationTarget = {
 export function canRestoreNotifiedFeeState(group: StudentFeeGroup): boolean {
   return (
     group.records.length > 0 &&
-    group.records.every(
-      (record) =>
-        record.notified_at !== null &&
-        record.notification_channel !== null &&
-        Boolean(record.notification_message?.trim()),
-    )
+    // This remains the truthful default for the dialog. The operator may still
+    // explicitly choose either target; the backend materializes a notification
+    // snapshot when "Đã báo" is selected for a direct payment.
+    group.records.every((record) => record.notified_at !== null)
   );
 }
 
@@ -34,6 +32,7 @@ export function getFeeConfirmationContent(
   title: string;
   description: string;
   confirmLabel: string;
+  pendingLabel: string;
   tone: "default" | "danger";
 } {
   if (!target) {
@@ -41,6 +40,7 @@ export function getFeeConfirmationContent(
       title: "Xác nhận thao tác",
       description: "",
       confirmLabel: "Xác nhận",
+      pendingLabel: "Đang xử lý",
       tone: "default",
     };
   }
@@ -52,6 +52,7 @@ export function getFeeConfirmationContent(
       title: "Ghi nhận đã nộp học phí",
       description: `Xác nhận đã nhận ${formatCurrency(group.total_amount)} của ${group.student_name} cho ${classNames}. Giao dịch này sẽ được lưu vào lịch sử thanh toán.`,
       confirmLabel: "Xác nhận đã nộp",
+      pendingLabel: "Đang ghi nhận",
       tone: "default",
     };
   }
@@ -65,6 +66,7 @@ export function getFeeConfirmationContent(
       title: "Hoàn tác ghi nhận đã nộp",
       description: `Khoản ${formatCurrency(group.total_amount)} của ${group.student_name} sẽ ${targetDescription}. Hệ thống vẫn giữ bút toán sửa sai để đối soát.`,
       confirmLabel: "Hoàn tác",
+      pendingLabel: "Đang hoàn tác",
       tone: "danger",
     };
   }
@@ -73,6 +75,7 @@ export function getFeeConfirmationContent(
     title: "Chuyển về trạng thái chưa báo",
     description: `Học phí của ${group.student_name} sẽ được tính lại theo dữ liệu lớp hiện tại. Khoản không còn hợp lệ sẽ được gỡ khỏi kỳ thu này.`,
     confirmLabel: "Chuyển về chưa báo",
+    pendingLabel: "Đang chuyển",
     tone: "danger",
   };
 }

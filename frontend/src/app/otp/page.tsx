@@ -330,14 +330,14 @@ export default function OtpPage() {
               />
               <p
                 id="otp-status"
-                className={`caption-text mt-2 text-center ${otpExpired ? "text-red-600" : "text-gray-500"}`}
+                className={`caption-text mt-2 text-center ${otpExpired ? "text-destructive" : "text-gray-500"}`}
               >
                 {otpExpired
                   ? "Mã OTP đã hết hạn. Hãy gửi lại mã mới."
                   : `Mã OTP còn hiệu lực ${formatOtpRemaining(remainingOtpSeconds)}.`}
               </p>
               {visibleOtpError ? (
-                <p id="otp-error" role="alert" className="form-message-text mt-1 text-red-600">
+                <p id="otp-error" role="alert" className="form-message-text mt-1 text-destructive">
                   {visibleOtpError}
                 </p>
               ) : null}
@@ -395,7 +395,7 @@ export default function OtpPage() {
             </AuthField>
 
             {error ? (
-              <p role="alert" className="form-message-text text-red-600">
+              <p role="alert" className="form-message-text text-destructive">
                 {error}
               </p>
             ) : null}

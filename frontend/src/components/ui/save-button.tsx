@@ -22,10 +22,11 @@ export function SaveButton({
     <Button
       {...props}
       className={cn(
-        "h-8 w-fit rounded-md bg-gray-950 px-3 text-sm text-white hover:bg-black",
+        "h-8 w-fit rounded-md bg-primary px-3 text-sm text-primary-foreground hover:bg-primary/90",
         className,
       )}
       disabled={isSaving || disabled}
+      aria-busy={isSaving || undefined}
     >
       {isSaving ? <LoadingLabel label={pendingLabel} /> : idleLabel}
     </Button>

@@ -32,6 +32,12 @@ export type StudentFeeGroup = {
   records: FeeRecordResponse[];
 };
 
+export function formatFeeGroupSubject(group: StudentFeeGroup): string {
+  const classNames = group.classes.map((class_) => class_.name).join(", ");
+  const classLabel = group.classes.length > 1 ? "các lớp" : "lớp";
+  return `em ${group.student_name}, ${classLabel} ${classNames || "chưa xác định"}`;
+}
+
 export function buildStudentFeeGroups(records: FeeRecordResponse[]) {
   const groups = new Map<string, StudentFeeGroup>();
 

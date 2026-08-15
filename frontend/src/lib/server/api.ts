@@ -2,6 +2,7 @@ import { QueryClient } from "@tanstack/react-query";
 import type { ClassResponse, DashboardOverviewResponse } from "@/lib/types";
 import { dashboardOverviewSchema } from "@/lib/schemas/dashboard";
 import { classResponseListSchema } from "@/lib/schemas/class";
+import { classQueryKeys } from "@/lib/classes/query-keys";
 import { getBackendBaseUrl } from "@/lib/server/backend";
 
 async function fetchServerJson<T>(
@@ -56,9 +57,9 @@ export async function prefetchDashboardQueries(
         }).then((data) => dashboardOverviewSchema.parse(data)),
     }),
     queryClient.prefetchQuery({
-      queryKey: ["classes", { is_active: true }],
+      queryKey: classQueryKeys.list("active"),
       queryFn: () =>
-        fetchServerJson<ClassResponse[]>("/classes?is_active=true", {
+        fetchServerJson<ClassResponse[]>("/classes?scope=active", {
           accessToken: options.accessToken as string,
           deviceId: options.deviceId as string,
           secChUaMobile: options.secChUaMobile,

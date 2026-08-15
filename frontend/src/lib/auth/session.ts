@@ -85,7 +85,7 @@ function getUserFromPayload(payload: TokenPayload): UserMe | null {
   if (
     !payload.sub ||
     !payload.email ||
-    (payload.role !== "admin" && payload.role !== "viewer")
+    (payload.role !== "admin" && payload.role !== "teacher" && payload.role !== "dev")
   ) {
     return null;
   }

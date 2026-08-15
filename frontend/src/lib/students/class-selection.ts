@@ -1,6 +1,7 @@
 import type { ClassResponse, ClassType } from "@/lib/types";
 import { getClassSortKey } from "@/lib/utils/class-groups";
 import { createSmartSearchMatcher } from "@/lib/utils/search";
+import { getCourseWeeks } from "@/lib/utils/format";
 
 export type ClassSelectionFilters = {
   duration: string;
@@ -16,10 +17,17 @@ export function filterAndSortClassSelection(
 
   return [...classes]
     .filter((class_) => {
-      const matchesName = matchesSearch([class_.name]);
+      const matchesName = matchesSearch([
+        class_.name,
+        class_.display_name,
+        class_.primary_label,
+        class_.secondary_label,
+      ]);
       const matchesType = filters.type === "" || class_.type === filters.type;
       const matchesDuration =
-        filters.duration === "" || class_.billing_cycle_months === Number(filters.duration);
+        filters.duration === "" ||
+        getCourseWeeks(class_.billing_cycle_months, class_.billing_cycle_weeks) ===
+          Number(filters.duration);
       return matchesName && matchesType && matchesDuration;
     })
     .sort((first, second) => {

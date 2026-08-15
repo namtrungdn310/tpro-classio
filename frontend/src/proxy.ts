@@ -18,6 +18,7 @@ const PRE_AUTH_PAGES = new Set([
   "/onboarding/totp",
 ]);
 const PROTECTED_PREFIXES = [
+  "/attendance",
   "/classes",
   "/fees",
   "/report",
@@ -29,6 +30,7 @@ const TOKEN_EXPIRY_SKEW_MS = 30_000;
 
 type ProxyTokenPayload = {
   exp?: number;
+  role?: "admin" | "teacher" | "dev";
 };
 
 function isProtectedPath(pathname: string): boolean {
@@ -110,10 +112,12 @@ export function proxy(request: NextRequest) {
   const hasAccessSession = hasValidAccessToken(request);
   const hasRefreshSession = request.cookies.has(REFRESH_TOKEN_COOKIE_KEY);
   const hasFlowSession = request.cookies.has(FLOW_SESSION_COOKIE_KEY);
+  const accessToken = request.cookies.get(ACCESS_TOKEN_COOKIE_KEY)?.value;
+  const tokenRole = decodeTokenPayload(accessToken)?.role;
 
   if ((AUTH_PAGES.has(pathname) || PRE_AUTH_PAGES.has(pathname)) && hasAccessSession) {
     return applySecurityHeaders(
-      NextResponse.redirect(new URL("/", request.url)),
+      NextResponse.redirect(new URL(tokenRole === "teacher" ? "/attendance" : "/", request.url)),
       request,
       contentSecurityPolicy,
     );
@@ -137,6 +141,23 @@ export function proxy(request: NextRequest) {
     );
   }
 
+
+  if (hasAccessSession && tokenRole === "teacher" && pathname !== "/attendance") {
+    return applySecurityHeaders(
+      NextResponse.redirect(new URL("/attendance", request.url)),
+      request,
+      contentSecurityPolicy,
+    );
+  }
+
+  if (hasAccessSession && tokenRole !== "teacher" && pathname === "/attendance") {
+    return applySecurityHeaders(
+      NextResponse.redirect(new URL("/", request.url)),
+      request,
+      contentSecurityPolicy,
+    );
+  }
+
   // Next.js reads the nonce from the request CSP and applies it to framework
   // and application scripts during server rendering. Never expose the nonce
   // through a response header other than the CSP itself.
@@ -151,5 +172,5 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon.png|logo-mark-bw.png).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon.png|logo-mark.png).*)"],
 };

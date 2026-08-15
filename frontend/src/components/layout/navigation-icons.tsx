@@ -1,54 +1,52 @@
+import type { IconType } from "react-icons";
 import {
-  ChartNoAxesColumnIncreasing,
-  GraduationCap,
-  IdCardLanyard,
-  LayoutDashboard,
-  LogOut,
-  ReceiptText,
-  Settings,
-  UsersRound,
-  type LucideIcon,
-} from "lucide-react";
+  RiBarChartBoxLine,
+  RiDashboardLine,
+  RiFileList3Line,
+  RiGraduationCapLine,
+  RiIdCardLine,
+  RiLogoutBoxRLine,
+  RiSettings3Line,
+  RiTeamLine,
+} from "react-icons/ri";
 
 export type NavigationItem = {
   href: string;
   label: string;
-  icon: LucideIcon;
+  icon: IconType;
   opticalSize?: number;
 };
 
 export const MAIN_NAVIGATION_ITEMS: readonly NavigationItem[] = [
-  { href: "/", label: "Tổng quan", icon: LayoutDashboard },
-  { href: "/students", label: "Học viên", icon: UsersRound },
-  { href: "/classes", label: "Lớp học", icon: GraduationCap },
+  { href: "/", label: "Tổng quan", icon: RiDashboardLine },
+  { href: "/students", label: "Học viên", icon: RiTeamLine },
+  { href: "/classes", label: "Lớp học", icon: RiGraduationCapLine },
   {
     href: "/staff",
     label: "Nhân sự",
-    icon: IdCardLanyard,
+    icon: RiIdCardLine,
     opticalSize: 19,
   },
-  { href: "/fees", label: "Học phí", icon: ReceiptText },
-  { href: "/report", label: "Báo cáo", icon: ChartNoAxesColumnIncreasing },
+  { href: "/fees", label: "Học phí", icon: RiFileList3Line },
+  { href: "/report", label: "Báo cáo", icon: RiBarChartBoxLine },
 ];
 
 export const SETTINGS_NAVIGATION_ITEM: NavigationItem = {
   href: "/settings",
   label: "Cài đặt",
-  icon: Settings,
+  icon: RiSettings3Line,
 };
 
-export const LOGOUT_NAVIGATION_ICON = LogOut;
+export const LOGOUT_NAVIGATION_ICON = RiLogoutBoxRLine;
 
 type NavigationIconProps = {
-  icon: LucideIcon;
+  icon: IconType;
   className?: string;
   opticalSize?: number;
 };
 
 /**
- * Keeps every navigation glyph on the same Lucide geometry and optical weight.
- * `absoluteStrokeWidth` prevents the visible stroke from changing when CSS scales
- * an icon in a different navigation layout.
+ * Keeps every navigation glyph on the same Remix Icon line family and optical size.
  */
 export function NavigationIcon({
   icon: Icon,
@@ -60,11 +58,7 @@ export function NavigationIcon({
       aria-hidden="true"
       focusable="false"
       size={opticalSize}
-      strokeWidth={1.75}
-      absoluteStrokeWidth
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={`shrink-0 ${className ?? ""}`}
+      className={`icon-system shrink-0 ${className ?? ""}`}
     />
   );
 }

@@ -13,7 +13,7 @@ export function Navbar() {
   const { logout, user } = useAuth();
   const displayName = user?.username || user?.full_name || user?.email?.split("@")[0] || "Tài khoản";
   const avatarLetter = displayName.charAt(0).toLocaleUpperCase("vi-VN");
-  const roleLabel = user?.is_owner ? "Dev" : user?.role === "admin" ? "Admin" : "Viewer";
+  const roleLabel = user?.is_owner ? "Dev" : user?.role === "admin" ? "Admin" : "Giáo viên";
 
   async function handleLogout() {
     await logout();
@@ -36,13 +36,15 @@ export function Navbar() {
         aria-label="Tải lại trang"
         title="Tải lại trang"
       >
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center bg-transparent md:hidden sm:h-9 sm:w-9">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center bg-transparent md:hidden sm:h-10 sm:w-10">
           <Image
-            src="/logo-mark-bw.png"
+            src="/logo-mark.png"
             alt="TPRO"
-            width={24}
-            height={24}
-            className="h-[22px] w-[22px] object-contain sm:h-[25px] sm:w-[25px]"
+            width={100}
+            height={100}
+            sizes="30px"
+            quality={100}
+            className="h-[30px] w-[30px] object-contain sm:h-[32px] sm:w-[32px]"
             priority
           />
         </span>
@@ -79,7 +81,7 @@ export function Navbar() {
           onClick={() => void handleLogout()}
           aria-label="Đăng xuất"
           title="Đăng xuất"
-          className="inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-600 transition hover:bg-gray-100 hover:text-[#1967D2] md:hidden"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-600 transition hover:bg-primary/10 hover:text-primary md:hidden"
         >
           <NavigationIcon icon={LOGOUT_NAVIGATION_ICON} />
         </button>

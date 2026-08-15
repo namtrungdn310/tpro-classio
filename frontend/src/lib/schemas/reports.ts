@@ -69,3 +69,85 @@ export const feeOperationListSchema = z.object({
   history_complete_from: z.string().datetime({ offset: true }).nullable(),
 });
 
+export const feePaidReceiptRefundStateSchema = z.enum([
+  "NONE",
+  "PARTIAL",
+  "FULL",
+  "REVERSED",
+]);
+
+export const feePaidReceiptTimelineEventSchema = z.enum([
+  "payment",
+  "refund",
+  "refund_reversal",
+  "payment_reversal",
+]);
+
+const paymentMethodSchema = z.enum(["bank_transfer", "cash"]);
+const nonnegativeAmount = z.number().int().safe().nonnegative();
+const paidReceiptActorSchema = {
+  actor_name: z.string().nullable(),
+  actor_username: z.string().nullable(),
+  actor_role: z.string().nullable(),
+};
+
+export const feePaidReceiptSummarySchema = z.object({
+  receipt_id: z.string().min(1),
+  payment_operation_id: z.string().uuid(),
+  student_id: nullableUuid,
+  student_name: z.string().min(1),
+  period: z.string().regex(/^\d{4}-\d{2}$/).nullable(),
+  paid_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  paid_at: z.string().datetime({ offset: true }),
+  payment_method: paymentMethodSchema,
+  gross_amount: nonnegativeAmount,
+  refunded_amount: nonnegativeAmount,
+  net_amount: nonnegativeAmount,
+  refund_state: feePaidReceiptRefundStateSchema,
+  class_count: z.number().int().positive(),
+  class_names: z.array(z.string().min(1)),
+  ...paidReceiptActorSchema,
+}).strict();
+
+export const feePaidReportSummarySchema = z.object({
+  gross_amount: nonnegativeAmount,
+  refunded_amount: nonnegativeAmount,
+  net_amount: nonnegativeAmount,
+  receipt_count: z.number().int().nonnegative(),
+  student_count: z.number().int().nonnegative(),
+  bank_transfer_net_amount: nonnegativeAmount,
+  cash_net_amount: nonnegativeAmount,
+}).strict();
+
+export const feePaidReceiptAllocationSchema = z.object({
+  fee_record_id: nullableUuid,
+  enrollment_id: nullableUuid,
+  class_id: nullableUuid,
+  class_name: z.string().min(1),
+  period: z.string().regex(/^\d{4}-\d{2}$/),
+  gross_amount: nonnegativeAmount,
+  refunded_amount: nonnegativeAmount,
+  net_amount: nonnegativeAmount,
+}).strict();
+
+export const feePaidReceiptTimelineItemSchema = z.object({
+  id: z.string().uuid(),
+  event: feePaidReceiptTimelineEventSchema,
+  business_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  occurred_at: z.string().datetime({ offset: true }),
+  amount_delta: signedAmount,
+  payment_method: paymentMethodSchema,
+  ...paidReceiptActorSchema,
+  reason: z.string().nullable(),
+}).strict();
+
+export const feePaidReceiptDetailSchema = feePaidReceiptSummarySchema.extend({
+  allocations: z.array(feePaidReceiptAllocationSchema),
+  timeline: z.array(feePaidReceiptTimelineItemSchema),
+});
+
+export const feePaidReceiptListSchema = z.object({
+  receipts: z.array(feePaidReceiptSummarySchema),
+  next_cursor: z.string().nullable(),
+  summary: feePaidReportSummarySchema,
+}).strict();

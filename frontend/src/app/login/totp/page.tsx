@@ -30,13 +30,13 @@ export default function LoginTotpPage() {
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  async function handleTotpVerify() {
-    if (code.length !== 6 || submissionInFlightRef.current) return;
+  async function handleTotpVerify(codeValue: string) {
+    if (codeValue.length !== 6 || submissionInFlightRef.current) return;
     submissionInFlightRef.current = true;
     setIsSubmitting(true);
     setError("");
     try {
-      await verifyLoginTotp(code);
+      await verifyLoginTotp(codeValue);
       await refresh();
       router.replace("/");
       router.refresh();
@@ -87,7 +87,7 @@ export default function LoginTotpPage() {
             if (showRecovery) {
               void handleRecoveryVerify();
             } else {
-              void handleTotpVerify();
+              void handleTotpVerify(code);
             }
           }}
         >
@@ -103,6 +103,9 @@ export default function LoginTotpPage() {
                   onChange={(value) => {
                     setCode(value);
                     setError("");
+                    if (value.length === 6 && !showRecovery) {
+                      void handleTotpVerify(value);
+                    }
                   }}
                   disabled={isSubmitting}
                   autoFocus
@@ -113,7 +116,7 @@ export default function LoginTotpPage() {
               </div>
 
               {error ? (
-                <p id="login-mfa-error" role="alert" className="form-message-text text-red-600">{error}</p>
+                <p id="login-mfa-error" role="alert" className="form-message-text text-destructive">{error}</p>
               ) : null}
 
               <button
@@ -145,12 +148,12 @@ export default function LoginTotpPage() {
                   disabled={isSubmitting}
                   aria-invalid={Boolean(error)}
                   aria-describedby={error ? "login-recovery-error" : undefined}
-                  className={cn(authInputClassName, "h-10 font-mono tracking-widest")}
+                  className={cn(authInputClassName, "h-10")}
                 />
               </div>
 
               {error ? (
-                <p id="login-recovery-error" role="alert" className="form-message-text text-red-600">{error}</p>
+                <p id="login-recovery-error" role="alert" className="form-message-text text-destructive">{error}</p>
               ) : null}
 
               <button

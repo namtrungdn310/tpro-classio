@@ -2,19 +2,33 @@
 
 import { useDeferredValue, useMemo, useState } from "react";
 import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { IdCardLanyard, LoaderCircle, Plus, SearchX } from "lucide-react";
+import {
+  RiIdCardLine as IdCardLanyard,
+  RiLoader4Line as LoaderCircle,
+  RiAddLine as Plus,
+  RiPencilLine as Pencil,
+  RiArrowGoBackLine as RotateCcw,
+  RiSearchLine as SearchX,
+  RiUserUnfollowLine as UserRoundX,
+  RiMoneyDollarCircleLine as Payroll,
+} from "react-icons/ri";
 import { HeaderControlsPortal } from "@/components/layout/header-controls-portal";
 import { HeaderFilterControls } from "@/components/layout/header-filter-controls";
 import { useToast } from "@/components/providers/toast-provider";
 import { StaffFormDialog } from "@/components/staff/staff-form-dialog";
+import { StaffPayrollDialog } from "@/components/staff/staff-payroll-dialog";
 import { StaffSkeleton } from "@/components/staff/staff-skeleton";
 import { StaffTable } from "@/components/staff/staff-table";
+import { EntityActionsDialog, type EntityActionItem } from "@/components/shared/entity-actions-dialog";
 import { ConfirmationDialog } from "@/components/ui/confirmation-dialog";
 import { DataSectionEmpty, DataSectionError } from "@/components/ui/data-section-state";
 import { LoadingLabel } from "@/components/ui/loading-label";
+import { QuickActionFab } from "@/components/ui/quick-action-fab";
 import { createStaffMember, getStaffMembers, updateStaffMember } from "@/lib/api/staff";
 import { getApiErrorMessage } from "@/lib/api/errors";
+import type { ContactSuggestionSource } from "@/lib/forms/use-contact-pair-suggestion";
 import { useAuth } from "@/lib/hooks/useAuth";
+import { isManagementUser } from "@/lib/auth/permissions";
 import { usePersistentState } from "@/lib/hooks/usePersistentState";
 import {
   countActiveStaff,
@@ -30,8 +44,8 @@ const EMPTY_STAFF: StaffResponse[] = [];
 
 export default function StaffPage() {
   const { user } = useAuth();
-  const canManage = Boolean(user?.is_owner);
-  const canViewPrivate = user?.role === "admin";
+  const canManage = isManagementUser(user);
+  const canViewPrivate = canManage;
   const queryClient = useQueryClient();
   const notify = useToast();
   const [search, setSearch] = usePersistentState("tpro:staff:search", "");
@@ -41,6 +55,8 @@ export default function StaffPage() {
   const [editingRecord, setEditingRecord] = useState<PreparedStaffRecord | null>(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [statusTarget, setStatusTarget] = useState<PreparedStaffRecord | null>(null);
+  const [actionTarget, setActionTarget] = useState<PreparedStaffRecord | null>(null);
+  const [payrollTarget, setPayrollTarget] = useState<PreparedStaffRecord | null>(null);
 
   const staffQuery = useQuery({
     queryKey: staffQueryKeys.list,
@@ -106,6 +122,24 @@ export default function StaffPage() {
   });
 
   const staff = staffQuery.data ?? EMPTY_STAFF;
+  const contactSuggestionSources = useMemo<ContactSuggestionSource[]>(
+    () =>
+      canManage
+        ? staff
+            .filter(
+              (staffMember) =>
+                staffMember.is_active &&
+                Boolean(staffMember.zalo_name?.trim()) &&
+                Boolean(staffMember.phone?.trim()),
+            )
+            .map((staffMember) => ({
+              owner: "staff" as const,
+              phone: staffMember.phone,
+              zaloName: staffMember.zalo_name,
+            }))
+        : [],
+    [canManage, staff],
+  );
   const preparedStaff = useMemo(
     () => prepareStaffRecords(staff, canViewPrivate),
     [canViewPrivate, staff],
@@ -279,8 +313,7 @@ export default function StaffPage() {
             canManage={canManage}
             canViewPrivate={canViewPrivate}
             records={filteredStaff}
-            onEdit={openEditForm}
-            onToggleStatus={requestStatusChange}
+            onRowClick={setActionTarget}
           />
         ) : null}
       </div>
@@ -288,6 +321,7 @@ export default function StaffPage() {
       {isFormOpen && canManage ? (
         <StaffFormDialog
           assignedClassNames={editingRecord?.assignedClasses.map((class_) => class_.name) ?? []}
+          contactSuggestionSources={contactSuggestionSources}
           isSaving={isSaving}
           staff={editingRecord?.staff ?? null}
           onClose={closeForm}
@@ -330,6 +364,28 @@ export default function StaffPage() {
           }
         }}
       />
+      {payrollTarget ? (
+        <StaffPayrollDialog
+          staffId={payrollTarget.staff.id}
+          staffName={payrollTarget.staff.full_name}
+          onClose={() => setPayrollTarget(null)}
+        />
+      ) : null}
+      {actionTarget && !isFormOpen && !statusTarget && !payrollTarget ? (
+        <EntityActionsDialog
+          open
+          title={`Thao tác với nhân sự ${actionTarget.staff.full_name}`}
+          onClose={() => setActionTarget(null)}
+          actions={[
+            { label: "Chỉnh sửa thông tin", icon: <Pencil className="h-4 w-4" aria-hidden="true" />, onClick: () => openEditForm(actionTarget) },
+            { label: "Thù lao & tất toán", icon: <Payroll className="h-4 w-4" aria-hidden="true" />, onClick: () => { setActionTarget(null); setPayrollTarget(actionTarget); } },
+            ...(actionTarget.staff.staff_type === "TEACHER"
+              ? [{ label: actionTarget.staff.is_active ? "Ngừng hoạt động" : "Kích hoạt lại", icon: actionTarget.staff.is_active ? <UserRoundX className="h-4 w-4" aria-hidden="true" /> : <RotateCcw className="h-4 w-4" aria-hidden="true" />, tone: actionTarget.staff.is_active ? "danger" : "default", onClick: () => requestStatusChange(actionTarget) } as EntityActionItem]
+              : []),
+          ]}
+        />
+      ) : null}
+      {canManage ? <QuickActionFab label="Thêm nhân sự" onClick={openCreateForm} /> : null}
     </div>
   );
 }
@@ -340,7 +396,7 @@ function AddStaffButton({ onClick }: { onClick: () => void }) {
       type="button"
       onClick={onClick}
       aria-label="Thêm nhân sự"
-      className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md bg-gray-950 px-3 text-sm font-medium text-white transition hover:bg-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-300"
+      className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
     >
       <Plus className="h-3.5 w-3.5" aria-hidden="true" />
       Thêm nhân sự

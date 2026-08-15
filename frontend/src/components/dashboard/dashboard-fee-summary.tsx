@@ -1,33 +1,44 @@
-import { DashboardCashflowChart } from "@/components/dashboard/dashboard-cashflow-chart";
-import { DashboardFinancialRing } from "@/components/dashboard/dashboard-financial-ring";
-import type { DashboardFeeSummary, DashboardRevenuePoint } from "@/lib/types";
+import type { DashboardFeeSummary } from "@/lib/types";
+import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/utils/format";
 
 type DashboardFeeSummaryCardProps = {
+  className?: string;
   fees: DashboardFeeSummary;
-  revenueTrend: DashboardRevenuePoint[];
 };
 
+const SEGMENT_COUNT = 44;
+
 export function DashboardFeeSummaryCard({
+  className,
   fees,
-  revenueTrend,
 }: DashboardFeeSummaryCardProps) {
   const collectionRate = getCollectionRate(
     fees.net_collected_amount,
     fees.total_amount,
   );
   const hasFees = fees.record_count > 0;
+  const overallRatio = collectionRate / 100;
+  const exactSegments = overallRatio * SEGMENT_COUNT;
+  const completedSegments = Math.floor(exactSegments);
+  const activeSegmentRatio = Math.max(
+    0,
+    Math.min(1, exactSegments - completedSegments),
+  );
 
   return (
     <article
       aria-labelledby="dashboard-fee-summary-title"
-      className="dashboard-fee-panel-enter relative flex min-h-[390px] flex-1 flex-col overflow-hidden rounded-[22px] border border-gray-200/90 bg-white p-4 text-gray-950 shadow-[0_16px_50px_rgba(15,23,42,0.055)]"
-      style={{ animationDelay: "165ms" }}
+      className={cn(
+        "dashboard-fee-panel-enter relative flex min-h-[160px] flex-col overflow-hidden rounded-[22px] border border-primary/10 bg-white px-5 py-4 text-gray-950 shadow-[0_16px_50px_rgba(0,39,135,0.06)]",
+        className,
+      )}
+      style={{ animationDelay: "110ms" }}
     >
       <header className="flex min-w-0 items-center justify-between gap-3">
         <h2
           id="dashboard-fee-summary-title"
-          className="table-heading-text text-[#315477]"
+          className="table-heading-text text-primary"
         >
           Tài chính học phí
         </h2>
@@ -38,26 +49,99 @@ export function DashboardFeeSummaryCard({
         </p>
       </header>
 
-      <div className="mt-2.5 grid min-w-0 grid-cols-[minmax(0,1fr)_132px] items-center gap-3">
-        <div className="min-w-0 self-center">
-          <p className="caption-text font-semibold text-gray-500">Thực thu ròng</p>
-          <p
-            className="metric-money mt-1.5 break-words text-[clamp(1.45rem,2.15vw,1.875rem)] leading-none text-gray-950"
-            title={formatCurrency(fees.net_collected_amount)}
+      <div className="mt-3 flex min-w-0 items-center gap-4">
+        <p
+          className="metric-value shrink-0 text-[26px] font-semibold leading-none text-primary"
+          aria-label={`Tỷ lệ đã thu ${collectionRate.toFixed(1)} phần trăm`}
+        >
+          {collectionRate.toFixed(1)}%
+        </p>
+        <div className="min-w-0 flex-1">
+          <div
+            className="flex w-full items-end gap-[2px]"
+            role="img"
+            aria-label={`Tỷ lệ đã thu ${collectionRate.toFixed(1)} phần trăm trên ${SEGMENT_COUNT} mức`}
           >
-            {formatCurrency(fees.net_collected_amount)}
-          </p>
-          <p className="caption-text mt-2 text-gray-500">
-            Cần thu {formatCurrency(fees.total_amount)}
+            {Array.from({ length: SEGMENT_COUNT }).map((_, index) => {
+              if (index < completedSegments) {
+                return (
+                  <span
+                    key={index}
+                    aria-hidden="true"
+                    className="min-w-0 flex-1 aspect-square bg-primary"
+                  />
+                );
+              }
+              if (index === completedSegments && activeSegmentRatio > 0) {
+                return (
+                  <span
+                    key={index}
+                    aria-hidden="true"
+                    className="relative min-w-0 flex-1 aspect-square overflow-hidden bg-slate-200"
+                  >
+                    <span
+                      className="absolute inset-y-0 left-0 bg-primary"
+                      style={{ width: `${activeSegmentRatio * 100}%` }}
+                    />
+                  </span>
+                );
+              }
+              return (
+                <span
+                  key={index}
+                  aria-hidden="true"
+                  className="min-w-0 flex-1 aspect-square bg-slate-200"
+                />
+              );
+            })}
+          </div>
+
+          <div className="mt-1 h-[3px] w-full overflow-hidden rounded-full bg-slate-200">
+            <div
+              className="h-full rounded-full bg-primary transition-transform duration-200 ease-linear"
+              style={{
+                transform: `scaleX(${activeSegmentRatio})`,
+                transformOrigin: "left",
+              }}
+            />
+          </div>
+
+          <p className="caption-text mt-1.5 text-gray-500">
+            {hasFees ? "đã thu học phí" : "chưa phát sinh học phí"}
           </p>
         </div>
-
-        <DashboardFinancialRing collectionRate={collectionRate} fees={fees} />
       </div>
 
-      <dl className="mt-2.5 grid grid-cols-3 gap-3 border-y border-gray-100 py-2.5">
+      <div className="mt-3 grid min-w-0 grid-cols-2 gap-x-6">
+        <div className="min-w-0">
+          <p className="caption-text font-semibold text-gray-500">
+            Thực thu ròng
+          </p>
+          <p
+            className="metric-money mt-0.5 break-words text-[clamp(1rem,1.2vw,1.2rem)] leading-tight text-gray-950"
+            title={formatCurrency(fees.net_collected_amount)}
+          >
+            <span className="inline-block translate-y-[0.07em]">
+              {formatCurrency(fees.net_collected_amount)}
+            </span>
+          </p>
+        </div>
+        <div className="min-w-0">
+          <p className="caption-text font-semibold text-gray-500">Cần thu</p>
+          <p
+            className="metric-money mt-0.5 break-words text-[clamp(1rem,1.2vw,1.2rem)] leading-tight text-gray-500"
+            title={formatCurrency(fees.total_amount)}
+          >
+            <span className="inline-block translate-y-[0.07em]">
+              {formatCurrency(fees.total_amount)}
+            </span>
+          </p>
+        </div>
+      </div>
+
+      <dl className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-gray-100 pt-2">
         <FinancialValue
-          accentClassName="bg-[#1967D2]"
+          accentClassName="bg-primary"
           label="Thực thu"
           value={fees.net_collected_amount}
         />
@@ -67,13 +151,11 @@ export function DashboardFeeSummaryCard({
           value={fees.refunded_amount}
         />
         <FinancialValue
-          accentClassName="bg-[#D7DEE8]"
+          accentClassName="bg-slate-400"
           label="Còn lại"
           value={fees.outstanding_amount}
         />
       </dl>
-
-      <DashboardCashflowChart points={revenueTrend} />
     </article>
   );
 }
@@ -97,7 +179,7 @@ function FinancialValue({
         {label}
       </dt>
       <dd
-        className="metric-money mt-1 break-words text-[13px] leading-4 text-gray-900 sm:text-[14px]"
+        className="metric-money mt-0.5 break-words text-[12px] leading-4 text-gray-900 sm:text-[13px]"
         title={formatCurrency(value)}
       >
         {formatCurrency(value)}
@@ -111,5 +193,8 @@ export function getCollectionRate(netCollected: number, total: number) {
     return 0;
   }
 
-  return Math.min(100, Math.max(0, Math.round((netCollected / total) * 100)));
+  return Math.min(
+    100,
+    Math.max(0, Number(((netCollected / total) * 100).toFixed(1))),
+  );
 }

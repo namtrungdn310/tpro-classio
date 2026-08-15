@@ -159,6 +159,7 @@ export const FeeTemplateEditor = forwardRef<
       aria-invalid={ariaInvalid || undefined}
       aria-describedby={ariaDescribedBy}
       aria-disabled={disabled || undefined}
+      data-selection-policy="preserve"
       contentEditable={!disabled}
       suppressContentEditableWarning
       spellCheck
@@ -174,7 +175,7 @@ export const FeeTemplateEditor = forwardRef<
         rememberSelection(editorRef.current, lastRangeRef);
       }}
       onPointerUp={handlePointerUp}
-      className="form-input-text scrollbar-hidden mt-2 h-52 w-full overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-gray-900 outline-none transition focus:border-gray-400 focus:ring-2 focus:ring-gray-200 aria-[invalid=true]:border-red-400 aria-[invalid=true]:ring-red-100 aria-disabled:bg-gray-50"
+      className="form-input-text scrollbar-hidden mt-2 h-52 w-full overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-gray-900 outline-none transition focus:border-primary/60 focus:ring-2 focus:ring-primary/15 aria-[invalid=true]:border-destructive aria-[invalid=true]:ring-destructive/15 aria-disabled:bg-gray-50"
     />
   );
 });

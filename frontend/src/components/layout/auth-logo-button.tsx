@@ -7,7 +7,7 @@ interface AuthLogoButtonProps {
   size?: number;
 }
 
-export function AuthLogoButton({ className = "mb-4 h-[42px] w-[42px]", size = 42 }: AuthLogoButtonProps) {
+export function AuthLogoButton({ className = "mb-4 h-[52px] w-[52px]", size = 52 }: AuthLogoButtonProps) {
   return (
     <button
       type="button"
@@ -17,10 +17,11 @@ export function AuthLogoButton({ className = "mb-4 h-[42px] w-[42px]", size = 42
       className={`block appearance-none border-0 bg-transparent p-0 ${className}`}
     >
       <Image
-        src="/logo-mark-bw.png"
+        src="/logo-mark.png"
         alt="TPRO"
-        width={size}
-        height={size}
+        width={size * 3}
+        height={size * 3}
+        quality={100}
         className="h-full w-full object-contain"
         priority
       />

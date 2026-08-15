@@ -24,6 +24,14 @@ export function getApiErrorMessage(error: unknown, fallback: string): string {
     return normalizeErrorMessage(detail.trim(), fallback);
   }
 
+  // Structured make-up errors: {"code": "...", "message": "..."}
+  if (typeof detail === "object" && detail !== null && "message" in detail) {
+    const message = String((detail as { message: unknown }).message);
+    if (message.trim()) {
+      return normalizeErrorMessage(message.trim(), fallback);
+    }
+  }
+
   if (Array.isArray(detail) && detail.length > 0) {
     const firstErr = detail[0];
     if (typeof firstErr === "object" && firstErr !== null && "msg" in firstErr) {

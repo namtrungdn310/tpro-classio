@@ -2,6 +2,14 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Shared icon baseline: Remix Icon glyphs stay optically aligned with text and
+   never shrink inside compact action controls. */
+.icon-system {
+  display: inline-block;
+  flex: 0 0 auto;
+  vertical-align: middle;
+}
+
 @layer base {
   :root {
     --background: #f8fafd;
@@ -10,21 +18,35 @@
     --card-foreground: #111827;
     --popover: #ffffff;
     --popover-foreground: #111827;
-    --primary: #1967d2;
+    --primary: #002787;
     --primary-foreground: #ffffff;
+    --primary-soft: #e9eef9;
+    --primary-soft-foreground: #002787;
     --secondary: #f3f4f6;
     --secondary-foreground: #111827;
     --muted: #f3f4f6;
     --muted-foreground: #6b7280;
     --accent: #f3f4f6;
     --accent-foreground: #111827;
-    --destructive: #dc2626;
+    --destructive: #dd0337;
     --destructive-foreground: #ffffff;
+    --destructive-soft: #fde8ee;
     --border: #e5e7eb;
     --input: #e5e7eb;
-    --ring: #1967d2;
+    --ring: #002787;
     --radius: 0.5rem;
-    --form-caret-color: #4b5563;
+    --form-caret-color: #000000;
+    --form-caret-width: 1px;
+    --form-caret-height: 1.25rem;
+    --form-input-font-family: var(--font-body), system-ui, sans-serif;
+    --form-input-font-size: 0.9375rem;
+    --form-input-line-height: 1.25rem;
+    --form-input-font-weight: 500;
+    --form-input-letter-spacing: 0;
+    --inline-field-divider-width: 2px;
+    --inline-field-divider-height: 1rem;
+    --inline-field-divider-color: #64748b;
+    --split-text-field-divider-zone: 2.5rem;
   }
 
   * {
@@ -116,7 +138,7 @@ input[type="password"]::-ms-clear {
 
   .table-heading-text {
     font-family: var(--font-ui), var(--font-body), system-ui, sans-serif;
-    font-weight: 700;
+    font-weight: 600;
     font-size: 0.75rem;
     line-height: 1rem;
     text-transform: uppercase;
@@ -131,18 +153,25 @@ input[type="password"]::-ms-clear {
     letter-spacing: 0;
   }
 
-  .form-input-text {
-    --form-input-font-family: var(--font-body), system-ui, sans-serif;
-    --form-input-font-size: 0.9375rem;
-    --form-input-line-height: 1.25rem;
-    --form-input-font-weight: 500;
-    --form-input-letter-spacing: 0;
+  .form-section-title-text {
+    font-family: var(--font-ui), var(--font-body), system-ui, sans-serif;
+    font-size: 0.9375rem;
+    line-height: 1.25rem;
+    font-weight: 700;
+    letter-spacing: 0;
+  }
 
+  .form-input-text {
+    --form-caret-height: var(--form-input-line-height);
+    --form-caret-width: 1px;
     font-family: var(--form-input-font-family);
     font-size: var(--form-input-font-size);
     line-height: var(--form-input-line-height);
     font-weight: var(--form-input-font-weight);
     letter-spacing: var(--form-input-letter-spacing);
+    font-synthesis: none;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 
   /* Chromium/Edge render saved-info previews through the autofill state. Keep
@@ -169,9 +198,33 @@ input[type="password"]::-ms-clear {
     font-weight: 400;
   }
 
+  :where(input, textarea, [contenteditable="true"])[data-unified-caret-active="true"] {
+    caret-color: transparent !important;
+  }
+
+  .unified-form-caret {
+    position: fixed;
+    z-index: 1000;
+    background: var(--form-caret-color);
+    pointer-events: none;
+    animation: unified-form-caret-blink 1.05s steps(1, end) infinite;
+  }
+
+  @keyframes unified-form-caret-blink {
+
+    0%,
+    54% {
+      opacity: 1;
+    }
+
+    55%,
+    100% {
+      opacity: 0;
+    }
+  }
+
   /* Native password masking keeps pointer placement, selection and IME correct. */
   .password-input-native {
-    --form-input-font-weight: 700;
     --form-input-letter-spacing: 0.12em;
   }
 
@@ -200,12 +253,24 @@ input[type="password"]::-ms-clear {
   }
 
   .otp-digit-text {
-    font-family: var(--font-body), system-ui, sans-serif;
+    --form-caret-height: 1.5rem;
+    --form-caret-width: 1px;
+    font-family: var(--form-input-font-family);
     font-size: 1.125rem;
     line-height: 1.5rem;
-    font-weight: 600;
+    font-weight: var(--form-input-font-weight);
     font-variant-numeric: tabular-nums;
     letter-spacing: 0;
+    font-synthesis: none;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .unified-form-caret {
+      animation: none;
+      opacity: 1;
+    }
   }
 
   .auth-action-link {
@@ -299,14 +364,14 @@ input[type="password"]::-ms-clear {
     height: 2.5rem;
     width: 100%;
     border-radius: 0.5rem;
-    background: rgb(3 7 18);
+    background: var(--primary);
     padding-inline: 1rem;
     font-family: var(--font-ui), var(--font-body), system-ui, sans-serif;
     font-size: 0.9375rem;
     line-height: 1.25rem;
     font-weight: 600;
     color: white;
-    box-shadow: 0 4px 12px rgb(3 7 18 / 0.14);
+    box-shadow: 0 4px 12px rgb(0 39 135 / 0.22);
     transition:
       background-color 150ms ease,
       box-shadow 150ms ease,
@@ -315,17 +380,17 @@ input[type="password"]::-ms-clear {
   }
 
   .auth-primary-button:hover:not(:disabled) {
-    background: rgb(0 0 0);
-    box-shadow: 0 6px 16px rgb(3 7 18 / 0.18);
+    background: rgb(0 31 110);
+    box-shadow: 0 6px 16px rgb(0 39 135 / 0.28);
   }
 
   .auth-primary-button:active:not(:disabled) {
     transform: translateY(1px);
-    box-shadow: 0 2px 8px rgb(3 7 18 / 0.14);
+    box-shadow: 0 2px 8px rgb(0 39 135 / 0.22);
   }
 
   .auth-primary-button:focus-visible {
-    outline: 2px solid rgb(156 163 175);
+    outline: 2px solid var(--primary);
     outline-offset: 2px;
   }
 
@@ -348,7 +413,7 @@ input[type="password"]::-ms-clear {
     gap: 0.1875rem;
   }
 
-  .loading-dots > span {
+  .loading-dots>span {
     width: 0.25rem;
     height: 0.25rem;
     border-radius: 9999px;
@@ -357,11 +422,11 @@ input[type="password"]::-ms-clear {
     animation: loading-dot 1s ease-in-out infinite;
   }
 
-  .loading-dots > span:nth-child(2) {
+  .loading-dots>span:nth-child(2) {
     animation-delay: 140ms;
   }
 
-  .loading-dots > span:nth-child(3) {
+  .loading-dots>span:nth-child(3) {
     animation-delay: 280ms;
   }
 
@@ -376,19 +441,104 @@ input[type="password"]::-ms-clear {
     height: 0;
   }
 
-  /* One physical 1.6px line shared by compact forms and schedules. Keep this as
-     a solid fill: combining two borders makes the divider look like two lines
-     on high-DPI and scaled Windows displays. */
-  .inline-field-divider {
-    box-sizing: border-box;
-    width: 1.6px;
-    min-width: 1.6px;
-    max-width: 1.6px;
-    height: 1rem;
-    border: 0;
-    background: #111827;
-    opacity: 1;
+  /* Workspace "magnetic pull": leaving a mode slides/scales toward the rail,
+     entering slides back in. Fades only under prefers-reduced-motion. */
+  @keyframes workspace-panel-in {
+    from {
+      opacity: 0;
+      transform: translateX(12px) scale(0.97);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
   }
+
+  @keyframes workspace-panel-out {
+    from {
+      opacity: 1;
+      transform: none;
+    }
+    to {
+      opacity: 0;
+      transform: translateX(14px) scale(0.96);
+    }
+  }
+
+  .workspace-panel-in {
+    animation: workspace-panel-in 170ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    transform-origin: right center;
+  }
+
+  .workspace-panel-out {
+    animation: workspace-panel-out 130ms ease-in forwards;
+    transform-origin: right center;
+  }
+
+  @keyframes workspace-action-rail-in {
+    from {
+      opacity: 0;
+      transform: translateX(24px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  .workspace-action-rail-in {
+    animation: workspace-action-rail-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    @keyframes workspace-panel-fade-in {
+      from {
+        opacity: 0;
+      }
+      to {
+        opacity: 1;
+      }
+    }
+
+    .workspace-panel-in {
+      animation: workspace-panel-fade-in 80ms ease-out;
+    }
+
+    .workspace-panel-out {
+      animation: none;
+    }
+
+    .workspace-action-rail-in {
+      animation: none;
+    }
+  }
+
+  /* One filled CSS rectangle shared by compact forms and schedules.
+     Paints directly via subpixel composition without SVG canvas quantization,
+     keeping exact uniform thickness under all subpixel X offsets and screen scaling. */
+  .inline-field-divider {
+    display: inline-block;
+    box-sizing: border-box;
+    width: var(--inline-field-divider-width);
+    min-width: var(--inline-field-divider-width);
+    max-width: var(--inline-field-divider-width);
+    height: var(--inline-field-divider-height);
+    background-color: var(--inline-field-divider-color);
+    border: 0;
+    overflow: hidden;
+    opacity: 1;
+    vertical-align: middle;
+  }
+
+  /* Split text fields reserve a real middle zone for the shared
+     `InlineFieldDivider`. The two native inputs never touch that zone, keeping
+     the browser caret and divider from visually merging. */
+  .split-text-field {
+    position: relative;
+    grid-template-columns:
+      minmax(0, 1fr) var(--split-text-field-divider-zone) minmax(0, 1fr);
+  }
+
 }
 
 .auth-screen {
@@ -397,7 +547,7 @@ input[type="password"]::-ms-clear {
   overflow-x: hidden;
   padding-block: 1rem;
   overscroll-behavior: none;
-  background: radial-gradient(ellipse at 50% 42%, #fff 0%, #f7f9fc 46%, #edf1f6 100%);
+  background: radial-gradient(ellipse at 50% 38%, #fff 0%, #f5f8ff 46%, #e9eef9 100%);
 }
 
 @media (max-width: 359px) {
@@ -407,6 +557,7 @@ input[type="password"]::-ms-clear {
 }
 
 @keyframes loading-dot {
+
   0%,
   60%,
   100% {
@@ -454,50 +605,9 @@ input[type="password"]::-ms-clear {
   }
 }
 
-@keyframes dashboard-ring-reveal {
-  from {
-    stroke-dasharray: 0 100;
-  }
-
-  to {
-    stroke-dasharray: var(--ring-dasharray);
-  }
-}
-
-@keyframes dashboard-ring-value-reveal {
-  from {
-    opacity: 0;
-    transform: translate3d(0, 0.125rem, 0) scale(0.98);
-  }
-
-  to {
-    opacity: 1;
-    transform: translate3d(0, 0, 0) scale(1);
-  }
-}
-
 .dashboard-metric-enter,
 .dashboard-fee-panel-enter {
   animation: dashboard-metric-in 360ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
-}
-
-.dashboard-finance-ring-segment {
-  stroke-dasharray: var(--ring-dasharray);
-  stroke-dashoffset: var(--ring-dashoffset);
-  shape-rendering: geometricPrecision;
-  animation-name: dashboard-ring-reveal;
-  animation-delay: var(--dashboard-chart-motion-delay);
-  animation-duration: var(--dashboard-chart-motion-duration);
-  animation-timing-function: var(--dashboard-chart-motion-easing);
-  animation-fill-mode: both;
-}
-
-.dashboard-finance-ring-value {
-  animation-name: dashboard-ring-value-reveal;
-  animation-delay: var(--dashboard-chart-motion-delay);
-  animation-duration: var(--dashboard-chart-motion-duration);
-  animation-timing-function: var(--dashboard-chart-motion-easing);
-  animation-fill-mode: both;
 }
 
 .app-toast {
@@ -516,6 +626,7 @@ input[type="password"]::-ms-clear {
     opacity: 0;
     transform: translateY(-0.25rem);
   }
+
   to {
     opacity: 1;
     transform: none;
@@ -524,6 +635,22 @@ input[type="password"]::-ms-clear {
 
 .settings-reveal {
   animation: settings-reveal 160ms ease-out;
+}
+
+@keyframes page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.page-enter {
+  animation: page-enter 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 @media (max-height: 720px) {
@@ -554,7 +681,7 @@ input[type="password"]::-ms-clear {
     transition: none;
   }
 
-  .loading-dots > span {
+  .loading-dots>span {
     animation: none;
     opacity: 0.75;
   }
@@ -568,13 +695,15 @@ input[type="password"]::-ms-clear {
   }
 
   .dashboard-metric-enter,
-  .dashboard-fee-panel-enter,
-  .dashboard-finance-ring-segment,
-  .dashboard-finance-ring-value {
+  .dashboard-fee-panel-enter {
     animation: none;
   }
 
   .settings-reveal {
+    animation: none;
+  }
+
+  .page-enter {
     animation: none;
   }
 }
@@ -650,4 +779,45 @@ input[type="password"]::-ms-clear {
 .cv-auto {
   content-visibility: auto;
   contain-intrinsic-size: 56px;
+}
+
+/* Disable cell colour transitions during a pointer-down gesture so the
+   browser never shows a stale 100ms fade that misleads the eye when the
+   pointer reverses rapidly. */
+[data-schedule-dragging] button {
+  transition-duration: 0s;
+}
+
+/*
+ * Schedule-cell states use semantic CSS instead of Tailwind opacity modifiers.
+ * The project primary palette is backed by hex CSS variables, so utilities such
+ * as `bg-primary/15` are not emitted by Tailwind 3 and silently leave cells
+ * transparent. These rules guarantee that committed and preview cells keep a
+ * real, visible fill in both development and production builds.
+ */
+.schedule-grid-cell-idle {
+  background-color: #ffffff;
+}
+
+.schedule-grid-cell-idle:hover {
+  background-color: color-mix(in srgb, var(--primary-soft) 70%, #ffffff);
+}
+
+.schedule-grid-cell-selected {
+  background-color: var(--primary-soft);
+}
+
+.schedule-grid-cell-endpoint {
+  background-color: var(--primary-soft);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--primary) 30%, transparent),
+    inset 0 -2px 0 var(--primary);
+}
+
+.schedule-grid-cell-anchor {
+  background-color: color-mix(in srgb, var(--primary) 22%, #ffffff);
+}
+
+.schedule-grid-cell-pending {
+  background-color: color-mix(in srgb, var(--primary-soft) 82%, #ffffff);
 }

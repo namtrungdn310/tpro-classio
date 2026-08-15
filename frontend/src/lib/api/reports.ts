@@ -1,43 +1,52 @@
 import { apiClient } from "@/lib/api/client";
 import {
-  feeOperationListSchema,
-  feeOperationSchema,
+  feePaidReceiptDetailSchema,
+  feePaidReceiptListSchema,
 } from "@/lib/schemas/reports";
 import type {
-  FeeOperation,
-  FeeOperationAction,
-  FeeOperationListResponse,
+  FeePaidReceiptDetail,
+  FeePaidReceiptListResponse,
+  FeePaidReceiptRefundState,
+  FeePaymentMethod,
 } from "@/lib/types";
+import { normalizePaidReportSearch } from "@/lib/reports/paid-report-view-model";
 
-export type FeeOperationFilters = {
-  action?: FeeOperationAction | "";
+export type FeePaidReceiptFilters = {
   period?: string;
   q?: string;
   date_from?: string;
   date_to?: string;
+  payment_method?: FeePaymentMethod | "";
+  refund_state?: FeePaidReceiptRefundState | "";
   cursor?: string;
   limit?: number;
 };
 
-export async function getFeeOperations(
-  filters: FeeOperationFilters = {},
-): Promise<FeeOperationListResponse> {
-  const { data } = await apiClient.get<unknown>("/reports/fees/operations", {
+export async function getFeePaidReceipts(
+  filters: FeePaidReceiptFilters = {},
+  signal?: AbortSignal,
+): Promise<FeePaidReceiptListResponse> {
+  const { data } = await apiClient.get<unknown>("/reports/fees/paid", {
+    signal,
     params: {
       ...filters,
-      action: filters.action || undefined,
       period: filters.period || undefined,
-      q: filters.q?.trim() || undefined,
+      q: filters.q ? normalizePaidReportSearch(filters.q) || undefined : undefined,
+      payment_method: filters.payment_method || undefined,
+      refund_state: filters.refund_state || undefined,
       cursor: filters.cursor || undefined,
     },
   });
-  return feeOperationListSchema.parse(data);
+  return feePaidReceiptListSchema.parse(data);
 }
 
-export async function getFeeOperation(operationId: string): Promise<FeeOperation> {
+export async function getFeePaidReceipt(
+  receiptId: string,
+  signal?: AbortSignal,
+): Promise<FeePaidReceiptDetail> {
   const { data } = await apiClient.get<unknown>(
-    `/reports/fees/operations/${operationId}`,
+    `/reports/fees/paid/${encodeURIComponent(receiptId)}`,
+    { signal },
   );
-  return feeOperationSchema.parse(data);
+  return feePaidReceiptDetailSchema.parse(data);
 }
-

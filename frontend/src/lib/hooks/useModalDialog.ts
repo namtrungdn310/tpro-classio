@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, type MutableRefObject, type RefObject } from "react";
+import { clearDocumentTextSelection } from "@/lib/ui/action-selection";
 
 const FOCUSABLE_SELECTOR = [
   "button:not([disabled])",
@@ -11,11 +12,27 @@ const FOCUSABLE_SELECTOR = [
   "[tabindex]:not([tabindex='-1'])",
 ].join(",");
 
+function isFocusableVisible(element: HTMLElement): boolean {
+  if (element.closest("[inert], [aria-hidden='true']")) {
+    return false;
+  }
+  const style = window.getComputedStyle(element);
+  return style.display !== "none" && style.visibility !== "hidden";
+}
+
+function getFocusableElements(container: HTMLElement): HTMLElement[] {
+  return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+    isFocusableVisible,
+  );
+}
+
 export function useModalDialog({
+  focusContainerInitially = false,
   isBusy,
   onClose,
   suspended = false,
 }: {
+  focusContainerInitially?: boolean;
   isBusy: boolean;
   onClose: () => void;
   suspended?: boolean;
@@ -30,27 +47,41 @@ export function useModalDialog({
 
   const requestClose = useCallback(() => {
     if (!isBusy && !suspended) {
+      clearDocumentTextSelection();
       onClose();
     }
   }, [isBusy, onClose, suspended]);
 
   useEffect(() => {
+    clearDocumentTextSelection();
     restoreFocusRef.current = document.activeElement as HTMLElement | null;
     const previousBodyOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const frame = window.requestAnimationFrame(() => {
-      const initialTarget =
-        dialogRef.current?.querySelector<HTMLElement>("[data-dialog-autofocus]") ??
-        dialogRef.current?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
+      if (focusContainerInitially) {
+        dialogRef.current?.focus();
+        clearDocumentTextSelection();
+        return;
+      }
+      const initialTarget = dialogRef.current
+        ? Array.from(
+            dialogRef.current.querySelectorAll<HTMLElement>(
+              "[data-dialog-autofocus]",
+            ),
+          ).find(isFocusableVisible) ?? getFocusableElements(dialogRef.current)[0]
+        : undefined;
       initialTarget?.focus();
+      clearDocumentTextSelection();
     });
 
     return () => {
       window.cancelAnimationFrame(frame);
       document.body.style.overflow = previousBodyOverflow;
+      clearDocumentTextSelection();
       restoreFocusRef.current?.focus?.();
+      clearDocumentTextSelection();
     };
-  }, []);
+  }, [focusContainerInitially]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -66,9 +97,7 @@ export function useModalDialog({
         return;
       }
 
-      const focusable = Array.from(
-        dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
-      ).filter((element) => !element.hasAttribute("inert") && element.offsetParent !== null);
+      const focusable = getFocusableElements(dialogRef.current);
       if (focusable.length === 0) {
         event.preventDefault();
         dialogRef.current.focus();

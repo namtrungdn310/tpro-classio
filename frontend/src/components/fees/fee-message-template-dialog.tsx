@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import { RotateCcw, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { RiArrowGoBackLine as RotateCcw } from "react-icons/ri";
 import { Button } from "@/components/ui/button";
+import { FormDialogBody, FormDialogFooter, FormDialogShell } from "@/components/ui/form-dialog-shell";
 import { SaveButton } from "@/components/ui/save-button";
 import {
   shouldShowUnsavedChanges,
@@ -21,7 +21,6 @@ import {
   type FeeMessageTemplateValues,
 } from "@/lib/fees/message-templates";
 import { useFormFieldFeedback } from "@/lib/forms/use-form-field-feedback";
-import { useModalDialog } from "@/lib/hooks/useModalDialog";
 import type {
   FeeMessageTemplatesResponse,
   FeeMessageTemplatesUpdate,
@@ -69,7 +68,6 @@ function FeeMessageTemplateDialogContent({
   onSave,
   templates,
 }: Omit<FeeMessageTemplateDialogProps, "open">) {
-  const titleId = useId();
   const reminderRef = useRef<FeeTemplateEditorHandle>(null);
   const receivedRef = useRef<FeeTemplateEditorHandle>(null);
   const [values, setValues] = useState<FeeMessageTemplateValues>({
@@ -85,10 +83,11 @@ function FeeMessageTemplateDialogContent({
     resetFeedback,
     shouldShowError,
   } = useFormFieldFeedback(TEMPLATE_FIELDS);
-  const { backdropPointerDownRef, dialogRef, requestClose } = useModalDialog({
-    isBusy: isSaving,
-    onClose,
-  });
+  const requestClose = () => {
+    if (!isSaving) {
+      onClose();
+    }
+  };
 
   // A 409 refreshes the latest template metadata while this dialog remains
   // mounted. Rebase the next explicit retry onto that version instead of
@@ -178,49 +177,15 @@ function FeeMessageTemplateDialogContent({
     resetFeedback();
   }
 
-  return createPortal(
-    <div
-      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/30 p-4"
-      onPointerDown={(event) => {
-        backdropPointerDownRef.current = event.target === event.currentTarget;
-      }}
-      onPointerUp={(event) => {
-        if (backdropPointerDownRef.current && event.target === event.currentTarget) {
-          requestClose();
-        }
-        backdropPointerDownRef.current = false;
-      }}
-      onPointerCancel={() => {
-        backdropPointerDownRef.current = false;
-      }}
+  return (
+    <FormDialogShell
+      title="Nội dung tin nhắn Zalo"
+      width="xl"
+      isBusy={isSaving}
+      dirty={hasPersistableChanges}
+      onClose={requestClose}
     >
-      <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        aria-busy={isSaving || undefined}
-        tabIndex={-1}
-        className="flex max-h-[calc(100vh-2rem)] w-full max-w-[1100px] flex-col overflow-hidden rounded-xl bg-white shadow-xl"
-      >
-        <header className="flex shrink-0 items-start justify-between gap-4 border-b border-gray-200 px-5 py-4">
-          <div>
-            <h2 id={titleId} className="section-title-text text-gray-950">
-              Nội dung tin nhắn Zalo
-            </h2>
-          </div>
-          <button
-            type="button"
-            aria-label="Đóng khung nội dung Zalo"
-            disabled={isSaving}
-            onClick={requestClose}
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-900 disabled:opacity-50"
-          >
-            <X className="h-4 w-4" aria-hidden="true" />
-          </button>
-        </header>
-
-        <div className="scrollbar-hidden min-h-0 flex-1 overflow-y-auto px-5 py-4">
+        <FormDialogBody>
           <UnsavedChangesNotice
             hasChanges={hasPersistableChanges}
             hasErrors={hasErrors}
@@ -236,7 +201,7 @@ function FeeMessageTemplateDialogContent({
                 <section key={config.field} className="min-w-0">
                   <label
                     htmlFor={config.field}
-                    className="form-label-text block select-none text-[15px] text-gray-700"
+                    className="form-label-text block select-none text-gray-700"
                   >
                     {config.label}
                   </label>
@@ -252,7 +217,7 @@ function FeeMessageTemplateDialogContent({
                   />
                   <div className="mt-1.5 flex min-h-5 items-start justify-between gap-3">
                     {error ? (
-                      <p id={errorId} className="text-sm font-medium text-red-600">
+                      <p id={errorId} className="text-sm font-medium text-destructive">
                         {error}
                       </p>
                     ) : (
@@ -270,6 +235,7 @@ function FeeMessageTemplateDialogContent({
                         disabled={isSaving}
                         title={`Chèn ${label}`}
                         data-fee-template-editor-control={config.field}
+                        data-selection-policy="preserve"
                         onPointerDown={(event) => event.preventDefault()}
                         onClick={() =>
                           insertToken(config.field, config.textareaRef, token, label)
@@ -284,39 +250,41 @@ function FeeMessageTemplateDialogContent({
               );
             })}
           </div>
-        </div>
+          </FormDialogBody>
 
-        <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-gray-200 bg-gray-50/70 px-5 py-3">
-          <Button
-            type="button"
-            variant="outline"
-            disabled={isSaving}
-            onClick={resetToDefaults}
-            className="h-8 gap-1.5 rounded-md px-3 text-sm"
-          >
-            <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
-            Mặc định
-          </Button>
-          <div className="flex items-center gap-2">
+        <FormDialogFooter
+          left={
             <Button
               type="button"
               variant="outline"
               disabled={isSaving}
-              onClick={requestClose}
-              className="h-8 rounded-md px-3 text-sm"
+              onClick={resetToDefaults}
+              className="h-8 gap-1.5 rounded-md px-3 text-sm"
             >
-              Huỷ
+              <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+              Mặc định
             </Button>
-            <SaveButton
-              type="button"
-              disabled={!hasActionableDraft}
-              onClick={handleSave}
-              isSaving={isSaving}
-            />
-          </div>
-        </footer>
-      </div>
-    </div>,
-    document.body,
-  );
-}
+          }
+          right={
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isSaving}
+                onClick={requestClose}
+                className="h-8 rounded-md px-3 text-sm"
+              >
+                Huỷ
+              </Button>
+              <SaveButton
+                type="button"
+                disabled={!hasActionableDraft}
+                onClick={handleSave}
+                isSaving={isSaving}
+              />
+            </>
+          }
+        />
+      </FormDialogShell>
+    );
+  }

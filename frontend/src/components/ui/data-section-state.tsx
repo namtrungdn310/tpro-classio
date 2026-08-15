@@ -1,6 +1,7 @@
 "use client";
 
-import { RefreshCw, type LucideIcon } from "lucide-react";
+import type { IconType } from "react-icons";
+import { RiRefreshLine } from "react-icons/ri";
 import { Button } from "@/components/ui/button";
 import { LoadingLabel } from "@/components/ui/loading-label";
 import { cn } from "@/lib/utils";
@@ -24,22 +25,22 @@ export function DataSectionError({
     <div
       role="alert"
       className={cn(
-        "flex min-h-40 flex-col items-center justify-center rounded-lg border border-red-100 bg-red-50/70 px-5 py-6 text-center",
+        "flex min-h-40 flex-col items-center justify-center rounded-lg border border-destructive/15 bg-destructive-soft/70 px-5 py-6 text-center",
         className,
       )}
     >
-      <p className="font-ui text-sm font-semibold text-red-800">{title}</p>
-      <p className="helper-text mt-1 max-w-md text-red-700">{description}</p>
+      <p className="font-ui text-sm font-semibold text-destructive">{title}</p>
+      <p className="helper-text mt-1 max-w-md text-destructive">{description}</p>
       <Button
         type="button"
         variant="outline"
         size="sm"
         disabled={isRetrying}
-        className="mt-3 border-red-200 bg-white text-red-800 hover:bg-red-50"
+        className="mt-3 border-destructive/20 bg-white text-destructive hover:bg-destructive-soft"
         onClick={onRetry}
       >
         {!isRetrying ? (
-          <RefreshCw className="h-3.5 w-3.5" />
+          <RiRefreshLine className="icon-system h-3.5 w-3.5" aria-hidden="true" />
         ) : null}
         {isRetrying ? <LoadingLabel label="Đang thử lại" /> : "Thử lại"}
       </Button>
@@ -51,7 +52,7 @@ type DataSectionEmptyProps = {
   actionLabel?: string;
   className?: string;
   description: string;
-  icon: LucideIcon;
+  icon: IconType;
   onAction?: () => void;
   title: string;
 };
@@ -67,14 +68,16 @@ export function DataSectionEmpty({
   return (
     <div
       className={cn(
-        "flex min-h-48 flex-col items-center justify-center rounded-lg border border-dashed border-gray-300 bg-white/60 px-5 py-8 text-center",
+        "flex min-h-48 flex-col items-center justify-center rounded-lg border border-dashed border-primary/15 bg-white/70 px-5 py-8 text-center",
         className,
       )}
     >
-      <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-500">
-        <Icon className="h-5 w-5" aria-hidden="true" />
+      <span className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-primary-soft text-primary">
+        <Icon className="h-6 w-6" aria-hidden="true" />
       </span>
-      <p className="font-ui mt-3 text-sm font-semibold text-gray-800">{title}</p>
+      <p className="font-ui mt-3.5 text-[15px] font-semibold leading-6 text-gray-900">
+        {title}
+      </p>
       <p className="helper-text mt-1 max-w-md text-gray-500">{description}</p>
       {actionLabel && onAction ? (
         <Button type="button" variant="outline" size="sm" className="mt-4" onClick={onAction}>
