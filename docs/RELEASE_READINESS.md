@@ -90,10 +90,11 @@ Thực hiện trong một pull request riêng trên `dev`:
 
 ## 3. Blocker onboarding: phát hành lại lời mời cho identity hiện hữu
 
-Viewer legacy được migration `033` chuyển sang `pending`. Ngoài ra, một đăng ký
-mới có thể đã tạo Supabase Auth identity nhưng chưa hoàn tất Google/TOTP trước
-khi lời mời hết hạn hoặc bị thu hồi. Hiện tại email đã tồn tại không thể nhận
-lời mời đăng ký mới, nên hai nhóm này có thể bị kẹt.
+Tài khoản `viewer` lịch sử được migration `033` chuyển sang `pending` và
+migration `065` cách ly fail-closed; `viewer` không còn là role runtime. Ngoài
+ra, một đăng ký mới có thể đã tạo Supabase Auth identity nhưng chưa hoàn tất
+Google/TOTP trước khi lời mời hết hạn hoặc bị thu hồi. Hiện tại email đã tồn tại
+không thể nhận lời mời đăng ký mới, nên các identity chưa hoàn tất có thể bị kẹt.
 
 Không xóa Auth user hoặc sửa `account_status` trực tiếp để đi vòng qua MFA.
 Trước staging cần triển khai một luồng owner-only, có audit và idempotent:
@@ -215,14 +216,14 @@ với cùng grant trong một runbook riêng; không tự coi `ALTER ROLE` là r
 ## 6. Cổng staging
 
 - [ ] Hoàn tất migration baseline ở mục 2 trên staging.
-- [ ] Hoàn tất recovery/reissue onboarding ở mục 3 và xử lý viewer legacy.
+- [ ] Hoàn tất recovery/reissue onboarding ở mục 3 và xác nhận viewer legacy đã bị cách ly.
 - [ ] `verify_security.sql` và DB integration tests đạt.
 - [ ] Restore rehearsal từ backup staging đạt và có thời gian RTO/RPO ghi nhận.
 - [ ] Login, invite, email OTP, Google linking, TOTP, recovery code, refresh và
       logout được smoke-test trên HTTPS.
 - [ ] Fault-injection các biên giao dịch auth ở mục 3.1 đạt; global revoke và
       topology một/nhiều frontend replica đã được quyết định rõ.
-- [ ] Role owner/admin/viewer được thử bằng tài khoản độc lập.
+- [ ] Role dev/admin/teacher được thử bằng tài khoản độc lập; viewer legacy bị từ chối.
 - [ ] Học viên, nhiều lớp, giáo viên, học phí, hoàn phí và báo cáo được thử bằng
       dữ liệu tổng hợp, không phải dữ liệu thật.
 - [ ] Log không chứa password, OTP, OAuth code/state, invitation token, cookie,
@@ -291,3 +292,60 @@ release bị chặn ngay.
 4. Pull request `dev` → `main` chỉ được merge khi CI, staging smoke và migration
    review đều đạt.
 5. Không force-push hoặc xóa `main`; release được tag và có changelog/rollback.
+
+## 9. Round 4 — schedule availability + staff role audit (trạng thái và gate còn mở)
+
+Nội dung dưới đây được hợp nhất từ `fix.md`, `goal.md`, `test.md` và
+`REPORT_R4.md` (đã xóa sau khi trích xuất). Không chạy bất kỳ SQL nào trên
+Supabase thật; mọi bằng chứng migration/rollback/security đều chạy trên
+PostgreSQL disposable trong CI/local.
+
+### 9.1 Kết quả Round 4 (đã xác minh trên disposable)
+
+- **Migration `051`** (index + ràng buộc schedule availability): preflight đồng
+  nhất với runtime contract; backup/fingerprint bất biến theo `run_id`; rollback
+  thật chạy trong pipeline (s2), drift-abort (s3), negative N1–N15 (s4);
+  acceptance/finalization để backup không chặn delete-class vô hạn.
+- **Migration `052`** (staff role snapshot trong audit): snapshot role từ bằng
+  chứng tại thời điểm event (current link hoặc mapping file version-controlled);
+  ambiguous → abort; không đoán bằng current role.
+- **Quyền**: migration owner `m051_owner` NOSUPERUSER + BYPASSRLS (mô phỏng
+  đường deploy thật); runtime `tpro_runtime` NOSUPERUSER/BYPASSRLS
+  (service_role-equivalent) — deny thật cho anon/authenticated (RLS FORCE).
+- **E2E**: browser component harness Chromium 10/10, Firefox 9/9 + 1 skip
+  (pointercancel — Firefox desktop mouse không pointer-capture; phủ bởi jsdom);
+  production-path E2E 6/6 mỗi browser.
+- **Hiệu năng local** (dataset 971 lớp / 459 nhân sự): classes list 0.113ms,
+  overlap 0.655ms (không full scan); availability p50=15ms, p95=16ms, p99=31ms
+  (ngân sách local ≤300ms). Staging phải đo riêng.
+- **Audit dependency**: `npm audit --omit=dev --audit-level=high` và full dev
+  đều 0 vulnerabilities (js-yaml override 5.2.3, esbuild ^0.28.1, bỏ direct
+  `playwright`). Ruff/Bandit/pip-audit đạt.
+
+### 9.2 Hash SQL Round 4 (đối chiếu khi chạy trên staging/production)
+
+| File | SHA-256 |
+|---|---|
+| `051_schedule_availability_indexes.sql` | `616381794D002DD386EDEED01D084C73F36F2DCF2BF3E121FB036E102BCB22F8` |
+| `052_class_staff_role_audit_snapshot.sql` | `9E91F9738CC0FE56B63176263336DB2927B6048CD9976F5B6AD7F01014F450FB` |
+| `051_schedule_availability_rollback.sql` | `33215A8D6A9248CAD3E2AC0A052711DF453742C90A83A4D0839F67110E9B02A0` |
+| `051_schedule_availability_acceptance.sql` | `88FA1B5C68011D2EED2B5A9B28E9B3FA93F79A545EA6824DE37233677151548D` |
+| `052_role_snapshot_mapping.sql` | `49AB006B053CD2F6BE111124F1786109116BF8334DCACDC8395AE456B8B7EDA8` |
+| `verify_security.sql` | `600494D857D7AF21DDD281F0C0E9D7CCC430734AE42C5EDFDC7847B8258ADE32` |
+| `migration_051_fixture.sql` | `BA103E9A0CCBABF2E978912DF252CAAFC9149516FFEFB0F5629BFDAACAB252E7` |
+| `migration_051_assert.sql` | `243349EAEBC35CA7925DF21E14F8C7C07C80D15B06E54ECDF465196B1D39C79E` |
+
+### 9.3 Gate môi trường thật — còn mở, thuộc quyền chủ động của người dùng
+
+- [ ] Push nhánh hiện tại và xác nhận **CI run mới xanh** (workflow đã chứa E2E
+      2 browser + migration scenarios + python runner).
+- [ ] Tạo và kiểm tra **dump Supabase thật** (custom-format `pg_dump`), khôi phục
+      vào bản test riêng và chạy `verify_security.sql`.
+- [ ] Maintenance window + preflight read-only đạt; chạy đúng một lần theo thứ tự
+      `051 → 052 → verify` bằng migration owner non-superuser.
+- [ ] Nếu `052` gặp event ambiguous, xử lý mapping thủ công trong
+      `052_role_snapshot_mapping.sql` (version-controlled) trước khi re-run.
+- [ ] Smoke/log/latency đạt; chỉ chạy `051_schedule_availability_acceptance.sql`
+      (finalization backup) sau verify + smoke.
+- [ ] Đo p50/p95/p99 trên staging riêng (không dùng số local làm staging).
+- [ ] Rollback rehearsal đạt trên staging clone trước khi áp dụng production.
