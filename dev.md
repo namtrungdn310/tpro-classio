@@ -1,11 +1,11 @@
 # TPRO Classio — DEV ROUND 7: CLOSEOUT SAU AUDIT ĐỘC LẬP
 
-> **Trạng thái được kiểm chứng lại ngày 15/08/2026:** kế hoạch đã được hiện thực đến migration `073` và đã
+> **Trạng thái được kiểm chứng lại ngày 17/08/2026:** kế hoạch đã được hiện thực đến migration `077` và đã
 > qua unit, disposable DB, security verify, production-path E2E trên Chromium/Firefox, production build và
 > Docker health. Các đoạn “hiện trạng/rủi ro” phía dưới là baseline lịch sử giải thích root cause, không phải
 > defect còn mở. Bằng chứng authoritative nằm trong `REPORT_DOMAIN_R7.md`.
 >
-> **Blocker môi trường còn lại:** Supabase thật mà localhost đang dùng chưa có migration `054–073`. Không
+> **Blocker môi trường còn lại:** Supabase thật mà localhost đang dùng cần được kiểm tra/chạy migration `054–077`. Không
 > được thao tác ghi trên UI trước chuỗi backup → migration tuần tự → `verify_security.sql`.
 
 > Đây là hợp đồng triển khai cuối trước khi người dùng tự kiểm thử localhost và hoàn thiện để lên staging.
@@ -17,7 +17,7 @@
 1. Đọc trọn `dev.md`, `test.md`, `goal.md`, `REPORT_DOMAIN_R7.md` trước khi sửa. Báo cáo Round 6 đã
    được hợp nhất và xóa để tránh hai nguồn sự thật mâu thuẫn.
 2. Không chạy SQL trên Supabase thật; không gọi SMTP/Google/Pay2S thật; không commit/push.
-3. Không sửa migration đã có `001–069`. Mọi thay đổi DB dùng migration forward-only từ số kế tiếp
+3. Không sửa migration đã có `001–076`. Mọi thay đổi DB dùng migration forward-only từ số kế tiếp
    sau khi kiểm tra thư mục tại runtime (dự kiến `070+`).
 4. Không xóa lịch sử migration, ledger, audit event, fixture hay test chỉ vì chúng khóa hành vi cũ.
    Mỗi test cũ phải được phân loại `KEEP`, `REWRITE` hoặc `DELETE_WITH_PROOF` trong report.
@@ -127,9 +127,11 @@
 
 - `class.start_date` cố định sau khi tạo.
 - `class.end_date` độc lập với hình thức thu, chỉnh bằng preview + reason.
-- Minimum end date:
-  - Theo tháng: `add_months_clamped(class.start_date, 1) + 1 ngày`; ví dụ 13/08 → 14/09.
+- Gợi ý nhanh trên form (không phải ràng buộc nghiệp vụ):
+  - Theo tháng: `add_months_eom_clamped(class.start_date, số_tháng)`; ví dụ 16/08 + 12 tháng → 16/08 năm sau.
   - Theo gói N tuần: `class.start_date + N*7 ngày`; ví dụ 3 tuần từ 13/08 → 03/09.
+  - Ngày kết thúc vẫn là giá trị độc lập và có thể chỉnh trực tiếp; tuyệt đối không cộng thêm một ngày
+    theo quy tắc minimum-end cũ.
 - End date là cap sinh kỳ, không phải business key của chu kỳ.
 - Cycle tồn tại khi `coverage_start < class.end_date`; `coverage_end = min(next_anchor, class.end_date)`.
 - Kỳ cuối bị cắt ngắn vẫn dùng học phí cấu hình của enrollment (không tự prorate). Nếu admin rút ngắn làm
@@ -319,8 +321,9 @@
 
 ### Phase H — Teacher attendance và payroll hoàn chỉnh
 
-1. Normalize occurrence assignment đủ để biết teacher nào được check-in slot nào; hai GV cùng lớp không mặc
-   định cùng được chấm một buổi nếu chưa assign.
+1. Normalize occurrence assignment đủ để biết teacher nào được check-in slot nào; `teacher_ids` là danh sách
+   tường minh của từng slot (một hoặc nhiều giáo viên), không fallback toàn bộ teacher pool vào mọi buổi.
+   Hai GV cùng lớp chỉ cùng được chấm khi cả hai được assign vào đúng slot; trợ giảng vẫn là danh sách riêng.
 2. Teacher `/attendance` mobile-first:
    - chỉ hôm nay/lịch chính họ;
    - class/time/role/check-in status;
@@ -349,16 +352,23 @@
 8. Settlement reversal là compensating settlement/ledger event có actor/reason/reference; không UPDATE/DELETE
    settlement/items cũ và không làm mất traceability của lần trả tiền.
 9. Teacher chỉ xem own attendance/earning summary nếu nghiệp vụ cho phép; không thấy rate của người khác.
+10. Quy tắc tính tiền bất biến: mỗi cặp `(staff_id, occurrence)` tạo tối đa một EARNING. Số tiền bằng đúng
+    `StaffCompensationRate` hiệu lực của chính giáo viên đó tại ngày buổi học, được snapshot vào attendance;
+    nếu hai giáo viên cùng dạy thì tạo hai EARNING độc lập, mỗi người nhận đủ mức riêng, tuyệt đối không chia
+    tiền theo số giáo viên và không có rate theo lớp. Migration 077 có trigger DB chặn staff/amount mismatch.
+11. Lịch sử thay đổi giáo viên theo buổi được ghi append-only ở migration 076 (`ASSIGNED|REMOVED|REPLACED`),
+    có snapshot tên, actor, lý do và request id; projection hiện tại chỉ dùng để xác định quyền chấm công.
 
-### Phase I — Payment scaffold disabled và student reference
+### Phase I — Payment request sớm, student reference và Pay2S scaffold
 
 1. Đồng bộ PaymentRequest ORM FK/index/check với migration.
-2. Tạo/revoke/expire payment request server-side, reference unique gắn đúng fee obligation và student code snapshot.
-3. Feature flags mặc định `provider=disabled`, ingress=false, auto_post=false; startup fail closed nếu cấu hình
+2. Tạo/revoke/expire payment request server-side, reference unique gắn đúng fee obligation và student code snapshot. Cho phép quản trị tạo mã tham chiếu trước hạn trong cửa sổ giới hạn; mã chỉ là payload provider-neutral, không tự gửi, không tự báo và không tự ghi sổ.
+3. Ghi nhận tiền mặt sớm là command explicit hai bước, dùng cùng ledger/idempotency/row-lock với thanh toán thường; payment origin phải là `manual_early`; tạo tiền hoặc QR không được đánh dấu `notified_at`.
+4. Feature flags mặc định `provider=disabled`, ingress=false, auto_post=false, QR=false; startup fail closed nếu cấu hình
    mâu thuẫn.
-4. Chưa tạo route Pay2S live. Viết interface/adaptor contract và threat model cho hai flow Pay2S khác nhau,
+5. Chưa tạo route Pay2S live. Viết interface/adaptor contract và threat model cho hai flow Pay2S khác nhau,
    đánh dấu deferred.
-5. Không log full account/transfer content/student contact; reference là opaque lookup token.
+6. Không log full account/transfer content/student contact; reference là opaque lookup token. Khi due-date bị đổi do hoãn hoặc khoản được ghi nhận tiền mặt, mọi mã OPEN liên quan phải chuyển REVOKED bằng event append-only; request hết hạn phải chuyển EXPIRED trước khi tạo mã mới.
 
 ### Phase J — Pagination, cache, near-real-time và UI polish
 
@@ -415,3 +425,115 @@ Implementation chỉ xong khi:
 4. `goal.md` không còn checkbox bắt buộc mở.
 5. Report nêu rõ deferred duy nhất: kết nối Pay2S live/credential/sandbox và migration Supabase thật.
 6. Docker build/health chỉ chạy ở gate cuối; sau đó mới mời người dùng vào localhost test.
+
+## 6. Bổ sung R8 — bộ chọn lịch lớp tách khỏi phân công giáo viên
+
+### 6.1 Hợp đồng nghiệp vụ và phạm vi
+
+- Màn hình **Thiết lập lịch học tuần** trước hết chỉ chọn các khung giờ của **lớp đang tạo/chỉnh sửa**.
+- Không dùng tab/phạm vi giáo viên để thay đổi hit-test của lưới và không yêu cầu người dùng chọn một giáo viên trước khi tô lịch.
+- Giáo viên/trợ giảng được phân công riêng ở panel của từng buổi sau khi khung giờ đã được chọn. Không tự động đổi lịch lớp khi chuyển người phụ trách.
+- Giữ nguyên toàn bộ quy tắc thao tác đã được nghiệm thu: click đơn chỉ tạo mốc chờ, đủ hai block liền kề mới tạo buổi tối thiểu 60 phút, kéo xuôi/ngược, xoá từ đầu/cuối, giới hạn tối đa 4 buổi, pointer capture, keyboard và confirm.
+
+### 6.2 Trạng thái lớp khác trên lưới
+
+- `occupiedSlots` là nguồn sự thật cho các lớp khác đã có lịch trong phạm vi ngày. Mỗi block 30 phút giao với một slot của lớp khác có trạng thái `busy`.
+- Busy block phải có màu nền trung tính, nhãn lớp ngắn, `cursor-not-allowed`, `aria-disabled="true"`, tooltip/accessible label “Khung giờ đã có lớp khác”. Không cho pointerdown, click, keyboard Enter/Space hay drag bắt đầu/đi xuyên qua block này.
+- Không dùng trạng thái “tất cả giáo viên phù hợp đều bận” để khoá lưới nữa; đó là logic của mô hình cũ và không được hiển thị trong bộ chọn lịch lớp.
+- Các block đã thuộc lớp đang chỉnh sửa vẫn là vùng của draft, được phép thu/ngắn/xoá theo quy tắc cũ và không bị overlay lớp khác che mất.
+- Ô trống và ô draft giữ đúng màu, caret/focus ring, endpoint marker và animation cũ; chỉ thay đổi affordance của block bận để người dùng nhận biết ngay trước khi rê/click.
+
+### 6.3 Tách UI phân công theo buổi
+
+- Giữ nguyên bố cục bảng lịch cũ: lưới ở bên trái và panel phải có tiêu đề **“Danh sách chi tiết”**. Không hiển thị tab Tổng quan/tên giáo viên hay màn hình điều hướng “Phân công buổi” trong class add/edit.
+- Mỗi thẻ trong danh sách chi tiết hiển thị trực tiếp ngày/giờ, nút xoá và chip giáo viên của chính buổi đó. Chip giáo viên cho phép thêm/bỏ từng người; xung đột chỉ phản hồi trong thẻ tương ứng. Có thể có nhiều giáo viên cùng dạy một buổi.
+- Trợ giảng chỉ hiển thị trong thẻ buổi theo dữ liệu đã chọn, không tạo thêm bước phân công mới. Không lặp chip tên trong từng ô lưới, không làm tăng chiều cao hàng hoặc tạo horizontal scroll.
+
+### 6.4 Kỹ thuật và an toàn
+
+- Hit-test UI dùng cùng block canonical `day/start/end` đã trả về; không suy đoán từ màu hoặc tên lớp. Backend vẫn tái kiểm tra xung đột khi lưu.
+- Busy chỉ chặn thao tác chọn lịch, không sửa/xoá dữ liệu lớp khác và không ghi thêm dữ liệu khi hover.
+- Giữ `pointer-events-none` cho overlay hiển thị để target thật là button bị khoá; nhờ đó cursor/aria/title của cell hoạt động nhất quán và keyboard focus có thể bỏ qua cell bận.
+- Bảo toàn reduced-motion, focus-visible, nhãn aria và vùng tương tác tối thiểu 44px. API
+  availability có scope tường minh `selected_staff|all_classes`; không thay đổi schema
+  nghiệp vụ/lịch sử. Form lớp dùng `all_classes` để khóa mọi lớp khác kể cả khi chưa
+  chọn pool nhân sự; route vẫn management-only và backend recheck khi lưu.
+
+## 7. Bổ sung R8 — performance gate và migration 078
+
+### 7.1 Runner disposable bắt buộc chạy 078
+
+- Cả `run_disposable_db.py` và `run_disposable_db.ps1` chạy đúng thứ tự:
+  `001..077 → perf_scale_dataset → perf_scale_assert → perf_scale_analyze → EXPLAIN before 078
+  → 078 → EXPLAIN after 078 → verify_migration_078 → 078 idempotency (lần hai) →
+  verify_security`.
+- Không đánh dấu 078 thành công chỉ vì exit code 0: phải kiểm tra `pg_indexes` +
+  `pg_index.indisvalid`/`indisready` (acceptance probe trong `verify_migration_078.sql`).
+
+### 7.2 Scale fixture P3
+
+- `perf_scale_dataset.sql` là fixture riêng (không thay `perf_dataset.sql`): 1.000 lớp
+  (650 active / 100 scheduled / 150 completed / 100 cancelled), ≥70% canonical
+  non-LEGACY, 5.000 học viên, 200 nhân sự, ≥50.000 fee_records với nhiều cycle cùng
+  tháng và đủ trạng thái UNPAID/NOTIFIED/PAID/VOID/SUPERSEDED + payments ledger khớp.
+- Không tắt trigger/RLS để ép dữ liệu. Lớp completed/cancelled dùng `LEGACY` vì trigger
+  044 chặn backdate non-LEGACY khi INSERT; ghi rõ lý do này trong fixture và assert.
+- `perf_scale_assert.sql` đếm theo prefix `PerfLop %`/`PerfHV %`/`PerfGV %` để cô lập
+  khỏi fixture migration; `perf_scale_analyze.sql` chạy `ANALYZE` trước EXPLAIN.
+
+### 7.3 Quy tắc EXPLAIN trước/sau
+
+- `perf_explain_078.sql` dùng `EXPLAIN (ANALYZE, BUFFERS, SETTINGS, TIMING, FORMAT JSON)`,
+  query phải đủ điều kiện để partial index 078 áp dụng (identity_scheme <> 'LEGACY' +
+  date range / status='UNPAID'). Mỗi query 3× warm-up, 30× warm, 5× cold; lưu p50/p95/p99,
+  plan node, index dùng.
+- Không ép planner bằng `enable_seqscan=off`. Nếu planner chọn Seq Scan trên bảng nhỏ,
+  ghi rõ lý do.
+- Gate: list/search ≤300ms p95, availability/preview ≤500ms p95, không tăng >20% so
+  baseline, không N+1.
+
+### 7.4 Migration 078 — quy tắc index concurrent
+
+- 078 **đã** chuyển sang `CREATE INDEX CONCURRENTLY` (phải chạy ngoài transaction) vì
+  Supabase production thật có bảng `fee_records` lớn và không nên dừng ghi để lấy
+  maintenance lock. Mỗi index là statement top-level; DO block acceptance chỉ đọc
+  metadata (pg_indexes + pg_index.indisvalid/indisready), không sửa dữ liệu.
+- Idempotency: `create index concurrently if not exists` an toàn chạy lại; concurrent
+  build lỗi để lại index `indisvalid=false` — runbook phải dò `pg_index` và drop index
+  invalid trước khi retry, không chạy lại mù quáng.
+- Không đổi tên index sau khi đã chạy trên bất kỳ môi trường nào.
+- Runbook promote: `backend/scripts/promote_078_supabase.ps1` (chỉ chạy thủ công bởi
+  operator; không tự động hoá Supabase thật; không in password/DSN).
+
+### 7.5 Quyết định pagination trước virtualization
+
+- Pagination/cursor là giải pháp chính; chỉ thêm `@tanstack/react-virtual` (không dùng
+  react-window) khi vượt ngưỡng: viewport >200 dòng, DOM >2.000 node row, render >50ms,
+  INP >200ms, hoặc báo cáo/lịch sử >500 dòng/1 view. Không virtualize lịch 31×7.
+- Phase 8 Playwright perf gate: `npm run test:e2e:perf` (chromium) kiểm tra không request
+  trùng cùng query key, pending button ≤100ms/không layout jump, first usable content
+  prompt, mutation click trùng chỉ tạo 1 request.
+- Phase 9 pytest perf gate: `pytest tests/integration -m performance` trên scale DB kiểm
+  tra query-count (list ≤12, availability ≤8, occurrences/preview ≤12, detail/history ≤12,
+  student ≤12, không vượt MAX_SQL_PER_REQUEST) + concurrency 10/20/50 không race/duplicate/
+  pool timeout. Lưu ý: `Class` entity có 7 relationship `lazy="selectin"` gây eager-load
+  cố định (không N+1) — list/detail/history đã suppress bằng `noload`; preview/history
+  cần nhiều bảng nên gate được nới theo bằng chứng thực.
+
+### 7.6 Preview hoãn — giữ hai request mặc định
+
+- Mặc định giữ effective occurrences + suspension preview chạy song song (UX đã có một
+  trạng thái loading chung). Chỉ gộp thành một endpoint khi benchmark chứng minh đồng
+  thời: p95 wall giảm ≥20%, SQL count giảm ≥1, payload không tăng >15%, CPU không tăng
+  >15%, vẫn retry độc lập, không tạo response lỗi khó hiểu hơn.
+
+### 7.7 Artifact và rollback
+
+- Mỗi vòng đo tạo run ID `r8-perf-YYYYMMDD-NNN`, lưu `manifest.json` (git commit,
+  SHA-256 migration 078, PostgreSQL version, danh sách migration, dataset version —
+  không ghi password/DSN/token), `schema-before/after`, `explain-before/after`,
+  `endpoint-results.json`, `playwright-results.json`, `locks.csv`, `report.md`.
+- Rollback 078 = `drop index if exists ix_fee_records_unpaid_enrollment; drop index if
+  exists classes_scope_browse_idx;` — không ảnh hưởng dữ liệu.
+- Không xóa `perf_dataset.sql`, `perf_explain.sql`, `perf_measure.py` hay migration lịch
+  sử vì chúng vẫn là bằng chứng audit.

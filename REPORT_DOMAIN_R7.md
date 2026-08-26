@@ -1,15 +1,16 @@
 # Báo Cáo Hoàn Thiện Nghiệp Vụ Round 7 (REPORT_DOMAIN_R7)
 
+> **Addendum hiện tại (17/08/2026):** working tree đã bổ sung migrations `074–077`; backup custom-format
+> Supabase thật đã được tạo trước khi chạy 075–077 bằng database owner, và `verify_security.sql` đã PASS.
+> Các số liệu historical bên dưới chỉ là baseline; evidence hiện tại nằm trong `test.md` và log vận hành.
+
 ## I. Tổng Quan & Trạng Thái Nghiệm Thu
 - **Dự án:** `tpro-classio`
 - **Mục tiêu:** Hoàn thiện dứt điểm Round 7, đóng gói toàn bộ bất biến nghiệp vụ, phân tách migration theo domain, chuyển đổi sang Typed Principal & RBAC deny-by-default, đảm bảo sẵn sàng cho giai đoạn kiểm thử localhost của người dùng.
-- **Trạng thái code:** **CÁC GATE CODE/DATABASE/CONTAINER ĐÃ XANH; SẴN SÀNG CHO MANUAL LOCALHOST SMOKE**.
-  Supabase thật đã được backup, migrate, security-verify và acceptance-probe; backend readiness và frontend
-  đều trả HTTP 200 sau rebuild.
-  - Backend disposable/unit/integration suite: **528 passed**, 0 failed.
-  - Disposable PostgreSQL pipeline: migrations `001–073`, security verification chạy lặp lại, runtime-role checks,
-    integration/concurrency và acceptance/reapply đều đạt.
-  - Frontend Test Suite: **461 passed**, 0 failed.
+- **Trạng thái code:** **GATE CODE/DISPOSABLE/REAL-SUPABASE/DOCKER ĐÃ XANH; CÒN MANUAL SMOKE**.
+  - Backend unit suite: **468 passed**, 59 skipped; disposable pipeline migrations `001–077`, security verification
+    lặp lại, runtime-role checks, integration/concurrency và acceptance/reapply đều đạt.
+  - Frontend Test Suite: **469 passed**, 0 failed.
   - TypeScript type-check, ESLint và Next.js production build: **Clean**.
   - E2E gần nhất: Chromium **46/46**, Firefox **45 pass + 1 skip có chủ đích** cho pointer-cancel.
   - OpenAPI runtime import: **90 paths / 100 operations**.
@@ -18,7 +19,7 @@
 
 > Ghi chú kiểm tra độc lập ngày 15/08/2026: Docker và Playwright đã chạy được trên máy này. Chromium đạt
 > **46/46**; Firefox đạt **45/45 bài bắt buộc** và bỏ qua duy nhất bài synthetic `pointercancel` đã được Chromium
-> kiểm tra. SQL Supabase thật đã được chạy trong maintenance window sau backup; không commit hoặc push.
+> kiểm tra. Đây là baseline trước 075–077; không coi là bằng chứng cho các migration mới.
 
 ---
 
@@ -201,3 +202,53 @@ npm run test:e2e:schedule:firefox
 Codebase Round 7 đã qua gate code, disposable database, Supabase thật, security verify, hai browser E2E và
 Docker production image. Frontend hiện chạy tại `localhost:3000`; backend `/health/ready` trả 200. Phần còn
 lại trước khi chốt Round 7 localhost là manual smoke trong `test.md`; staging/Pay2S vẫn được giữ tắt đúng chủ ý.
+
+## VIII. Post-R7 per-slot teacher/payroll addendum (17/08/2026)
+
+The implementation now supports a shared session with multiple teachers without
+splitting the session fee. Each teacher is explicitly assigned to the individual
+weekly slot and checks in under their own staff identity. The attendance command
+resolves that staff member's effective-dated `StaffCompensationRate`, snapshots
+the amount, and creates one independent `EARNING` for that staff member. A
+teacher's rate is therefore invariant across classes; class membership never
+changes the rate and there is no pro-rata calculation.
+
+- Migration `076_slot_teacher_assignment_history.sql` records per-slot teacher
+  assignment deltas append-only with staff-name snapshots, actor, reason and
+  request id. Assistants remain a separate role and are not silently copied to
+  teacher assignments.
+- Migration `077_staff_earning_rate_integrity.sql` adds a server-only trigger
+  that rejects an EARNING whose staff or amount differs from the attendance rate
+  snapshot. It also performs an abort-before-write preflight for existing bad
+  rows and remains RLS/privilege protected.
+- Class normalization requires explicit non-empty `teacher_ids` on every slot;
+  the class-level teacher list is only a deduplicated summary/validation pool.
+- Disposable runner now applies `001–077`, repeats `verify_security.sql`, and
+  the latest full run completed all scenarios, integration/concurrency checks,
+  security verification and container cleanup successfully. Backend unit gate
+  is 468 passed / 59 skipped; frontend gate remains 469 passed with type-check
+  and lint clean.
+
+Migration 076/077 đã được áp dụng trên Supabase thật sau khi tạo backup; `verify_security.sql`
+đã chạy thành công sau migration 077. Manual localhost smoke vẫn phải hoàn tất trước khi coi
+nghiệp vụ Round 7 đã được người dùng nghiệm thu.
+## R8 verification addendum — class-centric weekly schedule picker
+
+The original Round 7 counts above are the pre-R8 baseline.  After separating
+class schedule painting from per-session staff assignment, the current working
+tree was verified with:
+
+- Frontend unit tests: 490 passed (serialized runner on Windows), type-check,
+  lint and production build all green.
+- Backend full suite: 471 passed, 59 skipped; targeted availability/conflict
+  suite: 34 passed; Ruff check/format green.
+- Schedule production-path E2E: Chromium 45/45; Firefox 44 passed with one
+  documented synthetic `pointercancel` skip.
+- `scope=all_classes` now returns every occupied class slot, including legacy
+  slots without staff metadata.  The class form uses this scope; the legacy
+  `selected_staff` scope remains management-only for compatibility tooling.
+- Class add/edit keeps the original compact schedule-picker presentation: the
+  weekly grid remains on the left and the right panel is the direct
+  **“Danh sách chi tiết”** card list.  Teacher assignment is performed inside
+  each card; the newer teacher-tab/detail-screen presentation is not used for
+  class-centric scheduling.

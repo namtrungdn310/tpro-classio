@@ -1,0 +1,26 @@
+# Production overlay. Run together with docker-compose.yml and
+# docker-compose.deploy.yml. The tunnel is the only public ingress; no
+# backend/frontend port should be published on the production host.
+services:
+  cloudflared:
+    image: ${CLOUDFLARED_IMAGE:?Set CLOUDFLARED_IMAGE to an immutable digest}
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:?Set CLOUDFLARE_TUNNEL_TOKEN}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m,mode=1777
+    depends_on:
+      frontend:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

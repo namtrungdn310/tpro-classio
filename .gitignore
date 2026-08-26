@@ -127,3 +127,6 @@ frontend/playwright/.cache/
 *.dump
 *.dmp
 *.sql.gz
+artifacts/
+# Local previews generated while reviewing bank logos; never ship them.
+/frontend/.tmp-bank-logo-preview/
