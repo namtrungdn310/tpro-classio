@@ -39,7 +39,7 @@ from app.models.payment_request import (
 from app.services.pay2s_catalog import get_pay2s_payment_bank
 
 _ACCESS_KEY_PURPOSE = "pay2s-access-key-v1"
-_SECRET_KEY_PURPOSE = "pay2s-secret-key-v1"
+_CREDENTIAL_KEY_PURPOSE = "pay2s-secret-key-v1"
 _BEARER_TOKEN_PURPOSE = "pay2s-bearer-token-v1"
 _TOKEN_HASH_PURPOSE = "pay2s-webhook-token-hash-v1"
 
@@ -245,7 +245,7 @@ async def _provider_credentials(
         return None
     return (
         decrypt_credential(provider.access_key_ciphertext, purpose=_ACCESS_KEY_PURPOSE),
-        decrypt_credential(provider.secret_key_ciphertext, purpose=_SECRET_KEY_PURPOSE),
+        decrypt_credential(provider.secret_key_ciphertext, purpose=_CREDENTIAL_KEY_PURPOSE),
     )
 
 
