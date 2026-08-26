@@ -245,7 +245,9 @@ async def _provider_credentials(
         return None
     return (
         decrypt_credential(provider.access_key_ciphertext, purpose=_ACCESS_KEY_PURPOSE),
-        decrypt_credential(provider.secret_key_ciphertext, purpose=_CREDENTIAL_KEY_PURPOSE),
+        decrypt_credential(
+            provider.secret_key_ciphertext, purpose=_CREDENTIAL_KEY_PURPOSE
+        ),
     )
 
 
