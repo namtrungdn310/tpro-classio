@@ -8,27 +8,41 @@ import {
   useQueryClient,
   type QueryClient,
 } from "@tanstack/react-query";
-import { RiDownload2Line as Download, RiMessage2Line as MessageSquareText } from "react-icons/ri";
+import {
+  RiDownload2Line as Download,
+  RiMessage2Line as MessageSquareText,
+} from "react-icons/ri";
 import { FeeMessageTemplateDialog } from "@/components/fees/fee-message-template-dialog";
-import { FeeRefundDialog } from "@/components/fees/fee-refund-dialog";
+import { FeeRefundPanel } from "@/components/fees/fee-refund-dialog";
+import { FeePaymentRequestDialog } from "@/components/fees/fee-payment-request-dialog";
 import { FeeReportPanel } from "@/components/fees/fee-report-panel";
+import { EarlyPaymentPanel } from "@/components/fees/early-payment-panel";
 import { FeesPageSkeleton } from "@/components/fees/fees-skeleton";
 import { FeesTable } from "@/components/fees/fees-table";
 import { HeaderControlsPortal } from "@/components/layout/header-controls-portal";
 import { HeaderFilterControls } from "@/components/layout/header-filter-controls";
 import { ConfirmationDialog } from "@/components/ui/confirmation-dialog";
+import { Button } from "@/components/ui/button";
 import { LoadingLabel } from "@/components/ui/loading-label";
 import { getClasses } from "@/lib/api/classes";
+import { getBankingOverview } from "@/lib/api/banking";
 import { classQueryKeys } from "@/lib/classes/query-keys";
 import {
   getFeeRecords,
+  getOutstandingFeeRecords,
+  getUpcomingFeeRecords,
   getFeeTransactionBatch,
   getFeePeriods,
   getFeeMessageTemplates,
+  getFeeMessageDraft,
+  getFeePaymentCapabilities,
+  getPaymentRequests,
   notifyFeeRecords,
   payFeeRecords,
   refundFeeRecords,
   reverseFeeRefund,
+  resetFeeMessageTemplates,
+  saveFeeMessageDraft,
   syncFeeRecords,
   unnotifyFeeRecords,
   unpayFeeRecords,
@@ -39,11 +53,11 @@ import { isManagementUser } from "@/lib/auth/permissions";
 import { usePersistentState } from "@/lib/hooks/usePersistentState";
 import {
   formatFeeGroupSubject,
-  renderGroupFeeMessage,
+  getGroupCopyMessage,
   type StudentFeeGroup,
 } from "@/lib/fees/view-model";
 import { mergeFeeBatchActionResult } from "@/lib/fees/cache";
-import { copyFeeMessage, copyText } from "@/lib/fees/clipboard";
+import { copyText } from "@/lib/fees/clipboard";
 import { buildRefundReceiptMessage } from "@/lib/fees/refund";
 import {
   deriveFeeViewModel,
@@ -78,6 +92,7 @@ import type {
   FeeUnpayTargetState,
 } from "@/lib/types";
 import { createPreparedSearchMatcher } from "@/lib/utils/search";
+import { formatPeriod } from "@/lib/utils/format";
 import { useToast } from "@/components/providers/toast-provider";
 import { getApiErrorMessage } from "@/lib/api/errors";
 
@@ -91,6 +106,8 @@ const UNPAY_TARGET_OPTIONS = [
   { value: "UNNOTIFIED", label: "Chưa báo" },
 ] satisfies ReadonlyArray<{ value: FeeUnpayTargetState; label: string }>;
 
+type FeeWorkspaceView = "records" | "outstanding" | "early";
+
 export default function FeesPage() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
@@ -100,14 +117,21 @@ export default function FeesPage() {
   const [period, setPeriod] = usePersistentState("tpro:fees:period", getCurrentFeePeriod());
   const [activeTab, setActiveTab] = usePersistentState<FeeTab>("tpro:fees:activeTab", "unpaid");
   const [unpaidStage, setUnpaidStage] = usePersistentState<UnpaidStage>("tpro:fees:unpaidStage", "unnotified");
+  const [workspaceView, setWorkspaceView] = usePersistentState<FeeWorkspaceView>(
+    "tpro:fees:view",
+    "records",
+  );
   const [classId, setClassId] = useState("");
   const [confirmationTarget, setConfirmationTarget] =
     useState<FeeConfirmationTarget | null>(null);
   const [paymentMethod, setPaymentMethod] =
     useState<FeePaymentMethod>("bank_transfer");
+  const [settlementAccountId, setSettlementAccountId] = useState("");
   const [unpayTargetState, setUnpayTargetState] =
     useState<FeeUnpayTargetState>("NOTIFIED_UNPAID");
   const [refundTarget, setRefundTarget] = useState<StudentFeeGroup | null>(null);
+  const [paymentRequestTarget, setPaymentRequestTarget] =
+    useState<StudentFeeGroup | null>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [refundReceipt, setRefundReceipt] = useState<FeeRefundReceipt | null>(null);
   const [isMessageTemplateDialogOpen, setIsMessageTemplateDialogOpen] =
@@ -130,11 +154,36 @@ export default function FeesPage() {
       queryClient.getQueryState(classQueryKeys.list("active"))?.dataUpdatedAt,
   });
 
+  const bankingQuery = useQuery({
+    queryKey: ["banking-overview"],
+    queryFn: () => getBankingOverview(),
+    enabled: Boolean(user) && isAdmin,
+    staleTime: 15_000,
+  });
+  const activeBankAccounts = useMemo(
+    () => (bankingQuery.data?.accounts ?? []).filter((account) => account.is_active),
+    [bankingQuery.data?.accounts],
+  );
+
   const feePeriodsQuery = useQuery({
     queryKey: ["fee-periods"],
     queryFn: getFeePeriods,
     enabled: Boolean(user),
     staleTime: 5 * 60 * 1000,
+  });
+
+  const paymentCapabilitiesQuery = useQuery({
+    queryKey: ["fee-payment-capabilities"],
+    queryFn: getFeePaymentCapabilities,
+    enabled: Boolean(user) && isAdmin,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const paymentRequestsQuery = useQuery({
+    queryKey: ["payment-requests"],
+    queryFn: () => getPaymentRequests(),
+    enabled: Boolean(user) && isAdmin,
+    staleTime: 10_000,
   });
 
   const messageTemplatesQuery = useQuery({
@@ -157,32 +206,69 @@ export default function FeesPage() {
     staleTime: 10_000,
     refetchInterval: 30_000,
     refetchIntervalInBackground: false,
-    refetchOnWindowFocus: true,
     initialData: () => queryClient.getQueryData(["fees", { period }]),
     initialDataUpdatedAt: () =>
       queryClient.getQueryState(["fees", { period }])?.dataUpdatedAt,
   });
 
-  const feeRecordIds = useMemo(
+  const outstandingFeesQuery = useQuery({
+    queryKey: ["fees", "outstanding"],
+    queryFn: getOutstandingFeeRecords,
+    enabled: Boolean(user),
+    staleTime: 10_000,
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
+  });
+
+  const upcomingFeesQuery = useQuery({
+    queryKey: ["fees", "upcoming", { class_id: classId ?? null }],
+    queryFn: () => getUpcomingFeeRecords(classId || undefined),
+    enabled: Boolean(user),
+    staleTime: 10_000,
+  });
+
+  const isOutstandingView = workspaceView === "outstanding";
+  const isLedgerView = workspaceView !== "early";
+  const hasInvalidActivePeriod = !isOutstandingView && isInvalidPeriod;
+  const displayActiveTab: FeeTab = isOutstandingView ? "unpaid" : activeTab;
+  const activeFeeData = isOutstandingView
+    ? outstandingFeesQuery.data
+    : feesQuery.data;
+  const activeFeesPending = isOutstandingView
+    ? outstandingFeesQuery.isPending
+    : feesQuery.isPending;
+  const activeFeesFetching = isOutstandingView
+    ? outstandingFeesQuery.isFetching
+    : feesQuery.isFetching;
+  const activeFeesError = isOutstandingView
+    ? outstandingFeesQuery.isError
+    : feesQuery.isError;
+
+  const refundFeeRecordIds = useMemo(
     () =>
       Array.from(
-        new Set((feesQuery.data?.records ?? []).map((record) => record.id)),
+        new Set((refundTarget?.records ?? []).map((record) => record.id)),
       ).sort(),
-    [feesQuery.data?.records],
+    [refundTarget],
   );
 
   const feeTransactionsQuery = useQuery({
-    queryKey: ["fee-transactions", "period", { period, feeRecordIds }],
-    queryFn: () => loadFeeTransactionHistories(feeRecordIds),
-    // Transaction/refund history is detail data. Loading it eagerly for every
-    // fee in a period delayed the first usable render and amplified requests.
+    queryKey: [
+      "fee-transactions",
+      "refund-workspace",
+      { period, groupKey: refundTarget?.group_key ?? null, refundFeeRecordIds },
+    ],
+    queryFn: () => loadFeeTransactionHistories(refundFeeRecordIds),
+    // Start this detail request when the operator opens the action workspace,
+    // but only for that student's fee records. The refund panel can then open
+    // from warm cache without scanning every fee in the selected period.
     enabled:
       Boolean(user) &&
-      !isInvalidPeriod &&
-      feesQuery.data !== undefined &&
-      refundTarget !== null,
+      !hasInvalidActivePeriod &&
+      activeFeeData !== undefined &&
+      refundTarget !== null &&
+      refundFeeRecordIds.length > 0,
     staleTime: 30_000,
-    refetchOnWindowFocus: "always",
   });
 
   const syncMutation = useMutation({
@@ -190,6 +276,7 @@ export default function FeesPage() {
     onMutate: () => cancelFeeQueries(queryClient),
     onSuccess: (data) => {
       queryClient.setQueryData(["fees", { period: data.period }], data);
+      void queryClient.invalidateQueries({ queryKey: ["fees", "outstanding"] });
       void queryClient.invalidateQueries({ queryKey: ["reports"] });
     },
     onError: (error) => {
@@ -206,16 +293,9 @@ export default function FeesPage() {
   const notifyGroupMutation = useMutation({
     mutationFn: async (group: StudentFeeGroup) => {
       const records = group.records.filter((record) => record.notification_state === "UNNOTIFIED");
-      const templates = messageTemplatesQuery.data;
-      if (!templates) {
-        throw new Error("Chưa tải được nội dung thông báo Zalo.");
-      }
-      const message = renderGroupFeeMessage(
-        group,
-        false,
-        templates.payment_reminder_template,
-      );
-      return await notifyFeeRecords(records.map((record) => record.id), message);
+      const recordIds = records.map((record) => record.id);
+      const draft = await getFeeMessageDraft(recordIds, "reminder");
+      return await notifyFeeRecords(recordIds, draft);
     },
     onMutate: () => cancelFeeQueries(queryClient),
     onSuccess: (result, group) => {
@@ -231,6 +311,39 @@ export default function FeesPage() {
         error instanceof Error && error.message.includes("nội dung")
           ? error.message
           : getApiErrorMessage(error, "Không thể cập nhật trạng thái thông báo."),
+      );
+    },
+  });
+
+  const saveMessageDraftMutation = useMutation({
+    mutationFn: async ({
+      group,
+      kind,
+      message,
+    }: {
+      group: StudentFeeGroup;
+      kind: "reminder" | "received";
+      message: string;
+    }) =>
+      saveFeeMessageDraft(
+        group.records.map((record) => record.id),
+        kind,
+        message,
+      ),
+    onMutate: () => cancelFeeQueries(queryClient),
+    onSuccess: (_result, variables) => {
+      void queryClient.invalidateQueries({ queryKey: ["fee-message-draft"] });
+      notify.success(
+        `Đã lưu nội dung Zalo riêng cho ${formatFeeGroupSubject(variables.group)}.`,
+      );
+    },
+    onError: (error) => {
+      recoverFeeMutationData(queryClient);
+      notify.error(
+        getApiErrorMessage(
+          error,
+          "Không thể lưu nội dung Zalo riêng. Nội dung đang nhập vẫn được giữ nguyên.",
+        ),
       );
     },
   });
@@ -254,17 +367,33 @@ export default function FeesPage() {
     },
   });
 
+  const resetMessageTemplatesMutation = useMutation({
+    mutationFn: resetFeeMessageTemplates,
+    onSuccess: (templates) => {
+      queryClient.setQueryData(["fee-message-templates"], templates);
+      setIsMessageTemplateDialogOpen(false);
+      notify.success("Đã khôi phục nội dung mặc định.");
+    },
+    onError: (error) => {
+      void messageTemplatesQuery.refetch();
+      notify.error(getApiErrorMessage(error, "Không thể khôi phục nội dung mặc định."));
+    },
+  });
+
   const payGroupMutation = useMutation({
     mutationFn: async ({
       group,
       method,
+      settlementAccountId: selectedSettlementAccountId,
     }: {
       group: StudentFeeGroup;
       method: FeePaymentMethod;
+      settlementAccountId?: string;
     }) => {
       return await payFeeRecords(
         group.records.map((record) => record.id),
         method,
+        selectedSettlementAccountId || undefined,
       );
     },
     onMutate: () => cancelFeeQueries(queryClient),
@@ -407,34 +536,52 @@ export default function FeesPage() {
   ]);
 
   const indexedRecords = useMemo(
-    () => indexFeeRecords(feesQuery.data?.records ?? []),
-    [feesQuery.data?.records],
+    () => indexFeeRecords(activeFeeData?.records ?? []),
+    [activeFeeData?.records],
   );
 
   const { classFeeSummaries, summary, visibleGroups } = useMemo(
     () =>
       deriveFeeViewModel({
-        activeTab,
+        activeTab: displayActiveTab,
         classId: deferredClassId,
         indexedRecords,
         matchesFeeSearch,
         unpaidStage,
         classes: classesQuery.data ?? [],
+        separatePeriods: isOutstandingView,
       }),
-    [activeTab, deferredClassId, indexedRecords, matchesFeeSearch, unpaidStage, classesQuery.data],
+    [
+      displayActiveTab,
+      deferredClassId,
+      indexedRecords,
+      isOutstandingView,
+      matchesFeeSearch,
+      unpaidStage,
+      classesQuery.data,
+    ],
   );
 
   const activeRefundTarget = useMemo(() => {
     if (!refundTarget) return null;
     return (
       visibleGroups.find(
-        (group) => group.student_id === refundTarget.student_id,
+        (group) => group.group_key === refundTarget.group_key,
       ) ?? refundTarget
     );
   }, [refundTarget, visibleGroups]);
 
+  const closeRefundWorkspace = () => {
+    if (refundGroupMutation.isPending || refundReversalMutation.isPending) return;
+    setRefundTarget(null);
+    setRefundReceipt(null);
+    refundGroupMutation.reset();
+    refundReversalMutation.reset();
+  };
+
   const isBusy =
     notifyGroupMutation.isPending ||
+    saveMessageDraftMutation.isPending ||
     payGroupMutation.isPending ||
     refundGroupMutation.isPending ||
     refundReversalMutation.isPending ||
@@ -453,31 +600,39 @@ export default function FeesPage() {
           : unnotifyGroupMutation.isPending
             ? "unnotify"
             : null;
-  const pendingStudentId =
-    notifyGroupMutation.variables?.student_id ??
-    payGroupMutation.variables?.group.student_id ??
-    refundGroupMutation.variables?.group.student_id ??
-    refundReversalMutation.variables?.group.student_id ??
-    unpayGroupMutation.variables?.group.student_id ??
-    unnotifyGroupMutation.variables?.student_id ??
+  const pendingGroupKey =
+    notifyGroupMutation.variables?.group_key ??
+    saveMessageDraftMutation.variables?.group.group_key ??
+    payGroupMutation.variables?.group.group_key ??
+    refundGroupMutation.variables?.group.group_key ??
+    refundReversalMutation.variables?.group.group_key ??
+    unpayGroupMutation.variables?.group.group_key ??
+    unnotifyGroupMutation.variables?.group_key ??
     null;
-  const hasFeeData = feesQuery.data !== undefined;
+  const hasFeeData = activeFeeData !== undefined;
   const hasClassData = classesQuery.data !== undefined;
   const hasMessageTemplateData = messageTemplatesQuery.data !== undefined;
   const isInitialLoading =
+    isLedgerView &&
     Boolean(user) &&
-    !isInvalidPeriod &&
+    !hasInvalidActivePeriod &&
     (
       (!hasFeeData &&
-        (feesQuery.isPending || feesQuery.isFetching || syncMutation.isPending)) ||
+        (activeFeesPending ||
+          activeFeesFetching ||
+          (!isOutstandingView && syncMutation.isPending))) ||
       (!hasClassData && classesQuery.isPending) ||
       (isAdmin && !hasMessageTemplateData && messageTemplatesQuery.isPending)
     );
   const hasBlockingFeeError =
-    feesQuery.isError && !hasFeeData && !feesQuery.isFetching && !syncMutation.isPending;
+    isLedgerView &&
+    activeFeesError &&
+    !hasFeeData &&
+    !activeFeesFetching &&
+    (isOutstandingView || !syncMutation.isPending);
   const hasBlockingLoadError = hasBlockingFeeError;
   const hasRefreshError =
-    feesQuery.isError && hasFeeData;
+    isLedgerView && activeFeesError && hasFeeData;
 
   const [currentYearText, currentMonthText] = getCurrentFeePeriod().split("-");
   const currentYear = Number(currentYearText);
@@ -502,14 +657,19 @@ export default function FeesPage() {
     const m = String(i + 1).padStart(2, "0");
     return { label: `Tháng ${i + 1}`, value: m };
   });
+  const hasFeeListFilters = Boolean(search.trim() || classId);
 
-  const filterControls = (
+  const filterControls = isLedgerView ? (
     <HeaderFilterControls
       searchPlaceholder="Tìm học viên, lớp, SĐT..."
       searchValue={search}
       onSearchChange={setSearch}
-      onClear={() => setPeriod(getCurrentFeePeriod())}
-      filters={[
+      onClear={
+        workspaceView === "records"
+          ? () => setPeriod(getCurrentFeePeriod())
+          : undefined
+      }
+      filters={workspaceView === "records" ? [
         {
           label: "Năm",
           value: periodYear,
@@ -542,9 +702,9 @@ export default function FeesPage() {
           },
           options: monthOptions,
         },
-      ]}
+      ] : []}
     />
-  );
+  ) : null;
   async function handleExport() {
     setIsExporting(true);
     try {
@@ -562,15 +722,15 @@ export default function FeesPage() {
       await exportFeeGroups(
         visibleGroups,
         {
-          activeTab,
+          activeTab: displayActiveTab,
           className: classFeeSummaries.find((class_) => class_.id === classId)
             ?.name,
-          period,
+          period: isOutstandingView ? "outstanding" : period,
           unpaidStage,
         },
         transactionHistories,
       );
-      notify.success("Đã xuất file Excel kèm lịch sử giao dịch.");
+      notify.success("Đã xuất danh sách học phí kèm lịch sử giao dịch ra file Excel.");
     } catch {
       notify.error("Không thể xuất file Excel. Vui lòng thử lại.");
     } finally {
@@ -578,29 +738,29 @@ export default function FeesPage() {
     }
   }
 
-  const exportButton = (
-    <button
+  const exportButton = isLedgerView ? (
+    <Button
       type="button"
       disabled={visibleGroups.length === 0 || isInitialLoading || isExporting}
       onClick={() => void handleExport()}
-      className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-[#217346] px-3 text-sm font-medium text-white transition hover:bg-[#1b5f3a] disabled:cursor-not-allowed disabled:opacity-50"
+      className="bg-[#217346] text-white hover:bg-[#1b5f3a]"
     >
       {!isExporting ? (
         <Download className="h-3.5 w-3.5" aria-hidden="true" />
       ) : null}
       {isExporting ? <LoadingLabel label="Đang xuất" /> : "Excel"}
-    </button>
-  );
-  const messageTemplateButton = isAdmin ? (
-    <button
+    </Button>
+  ) : null;
+  const messageTemplateButton = isLedgerView && isAdmin ? (
+    <Button
       type="button"
+      variant="outline"
       disabled={!messageTemplatesQuery.data || updateMessageTemplatesMutation.isPending}
       onClick={() => setIsMessageTemplateDialogOpen(true)}
-      className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-gray-200 bg-white px-3 text-sm font-medium text-gray-700 transition hover:border-gray-300 hover:bg-gray-50 hover:text-gray-950 disabled:cursor-not-allowed disabled:opacity-50"
     >
       <MessageSquareText className="h-3.5 w-3.5" aria-hidden="true" />
       Nội dung Zalo
-    </button>
+    </Button>
   ) : null;
   const confirmationContent = getFeeConfirmationContent(
     confirmationTarget,
@@ -612,7 +772,7 @@ export default function FeesPage() {
   const isConfirmationMutationPending = Boolean(
     confirmationTarget &&
     pendingAction === confirmationTarget.action &&
-    pendingStudentId === confirmationTarget.group.student_id,
+    pendingGroupKey === confirmationTarget.group.group_key,
   );
 
   return (
@@ -631,7 +791,31 @@ export default function FeesPage() {
         {exportButton}
       </div>
 
-      <div className="flex min-h-0 flex-col gap-3 md:flex-1 md:overflow-hidden">
+      <FeeWorkspaceTabs
+        activeView={workspaceView}
+        onChange={(nextView) => {
+          setWorkspaceView(nextView);
+          setClassId("");
+          if (nextView === "outstanding") {
+            setActiveTab("unpaid");
+          }
+        }}
+        outstandingCount={
+          new Set(
+            (outstandingFeesQuery.data?.records ?? []).map(
+              (record) => `${record.student_id}:${record.period}`,
+            ),
+          ).size
+        }
+        upcomingCount={upcomingFeesQuery.data?.records.length ?? 0}
+      />
+
+      <div
+        id={`fees-panel-${workspaceView}`}
+        role="tabpanel"
+        aria-labelledby={`fees-tab-${workspaceView}`}
+        className="flex min-h-0 flex-col gap-3 md:flex-1 md:overflow-hidden"
+      >
         {feePeriodsQuery.isError ? (
           <div
             role="status"
@@ -674,11 +858,14 @@ export default function FeesPage() {
           <FeesPageSkeleton isAdmin={isAdmin} />
         ) : (
           <>
-            {hasFeeData && !isInvalidPeriod && !hasBlockingLoadError ? (
+            {isLedgerView && hasFeeData && !hasInvalidActivePeriod && !hasBlockingLoadError ? (
               <FeeReportPanel
                 activeClassId={classId}
-                activeTab={activeTab}
+                activeTab={displayActiveTab}
                 classItems={classFeeSummaries}
+                embedded
+                outstandingView={isOutstandingView}
+                scopeLabel={isOutstandingView ? "Tất cả kỳ" : formatPeriod(period)}
                 summary={summary}
                 unpaidStage={unpaidStage}
                 onChangeClass={setClassId}
@@ -687,7 +874,35 @@ export default function FeesPage() {
               />
             ) : null}
 
-            <div className="min-h-0 md:flex md:flex-1 md:flex-col md:overflow-hidden">
+            {workspaceView === "early" && isAdmin && !isInvalidPeriod && !hasBlockingLoadError ? (
+              <EarlyPaymentPanel
+                records={upcomingFeesQuery.data?.records ?? []}
+                isLoading={upcomingFeesQuery.isPending}
+                isError={upcomingFeesQuery.isError}
+                isRetrying={upcomingFeesQuery.isFetching}
+                qrEnabled={paymentCapabilitiesQuery.data?.qr_creation_enabled ?? false}
+                pay2sReady={paymentCapabilitiesQuery.data?.automatic_recording_ready ?? false}
+                requests={paymentRequestsQuery.data?.requests ?? []}
+                accountOptions={activeBankAccounts}
+                onRetry={() => void upcomingFeesQuery.refetch()}
+                onChanged={() => {
+                  void queryClient.invalidateQueries({ queryKey: ["fees"] });
+                  void queryClient.invalidateQueries({ queryKey: ["reports"] });
+                  void queryClient.invalidateQueries({ queryKey: ["payment-requests"] });
+                }}
+              />
+            ) : null}
+
+            {workspaceView === "early" && !isAdmin ? (
+              <div
+                className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+                role="status"
+              >
+                Chỉ quản trị viên mới có thể tạo yêu cầu thanh toán sớm hoặc ghi nhận tiền mặt.
+              </div>
+            ) : null}
+
+            {isLedgerView ? <div className="min-h-0 md:flex md:flex-1 md:flex-col md:overflow-hidden xl:-mt-3">
               {hasRefreshError ? (
                 <div
                   role="status"
@@ -696,13 +911,17 @@ export default function FeesPage() {
                   <span>Không thể cập nhật đầy đủ dữ liệu mới nhất. Đang hiển thị dữ liệu đã tải gần nhất.</span>
                   <button
                     type="button"
-                    disabled={feesQuery.isFetching || feeTransactionsQuery.isFetching}
+                    disabled={activeFeesFetching || feeTransactionsQuery.isFetching}
                     className="shrink-0 font-semibold underline underline-offset-2 hover:text-amber-950 disabled:cursor-wait disabled:opacity-60"
                     onClick={() => {
-                      void feesQuery.refetch();
+                      if (isOutstandingView) {
+                        void outstandingFeesQuery.refetch();
+                      } else {
+                        void feesQuery.refetch();
+                      }
                     }}
                   >
-                    {feesQuery.isFetching
+                    {activeFeesFetching
                       ? <LoadingLabel label="Đang cập nhật" />
                       : "Cập nhật lại"}
                   </button>
@@ -710,56 +929,79 @@ export default function FeesPage() {
               ) : null}
 
               <div className="min-h-0 md:flex-1 md:overflow-hidden">
-                {hasBlockingLoadError && !isInvalidPeriod ? (
+                {hasBlockingLoadError && !hasInvalidActivePeriod ? (
                   <div className="flex min-h-48 flex-col items-center justify-center gap-3 rounded-md border border-destructive/15 bg-destructive-soft px-4 text-center md:h-full">
                     <p className="font-semibold text-destructive">
                       Không thể tải đầy đủ dữ liệu học phí
                     </p>
                     <button
                       type="button"
-                      disabled={feesQuery.isFetching}
+                      disabled={activeFeesFetching}
                       className="rounded-md bg-destructive px-3 py-1.5 text-xs font-semibold text-destructive-foreground shadow-sm hover:bg-destructive/90 disabled:cursor-wait disabled:opacity-60"
                       onClick={() => {
-                        if (hasBlockingFeeError) void feesQuery.refetch();
+                        if (hasBlockingFeeError) {
+                          if (isOutstandingView) {
+                            void outstandingFeesQuery.refetch();
+                          } else {
+                            void feesQuery.refetch();
+                          }
+                        }
                       }}
                     >
-                      {feesQuery.isFetching
+                      {activeFeesFetching
                         ? <LoadingLabel label="Đang thử lại" />
                         : "Thử lại"}
                     </button>
                   </div>
                 ) : null}
 
-                {isInvalidPeriod ||
+                {hasInvalidActivePeriod ||
                 (hasFeeData && !hasBlockingLoadError && visibleGroups.length === 0) ? (
-                  <div className="flex min-h-48 flex-col items-center justify-center gap-2 rounded-md border border-gray-100 bg-gray-50 text-center md:h-full">
+                  <div className="flex min-h-48 flex-col items-center justify-center gap-2 rounded-md border border-gray-100 bg-gray-50 px-4 text-center md:h-full">
                     <p className="text-[13px] text-gray-500">
-                      Không có khoản học phí phù hợp.
+                      {isOutstandingView
+                        ? "Không có khoản còn phải thu phù hợp."
+                        : "Không có khoản học phí phù hợp."}
                     </p>
+                    {hasFeeListFilters ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSearch("");
+                          setClassId("");
+                        }}
+                        className="inline-flex min-h-9 items-center rounded-md px-3 text-sm font-semibold text-primary transition-colors hover:bg-primary-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                      >
+                        Xóa tìm kiếm và lọc lớp
+                      </button>
+                    ) : null}
                   </div>
                 ) : null}
 
                 {hasFeeData &&
-                !isInvalidPeriod &&
+                !hasInvalidActivePeriod &&
                 !hasBlockingLoadError &&
                 visibleGroups.length > 0 ? (
                   <FeesTable
-                    activeTab={activeTab}
+                    activeTab={displayActiveTab}
+                    embedded
                     unpaidStage={unpaidStage}
                     isAdmin={isAdmin}
                     isBusy={isBusy}
                     isMessageUnavailable={!messageTemplatesQuery.data}
+                    canCreatePaymentRequest={activeBankAccounts.length > 0}
                     pendingAction={pendingAction}
-                    pendingStudentId={pendingStudentId}
+                    pendingGroupKey={pendingGroupKey}
                     groups={visibleGroups}
-                    onCopy={(group) => {
+                    showPeriod={isOutstandingView}
+                    onCopy={(group, message) => {
                       const templates = messageTemplatesQuery.data;
                       if (!templates) {
                         notify.warning("Chưa tải được nội dung Zalo. Vui lòng thử lại.");
                         return;
                       }
-                      const isPaidMessage = activeTab === "paid";
-                      void copyFeeMessage(group, isPaidMessage, templates)
+                      const isPaidMessage = displayActiveTab === "paid";
+                      void copyText(message)
                         .then(() =>
                           notify.success(
                             isPaidMessage
@@ -775,10 +1017,31 @@ export default function FeesPage() {
                           ),
                         );
                     }}
+                    onSaveCopy={async (group, message) => {
+                      const saved = await saveMessageDraftMutation.mutateAsync({
+                        group,
+                        message,
+                        kind: displayActiveTab === "paid" ? "received" : "reminder",
+                      });
+                      return saved.message;
+                    }}
+                    isSavingCopy={saveMessageDraftMutation.isPending}
                     onNotify={(group) => notifyGroupMutation.mutate(group)}
+                    onCreatePaymentRequest={(group) =>
+                      setPaymentRequestTarget(group)
+                    }
                     onPay={(group) => {
                       setPaymentMethod("bank_transfer");
+                      setSettlementAccountId(
+                        activeBankAccounts.find((account) => account.is_default)?.id ??
+                          activeBankAccounts[0]?.id ??
+                          "",
+                      );
                       setConfirmationTarget({ action: "pay", group });
+                    }}
+                    onPrepareRefundHistory={(group) => {
+                      setRefundTarget(group);
+                      setRefundReceipt(null);
                     }}
                     onRefund={(group) => {
                       setRefundTarget(group);
@@ -790,10 +1053,81 @@ export default function FeesPage() {
                       setConfirmationTarget({ action: "unpay", group });
                     }}
                     onUnnotify={(group) => setConfirmationTarget({ action: "unnotify", group })}
+                    getCopyMessage={(group) => {
+                      const templates = messageTemplatesQuery.data;
+                      if (!templates) return null;
+                      return getGroupCopyMessage(
+                        group,
+                        displayActiveTab === "paid",
+                        templates.active,
+                      );
+                    }}
+                    loadCopyMessage={async (group) => {
+                      const draft = await getFeeMessageDraft(
+                        group.records.map((record) => record.id),
+                        displayActiveTab === "paid" ? "received" : "reminder",
+                      );
+                      if (draft.is_stale) {
+                        notify.warning(
+                          "Dữ liệu khoản thu đã thay đổi. Hãy rà soát rồi lưu lại nội dung trước khi sử dụng.",
+                        );
+                      }
+                      return draft.message;
+                    }}
+                    refundPanel={(closeWorkspace) =>
+                      activeRefundTarget ? (
+                        <FeeRefundPanel
+                          bankAccounts={activeBankAccounts}
+                          group={activeRefundTarget}
+                          transactionHistories={feeTransactionsQuery.data ?? []}
+                          isHistoryLoading={feeTransactionsQuery.isFetching}
+                          hasHistoryError={feeTransactionsQuery.isError}
+                          onRetryHistory={() => void feeTransactionsQuery.refetch()}
+                          idempotencyScope={`${user?.id ?? "anonymous"}:${activeRefundTarget.group_key}`}
+                          receipt={refundReceipt}
+                          isPending={refundGroupMutation.isPending}
+                          isReversalPending={refundReversalMutation.isPending}
+                          onClose={() => {
+                            closeRefundWorkspace();
+                            closeWorkspace();
+                          }}
+                          onSubmit={(payload) => {
+                            refundGroupMutation.mutate({
+                              group: activeRefundTarget,
+                              payload,
+                            });
+                          }}
+                          onReverseRefund={async (payload) => {
+                            await refundReversalMutation.mutateAsync({
+                              group: activeRefundTarget,
+                              payload,
+                            });
+                          }}
+                          onCopyReceipt={() => {
+                            if (!refundReceipt) return;
+                            void copyText(
+                              buildRefundReceiptMessage(
+                                activeRefundTarget,
+                                refundReceipt,
+                              ),
+                            )
+                              .then(() =>
+                                notify.success("Đã sao chép xác nhận hoàn phí."),
+                              )
+                              .catch(() =>
+                                notify.error(
+                                  "Không thể sao chép xác nhận. Vui lòng thử lại.",
+                                ),
+                              );
+                          }}
+                        />
+                      ) : null
+                    }
+                    onCloseRefund={closeRefundWorkspace}
                   />
                 ) : null}
               </div>
-            </div>
+            </div> : null}
           </>
         )}
       </div>
@@ -831,6 +1165,41 @@ export default function FeesPage() {
                     </label>
                   ))}
                 </div>
+                {paymentMethod === "bank_transfer" ? (
+                  <div className="mt-3">
+                    <label
+                      htmlFor="fee-settlement-account"
+                      className="text-sm font-medium text-gray-900"
+                    >
+                      Tài khoản đã nhận tiền
+                    </label>
+                    <select
+                      id="fee-settlement-account"
+                      value={settlementAccountId}
+                      onChange={(event) => setSettlementAccountId(event.target.value)}
+                      disabled={isConfirmationMutationPending}
+                      className="form-input-text mt-1 h-9 w-full rounded-md border border-gray-200 bg-white px-2.5 text-sm text-gray-900 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-wait disabled:opacity-60"
+                    >
+                      <option value="">Chọn tài khoản đã nhận tiền</option>
+                      {activeBankAccounts.map((account) => (
+                        <option key={account.id} value={account.id}>
+                          {account.label} · {account.bank_name} · ****{account.account_number.slice(-4)}
+                          {account.connection_type === "pay2s" ? " · Pay2S" : " · Thủ công"}
+                        </option>
+                      ))}
+                    </select>
+                    {activeBankAccounts.length === 0 ? (
+                      <p className="mt-1 text-xs text-amber-700">
+                        Chưa có tài khoản nhận tiền. Hãy thêm tài khoản ở trang Ngân hàng trước.
+                      </p>
+                    ) : (
+                      <p className="mt-1 text-xs text-gray-500">
+                        Chọn đúng tài khoản thực tế đã nhận khoản chuyển khoản;
+                        thông tin này được lưu trong lịch sử thanh toán.
+                      </p>
+                    )}
+                  </div>
+                ) : null}
               </fieldset>
             ) : null}
             {confirmationTarget?.action === "unpay" ? (
@@ -887,8 +1256,16 @@ export default function FeesPage() {
 
           const options = { onSuccess: () => setConfirmationTarget(null) };
           if (confirmationTarget.action === "pay") {
+            if (paymentMethod === "bank_transfer" && !settlementAccountId) {
+              notify.error("Hãy chọn tài khoản ngân hàng đã nhận khoản chuyển khoản.");
+              return;
+            }
             payGroupMutation.mutate(
-              { group: confirmationTarget.group, method: paymentMethod },
+              {
+                group: confirmationTarget.group,
+                method: paymentMethod,
+                settlementAccountId,
+              },
               options,
             );
           } else if (confirmationTarget.action === "unpay") {
@@ -905,42 +1282,33 @@ export default function FeesPage() {
         }}
       />
 
-      <FeeRefundDialog
-        open={activeRefundTarget !== null}
-        group={activeRefundTarget}
-        transactionHistories={feeTransactionsQuery.data ?? []}
-        isHistoryLoading={feeTransactionsQuery.isFetching}
-        hasHistoryError={feeTransactionsQuery.isError}
-        onRetryHistory={() => void feeTransactionsQuery.refetch()}
-        idempotencyScope={`${user?.id ?? "anonymous"}:${period}:${activeRefundTarget?.student_id ?? "none"}`}
-        receipt={refundReceipt}
-        isPending={refundGroupMutation.isPending}
-        isReversalPending={refundReversalMutation.isPending}
-        onClose={() => {
-          if (refundGroupMutation.isPending || refundReversalMutation.isPending) return;
-          setRefundTarget(null);
-          setRefundReceipt(null);
-          refundGroupMutation.reset();
-          refundReversalMutation.reset();
-        }}
-        onSubmit={(payload) => {
-          if (!activeRefundTarget) return;
-          refundGroupMutation.mutate({ group: activeRefundTarget, payload });
-        }}
-        onReverseRefund={async (payload) => {
-          if (!activeRefundTarget) return;
-          await refundReversalMutation.mutateAsync({
-            group: activeRefundTarget,
-            payload,
-          });
-        }}
-        onCopyReceipt={() => {
-          if (!activeRefundTarget || !refundReceipt) return;
-          void copyText(buildRefundReceiptMessage(activeRefundTarget, refundReceipt))
-            .then(() => notify.success("Đã sao chép xác nhận hoàn phí."))
-            .catch(() =>
-              notify.error("Không thể sao chép xác nhận. Vui lòng thử lại."),
+      <FeePaymentRequestDialog
+        group={paymentRequestTarget}
+        existingRequest={paymentRequestsQuery.data?.requests.find(
+          (request) => {
+            if (!paymentRequestTarget) return false;
+            if (request.status !== "OPEN" && request.status !== "REVIEW") {
+              return false;
+            }
+            const recordIds = new Set(
+              paymentRequestTarget.records.map((record) => record.id),
             );
+            return (
+              request.items.length === recordIds.size &&
+              request.items.every((item) => recordIds.has(item.fee_record_id))
+            );
+          },
+        )}
+        pay2sReady={
+          paymentCapabilitiesQuery.data?.automatic_recording_ready ?? false
+        }
+        onClose={() => setPaymentRequestTarget(null)}
+        onChanged={() => {
+          void queryClient.invalidateQueries({ queryKey: ["fees"] });
+          void queryClient.invalidateQueries({ queryKey: ["reports"] });
+          void queryClient.invalidateQueries({
+            queryKey: ["payment-requests"],
+          });
         }}
       />
 
@@ -948,14 +1316,93 @@ export default function FeesPage() {
         <FeeMessageTemplateDialog
           open={isMessageTemplateDialogOpen}
           templates={messageTemplatesQuery.data}
-          isSaving={updateMessageTemplatesMutation.isPending}
+          isSaving={updateMessageTemplatesMutation.isPending || resetMessageTemplatesMutation.isPending}
           onClose={() => {
             setIsMessageTemplateDialogOpen(false);
             updateMessageTemplatesMutation.reset();
           }}
           onSave={(payload) => updateMessageTemplatesMutation.mutate(payload)}
+          onReset={(version) => resetMessageTemplatesMutation.mutate(version)}
         />
       ) : null}
+    </div>
+  );
+}
+
+function FeeWorkspaceTabs({
+  activeView,
+  onChange,
+  outstandingCount,
+  upcomingCount,
+}: {
+  activeView: FeeWorkspaceView;
+  onChange: (view: FeeWorkspaceView) => void;
+  outstandingCount: number;
+  upcomingCount: number;
+}) {
+  const tabs = [
+    {
+      id: "records" as const,
+      label: "Khoản thu kỳ hiện tại",
+    },
+    {
+      id: "outstanding" as const,
+      label: "Khoản thu kỳ trước trễ hạn",
+      count: outstandingCount,
+    },
+    {
+      id: "early" as const,
+      label: "Khoản thu sớm kỳ sau",
+      count: upcomingCount,
+    },
+  ];
+
+  return (
+    <div
+      role="tablist"
+      aria-label="Khu vực học phí"
+      onKeyDown={(event) => {
+        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+        event.preventDefault();
+        const buttons = Array.from(
+          event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]'),
+        );
+        const currentIndex = buttons.indexOf(document.activeElement as HTMLButtonElement);
+        if (currentIndex < 0) return;
+        const direction = event.key === "ArrowLeft" ? -1 : 1;
+        buttons[(currentIndex + direction + buttons.length) % buttons.length]?.focus();
+      }}
+      className="grid shrink-0 grid-cols-3 gap-1 rounded-xl border border-gray-200 bg-white p-1.5"
+    >
+      {tabs.map((tab) => {
+        const selected = activeView === tab.id;
+        return (
+          <button
+            key={tab.id}
+            id={`fees-tab-${tab.id}`}
+            type="button"
+            role="tab"
+            aria-selected={selected}
+            aria-controls={`fees-panel-${tab.id}`}
+            tabIndex={selected ? 0 : -1}
+            onClick={() => onChange(tab.id)}
+            className={`inline-flex min-h-11 min-w-0 items-center justify-center gap-1 rounded-lg px-1.5 text-[12px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 sm:gap-1.5 sm:px-3 sm:text-sm md:min-h-9 ${
+              selected
+                ? "bg-primary-soft font-semibold text-primary ring-1 ring-inset ring-primary/20"
+                : "text-gray-600 hover:bg-primary-soft/60 hover:text-primary"
+            }`}
+          >
+            <span className="min-w-0 whitespace-nowrap leading-5">
+              {tab.label}
+            </span>
+            {tab.count !== undefined ? (
+              <span className={`inline-flex min-w-4 shrink-0 items-center justify-center text-xs font-semibold tabular-nums ${selected ? "text-primary" : "text-gray-500"}`}>
+                {tab.count}
+              </span>
+            ) : null}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -971,7 +1418,13 @@ function updateFeeRecordsInCache(
         return current;
       }
 
-      return mergeFeeBatchActionResult(current, result);
+      const merged = mergeFeeBatchActionResult(current, result);
+      return current.period === "outstanding"
+        ? {
+            ...merged,
+            records: merged.records.filter((record) => record.status === "UNPAID"),
+          }
+        : merged;
     },
   );
 }
@@ -986,6 +1439,7 @@ function invalidateSuccessfulFeeMutation(
 ) {
   void queryClient.invalidateQueries({ queryKey: ["reports"] });
   void queryClient.invalidateQueries({ queryKey: ["classes"] });
+  void queryClient.invalidateQueries({ queryKey: ["fees", "outstanding"] });
   if (options.transactions) {
     void queryClient.invalidateQueries({ queryKey: ["fee-transactions"] });
   }

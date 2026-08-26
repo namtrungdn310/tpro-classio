@@ -249,7 +249,7 @@ const openSchedulePicker = async (page: Parameters<Parameters<typeof test>[1]>[0
   const teacherSlide = page.getByRole("dialog").nth(1);
   await teacherSlide.waitFor();
   await teacherSlide.getByRole("button", { name: "Cô Hạnh" }).click();
-  // TeacherSlide commit selection qua nút "Xác nhận" (onSave) — close chỉ hủy.
+  // Staff-pool selection commits through the existing confirmation action.
   await teacherSlide.getByRole("button", { name: "Xác nhận" }).click();
   await teacherSlide.waitFor({ state: "detached" });
   await page.getByRole("button", { name: /Lịch học/i }).click();
@@ -290,7 +290,7 @@ test("T-E2E-PROD-002: two adjacent clicks create and save one valid 60-minute se
   const second = page.locator("[data-day-index='0'][data-time-index='7']");
   await first.click();
   await expect(page.locator("[data-click-anchor='true']")).toHaveCount(1);
-  await expect(page.getByRole("button", { name: "Chọn thêm một ô liền kề" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Chọn thêm một ô liền kề", exact: true })).toBeDisabled();
 
   await second.click();
   await expect(page.locator("[data-click-anchor='true']")).toHaveCount(0);
@@ -360,7 +360,7 @@ test("T-E2E-PROD-005: session 401 triggers auth recovery without ambiguous data 
   expect(new URL(page.url()).pathname).not.toBe("/classes");
 });
 
-test("T-E2E-PROD-006: reopening the schedule picker refetches availability", async ({ page }) => {
+test("T-E2E-PROD-006: reopening the schedule picker within staleTime reuses cached availability (no redundant fetch)", async ({ page }) => {
   await page.goto("http://localhost:3100/classes");
   await openSchedulePicker(page);
   const first = availabilityRequests;
@@ -370,13 +370,15 @@ test("T-E2E-PROD-006: reopening the schedule picker refetches availability", asy
   await page.getByRole("button", { name: /Lịch học/i }).click();
   await page.locator("[data-schedule-grid='true']").waitFor();
   await page.waitForTimeout(400);
-  expect(availabilityRequests).toBeGreaterThan(first);
+  // Availability is cached (staleTime 10s) so a quick reopen must NOT issue a
+  // redundant request — this is the Round 8 perf contract.
+  expect(availabilityRequests).toBe(first);
 });
 
-test("T-E2E-PROD-008: busy assistant is excluded from the save payload", async ({ page }) => {
+test("T-E2E-PROD-008: another class block is locked before per-session assignment", async ({ page }) => {
   availabilityConflicts = [
     {
-      class_id: "88888888-8888-4888-8888-888888888888",
+      class_id: "77777777-7777-4777-8777-777777777777",
       class_name: "Lớp Khác",
       class_category: null,
       grade_level: null,
@@ -389,16 +391,20 @@ test("T-E2E-PROD-008: busy assistant is excluded from the save payload", async (
   ];
   await page.goto("http://localhost:3100/classes");
   await openSchedulePicker(page);
+  // Class add/edit keeps the original compact grid + detail list layout;
+  // teacher assignment is performed inside each card rather than through tabs.
+  await expect(page.getByText("Danh sách chi tiết", { exact: true })).toBeVisible();
+  await expect(page.getByRole("tab")).toHaveCount(0);
+  const busyCell = page.locator("[data-day-index='0'][data-time-index='6']");
+  await expect(busyCell).toHaveAttribute("data-schedule-state", "busy");
+  await expect(busyCell).toHaveAttribute("aria-disabled", "true");
+  await expect(busyCell).toBeDisabled();
+  const busyBox = await busyCell.boundingBox();
+  if (!busyBox) throw new Error("busy schedule cell is not measurable");
+  await page.mouse.click(busyBox.x + busyBox.width / 2, busyBox.y + busyBox.height / 2);
   await dragTwoCells(page);
-  await page.getByRole("button", { name: /Xác nhận/i }).click();
-  await page.getByRole("button", { name: /Tạo lớp|Lưu/i }).first().click();
-  await page.waitForTimeout(500);
-  const payload = saveRequests[0] as {
-    assistant_ids?: string[];
-    schedule?: { slots?: Array<{ assistant_ids: string[] }> };
-  };
-  expect(payload.assistant_ids ?? []).not.toContain(ASSISTANT_A1.id);
-  expect(payload.schedule?.slots?.[0]?.assistant_ids ?? []).not.toContain(ASSISTANT_A1.id);
+  await expect(page.locator("button[aria-pressed='true'][data-day-index='0']")).toHaveCount(0);
+  expect(saveRequests).toHaveLength(0);
 });
 
 test("T-E2E-PROD-009: the final real cell keeps the same visible fill after an 08:00-16:00 commit", async ({ page }) => {
@@ -441,7 +447,7 @@ test("T-E2E-PROD-009: the final real cell keeps the same visible fill after an 0
     "data-schedule-endpoint",
     "true",
   );
-  await expect(page.getByText("Thứ 3 (08:00-16:00)", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Thứ 3\s*\(08:00-16:00\)/)).toBeVisible();
 
   const colors = await page.evaluate(() => {
     const styleAt = (timeIndex: number) => {
@@ -484,12 +490,12 @@ test("T-E2E-PROD-010: the filled endpoint supports click shrinking and bidirecti
   await page.mouse.down();
   await page.mouse.move(endBox.x + endBox.width / 2, endBox.y + 0.5, { steps: 24 });
   await page.mouse.up();
-  await expect(page.getByText("Thứ 3 (08:00-16:00)", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Thứ 3\s*\(08:00-16:00\)/)).toBeVisible();
 
   // The filled 16:00 endpoint behaves like the visible end edge: one click
   // shrinks by 30 minutes instead of extending the data to 16:30.
   await endCell.click();
-  await expect(page.getByText("Thứ 3 (08:00-15:30)", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Thứ 3\s*\(08:00-15:30\)/)).toBeVisible();
   await expect(
     page.locator("[data-day-index='1'][data-time-index='17']"),
   ).toHaveAttribute("data-schedule-endpoint", "true");
@@ -511,11 +517,11 @@ test("T-E2E-PROD-010: the filled endpoint supports click shrinking and bidirecti
   await page.mouse.down();
   await page.mouse.move(
     restoreBoundaryBox.x + restoreBoundaryBox.width / 2,
-    restoreBoundaryBox.y + 0.5,
+    restoreBoundaryBox.y + 4,
     { steps: 6 },
   );
   await page.mouse.up();
-  await expect(page.getByText("Thứ 3 (08:00-16:00)", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Thứ 3\s*\(08:00-16:00\)/)).toBeVisible();
 
   const newEndBox = await endCell.boundingBox();
   const previousBoundaryCell = page.locator(
@@ -532,12 +538,12 @@ test("T-E2E-PROD-010: the filled endpoint supports click shrinking and bidirecti
   await page.mouse.down();
   await page.mouse.move(
     previousBoundaryBox.x + previousBoundaryBox.width / 2,
-    previousBoundaryBox.y + 0.5,
+    previousBoundaryBox.y + 4,
     { steps: 6 },
   );
   await page.mouse.up();
 
-  await expect(page.getByText("Thứ 3 (08:00-15:30)", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Thứ 3\s*\(08:00-15:30\)/)).toBeVisible();
   await expect(previousBoundaryCell).toHaveAttribute(
     "data-schedule-endpoint",
     "true",

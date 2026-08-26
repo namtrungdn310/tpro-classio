@@ -1,73 +1,46 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
-/**
- * BROWSER COMPONENT HARNESS — ClassMakeupWorkspace: nhóm trạng thái, chọn buổi
- * hoãn, gửi postpone payload, mở panel xếp bù với staff/eligible đọc-only,
- * action unschedule/complete/restore. Không đi qua route thật/API/auth.
- */
-
-const state = (page: Page) => page.evaluate(() => window.__makeupTest!.getState());
+/** Component harness for the whole-class postponement flow. */
+async function chooseEndDate(page: import("@playwright/test").Page) {
+  const target = new Date();
+  target.setDate(target.getDate() + 14);
+  await page.getByRole("button", { name: /^Đến ngày/ }).click();
+  const picker = page.locator('[role="dialog"]:visible').filter({ hasText: "Chọn ngày kết thúc hoãn" }).last();
+  await expect(picker).toBeVisible();
+  await picker.getByRole("button", { name: String(target.getFullYear()), exact: true }).click();
+  await picker.getByRole("button", { name: `Tháng ${target.getMonth() + 1}`, exact: true }).click();
+  await picker.getByRole("button", { name: String(target.getDate()), exact: true }).click();
+  await picker.getByRole("button", { name: "Xác nhận", exact: true }).click();
+}
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/makeup-workspace.html");
-  await expect(page.getByRole("heading", { name: "Hoãn và học bù — Lớp 6A1" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Hoãn buổi học — Lớp 6A1" })).toBeVisible();
 });
 
-test("renders obligation summary groups and the postpone section", async ({ page }) => {
-  await expect(page.getByText("Chờ xếp:")).toBeVisible();
-  await expect(page.getByText("Đã xếp:")).toBeVisible();
-  await expect(page.getByText("Chờ xác nhận:")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Hoãn buổi học" })).toBeVisible();
+test("renders a postponement-only workspace", async ({ page }) => {
+  await expect(page.locator('section[aria-label="Hoãn buổi học"]')).toBeVisible();
+  await expect(page.getByText("Từ ngày")).toBeVisible();
+  await expect(page.getByText("Đến ngày")).toBeVisible();
+  await expect(page.getByText("Lý do hoãn")).toBeVisible();
+  await expect(page.getByText("Ghi chú", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Xếp lịch bù|Xếp bù ngay|Xếp sau|Đã học bù/)).toHaveCount(0);
 });
 
-test("lists real selectable occurrences and disables already-adjusted ones", async ({ page }) => {
-  const checkboxes = page.locator('input[type="checkbox"]');
-  await expect(checkboxes).toHaveCount(2);
-  await expect(checkboxes.nth(0)).toBeEnabled();
-  await expect(checkboxes.nth(1)).toBeDisabled();
-  await expect(page.getByText("Buổi này đã được hoãn trước đó.")).toBeVisible();
+test("shows automatic occurrence and member preview after choosing a range", async ({ page }) => {
+  await chooseEndDate(page);
+  await expect(page.locator('input[type="checkbox"]')).toHaveCount(0);
+  await expect(page.getByText(/Hệ thống sẽ tự động hoãn 1 buổi hợp lệ/)).toBeVisible();
+  await expect(page.getByText(/Ngày thu sẽ dời theo số ngày hoãn thực tế/)).toBeVisible();
 });
 
-test("selecting an occurrence enables postpone and clears selection after success", async ({ page }) => {
-  await page.locator('input[type="checkbox"]').nth(0).check();
+test("submits one suspension request and repeated actions do not select text", async ({ page }) => {
+  await chooseEndDate(page);
   const postponeButton = page.getByRole("button", { name: /Hoãn \(1\)/ });
   await expect(postponeButton).toBeEnabled();
   await postponeButton.click();
-  // Sau thành công: selection được xóa, nút quay về trạng thái disabled "Hoãn".
-  await expect(page.getByRole("button", { name: /^Hoãn$/ })).toBeDisabled({ timeout: 5_000 });
-  await expect(page.locator('input[type="checkbox"]').nth(0)).not.toBeChecked();
-});
-
-test("schedule panel shows original time, read-only duration/staff and eligible count, with no staff selector", async ({ page }) => {
-  await page.getByRole("button", { name: "Xếp lịch bù" }).first().click();
-  await expect(page.getByText(/Thời lượng:/)).toBeVisible();
-  await expect(page.getByText("Cô Hạnh")).toBeVisible();
-  await expect(page.getByText("Học viên đủ điều kiện:")).toBeVisible();
-  // Chỉ có select lý do hoãn; không có select chọn giáo viên dạy thay.
-  await expect(page.locator('select')).toHaveCount(1);
-  await expect(page.getByPlaceholder("YYYY-MM-DD HH:MM")).toBeVisible();
-  await expect(page.getByText("Giáo viên dạy thay")).toHaveCount(0);
-});
-
-test("unschedule and restore actions forward the exception id", async ({ page }) => {
-  const pendingCard = page.getByText("Chờ xếp lịch bù").first();
-  await pendingCard.waitFor();
-  await page.getByRole("button", { name: "Khôi phục buổi gốc" }).first().click();
-  await expect
-    .poll(async () => (await state(page)).actions.length, { timeout: 5_000 })
-    .toBe(1);
-  expect((await state(page)).actions[0]).toEqual({
-    action: "restore",
-    exceptionId: "22222222-2222-4222-8222-222222222222",
-  });
-});
-
-test("repeated action clicks never select text", async ({ page }) => {
-  await page.getByRole("button", { name: "Khôi phục buổi gốc" }).first().click();
-  await page.getByRole("button", { name: "Khôi phục buổi gốc" }).first().click();
-  await expect
-    .poll(async () => (await state(page)).actions.length, { timeout: 5_000 })
-    .toBe(2);
+  await expect(postponeButton).toBeEnabled({ timeout: 5_000 });
+  await postponeButton.click();
   const selected = await page.evaluate(() => window.getSelection()?.toString() ?? "");
   expect(selected).toBe("");
 });

@@ -100,3 +100,77 @@ test("counts mixed student fee states by record so each status metric is consist
   assert.equal(result.visibleGroups.length, 1);
   assert.equal(result.visibleGroups[0].student_name, "Nguyễn An");
 });
+
+test("keeps the same student's outstanding obligations separate by fee period", () => {
+  const records = [
+    feeRecord({ id: "fee-june", period: "2026-06", due_date: "2026-06-15" }),
+    feeRecord({ id: "fee-july", period: "2026-07", due_date: "2026-07-15" }),
+  ];
+
+  const result = deriveFeeViewModel({
+    activeTab: "unpaid",
+    classId: "",
+    indexedRecords: indexFeeRecords(records),
+    matchesFeeSearch: () => true,
+    unpaidStage: "unnotified",
+    classes: [{ id: "class-6", name: "6C1" }],
+    separatePeriods: true,
+  });
+
+  assert.equal(result.visibleGroups.length, 2);
+  assert.deepEqual(
+    result.visibleGroups.map((group) => group.group_key),
+    ["student-1:2026-06", "student-1:2026-07"],
+  );
+  assert.deepEqual(
+    result.visibleGroups.map((group) => group.records[0].period),
+    ["2026-06", "2026-07"],
+  );
+});
+
+test("scopes summary metrics to the selected class without letting search change totals", () => {
+  const records = [
+    feeRecord(),
+    feeRecord({
+      id: "fee-class-7",
+      enrollment_id: "enrollment-7",
+      student_id: "student-7",
+      student_name: "Trần Bình",
+      class_id: "class-7",
+      class_name: "7C1",
+      base_amount: 800_000,
+      final_amount: 800_000,
+      notification_state: "PAID",
+      status: "PAID",
+      paid_amount: 800_000,
+      paid_date: "2026-07-14",
+      net_collected_amount: 800_000,
+      refundable_amount: 800_000,
+    }),
+  ];
+
+  const result = deriveFeeViewModel({
+    activeTab: "unpaid",
+    classId: "class-6",
+    indexedRecords: indexFeeRecords(records),
+    matchesFeeSearch: () => false,
+    unpaidStage: "unnotified",
+    classes: [
+      { id: "class-6", name: "6C1" },
+      { id: "class-7", name: "7C1" },
+    ],
+  });
+
+  assert.deepEqual(result.summary, {
+    total: 750_000,
+    grossCollected: 0,
+    netCollected: 0,
+    unnotified: 1,
+    notified: 0,
+    paid: 0,
+    refunded: 0,
+    recordCount: 1,
+    outstanding: 750_000,
+  });
+  assert.equal(result.visibleGroups.length, 0);
+});

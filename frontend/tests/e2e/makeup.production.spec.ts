@@ -7,7 +7,6 @@ import { expect, test, type Page } from "@playwright/test";
  */
 
 const CLASS_ID = "88888888-8888-4888-8888-888888888888";
-const EXCEPTION_ID = "77777777-7777-4777-8777-777777777777";
 const STAFF_ID = "11111111-1111-4111-8111-111111111111";
 
 const fakeToken = () => {
@@ -88,34 +87,6 @@ const makeClass = () => ({
   unresolved_makeup_count: 1,
 });
 
-const makePendingException = () => ({
-  id: EXCEPTION_ID,
-  adjustment_id: "66666666-6666-4666-8666-666666666666",
-  class_id: CLASS_ID,
-  original_start_at: isoAtLocal(daysFromNow(3), 18),
-  original_end_at: isoAtLocal(daysFromNow(3), 19),
-  original_timezone: "Asia/Ho_Chi_Minh",
-  status: "MAKEUP_PENDING",
-  display_status: "MAKEUP_PENDING",
-  replacement_start_at: null,
-  replacement_end_at: null,
-  completed_at: null,
-  restored_at: null,
-  version: 1,
-  staff: [
-    {
-      staff_id: STAFF_ID,
-      role: "TEACHER",
-      display_name: "Cô Hạnh",
-      source_slot_key: "Thứ 2|18:00|19:30",
-    },
-  ],
-  eligible_student_count: 4,
-  billing_impact: "NONE",
-  created_at: "2026-01-01T00:00:00Z",
-  updated_at: "2026-01-01T00:00:00Z",
-});
-
 const makeOccurrences = () => ({
   class_id: CLASS_ID,
   occurrences: [
@@ -127,7 +98,7 @@ const makeOccurrences = () => ({
       source_slot_key: "Thứ 2|18:00|19:30",
       teacher_ids: [STAFF_ID],
       assistant_ids: [],
-      exception_id: EXCEPTION_ID,
+      exception_id: null,
       status: "MAKEUP_PENDING",
       replacement_start_at: null,
       replacement_end_at: null,
@@ -151,19 +122,29 @@ const makeOccurrences = () => ({
       already_adjusted: false,
       passed: false,
     },
+    {
+      key: `${CLASS_ID}:${isoAtLocal(daysFromNow(12), 18)}`,
+      kind: "REGULAR",
+      original_start_at: isoAtLocal(daysFromNow(12), 18),
+      original_end_at: isoAtLocal(daysFromNow(12), 19),
+      source_slot_key: "Thứ 2|18:00|19:30",
+      teacher_ids: [STAFF_ID],
+      assistant_ids: [],
+      exception_id: null,
+      status: null,
+      replacement_start_at: null,
+      replacement_end_at: null,
+      adjustable: true,
+      already_adjusted: false,
+      passed: false,
+    },
   ],
 });
 
 let postponePayloads: unknown[] = [];
-let schedulePayloads: unknown[] = [];
-let completePayloads: unknown[] = [];
-let restorePayloads: unknown[] = [];
 
 const installApiMocks = (page: Page) => {
   postponePayloads = [];
-  schedulePayloads = [];
-  completePayloads = [];
-  restorePayloads = [];
 
   return page.route("**/api/proxy/**", async (route) => {
     const url = new URL(route.request().url());
@@ -207,139 +188,35 @@ const installApiMocks = (page: Page) => {
       await json(makeOccurrences());
       return;
     }
-    const adjustmentsMatch = path.match(/^\/classes\/([^/]+)\/schedule-adjustments$/);
-    if (adjustmentsMatch && method === "GET") {
-      await json({
-        adjustments: [
-          {
-            id: "66666666-6666-4666-8666-666666666666",
-            class_id: CLASS_ID,
-            reason_code: "TEACHER_UNAVAILABLE",
-            reason_note: null,
-            affected_from: daysFromNow(3),
-            affected_through: daysFromNow(3),
-            status: "OPEN",
-            created_by: "99999999-9999-4999-8999-999999999999",
-            request_id: "55555555-5555-4555-8555-555555555555",
-            version: 1,
-            created_at: "2026-01-01T00:00:00Z",
-            updated_at: "2026-01-01T00:00:00Z",
-          },
-        ],
-        exceptions: [makePendingException()],
-      });
-      return;
-    }
-    if (adjustmentsMatch && method === "POST") {
+    const suspensionMatch = path.match(/^\/classes\/([^/]+)\/suspensions(?:\/preview)?$/);
+    if (suspensionMatch && method === "POST") {
       const body = route.request().postDataJSON();
-      console.log("PROD-MK POST postpone", JSON.stringify(body).slice(0, 160));
+      console.log("PROD-MK POST suspension", JSON.stringify(body).slice(0, 160));
+      if (path.endsWith("/preview")) {
+        await json({
+          class_id: CLASS_ID,
+          suspended_from: body.suspended_from,
+          resume_on: body.resume_on,
+          credit_days: 14,
+          member_summary: [
+            { enrollment_id: "55555555-5555-4555-8555-555555555555", overlap_days: 14 },
+          ],
+          target_cycle_count: 1,
+          protected_case_count: 0,
+        });
+        return;
+      }
       postponePayloads.push(body);
       await json({
-        adjustment: {
-          id: "66666666-6666-4666-8666-666666666666",
-          class_id: CLASS_ID,
-          reason_code: "TEACHER_UNAVAILABLE",
-          reason_note: null,
-          affected_from: daysFromNow(10),
-          affected_through: daysFromNow(10),
-          status: "OPEN",
-          created_by: "99999999-9999-4999-8999-999999999999",
-          request_id: "55555555-5555-4555-8555-555555555555",
-          version: 1,
-          created_at: "2026-01-01T00:00:00Z",
-          updated_at: "2026-01-01T00:00:00Z",
-        },
-        exceptions: [],
-        billing_impact: "NONE",
-      });
-      return;
-    }
-    if (path.match(/^\/classes\/([^/]+)\/schedule-adjustments\/preview$/)) {
-      await json({
         class_id: CLASS_ID,
-        occurrences: makeOccurrences().occurrences,
-        billing_impact: "NONE",
-      });
-      return;
-    }
-    if (path.match(/^\/class-session-exceptions\/([^/]+)\/makeup\/preview$/)) {
-      const body = route.request().postDataJSON();
-      const start = new Date(body.replacement_start_at);
-      const end = new Date(start.getTime() + 90 * 60 * 1000);
-      await json({
-        exception_id: EXCEPTION_ID,
-        original_start_at: isoAtLocal(daysFromNow(3), 18),
-        original_end_at: isoAtLocal(daysFromNow(3), 19),
-        duration_minutes: 90,
-        replacement_start_at: start.toISOString(),
-        replacement_end_at: end.toISOString(),
-        staff: [
-          {
-            staff_id: STAFF_ID,
-            role: "TEACHER",
-            display_name: "Cô Hạnh",
-            source_slot_key: "Thứ 2|18:00|19:30",
-          },
+        suspended_from: body.suspended_from,
+        resume_on: body.resume_on,
+        credit_days: 14,
+        member_summary: [
+          { enrollment_id: "55555555-5555-4555-8555-555555555555", overlap_days: 14 },
         ],
-        eligible_student_count: 4,
-        conflicts: [],
-        staff_inactive: [],
-        can_schedule: true,
-        billing_impact: "NONE",
-      });
-      return;
-    }
-    const scheduleMatch = path.match(/^\/class-session-exceptions\/([^/]+)\/makeup\/schedule$/);
-    if (scheduleMatch && method === "POST") {
-      schedulePayloads.push(route.request().postDataJSON());
-      await json({
-        exception: {
-          ...makePendingException(),
-          status: "MAKEUP_SCHEDULED",
-          display_status: "MAKEUP_SCHEDULED",
-          replacement_start_at: route.request().postDataJSON().replacement_start_at,
-          replacement_end_at: new Date(
-            new Date(route.request().postDataJSON().replacement_start_at).getTime() + 90 * 60 * 1000,
-          ).toISOString(),
-          version: 2,
-        },
-        operational_end_date: daysFromNow(120),
-        effective_status: "ACTIVE",
-        billing_impact: "NONE",
-      });
-      return;
-    }
-    const completeMatch = path.match(/^\/class-session-exceptions\/([^/]+)\/makeup\/complete$/);
-    if (completeMatch && method === "POST") {
-      completePayloads.push(route.request().postDataJSON());
-      await json({
-        exception: {
-          ...makePendingException(),
-          status: "MAKEUP_COMPLETED",
-          display_status: "MAKEUP_COMPLETED",
-          completed_at: new Date().toISOString(),
-          version: 3,
-        },
-        operational_end_date: daysFromNow(120),
-        effective_status: "ACTIVE",
-        billing_impact: "NONE",
-      });
-      return;
-    }
-    const restoreMatch = path.match(/^\/class-session-exceptions\/([^/]+)\/restore-original$/);
-    if (restoreMatch && method === "POST") {
-      restorePayloads.push(route.request().postDataJSON());
-      await json({
-        exception: {
-          ...makePendingException(),
-          status: "RESTORED",
-          display_status: "RESTORED",
-          restored_at: new Date().toISOString(),
-          version: 3,
-        },
-        operational_end_date: daysFromNow(120),
-        effective_status: "ACTIVE",
-        billing_impact: "NONE",
+        target_cycle_count: 1,
+        protected_case_count: 0,
       });
       return;
     }
@@ -354,7 +231,27 @@ const openMakeupMode = async (page: Page) => {
   await page.getByText("Lớp 6A1").first().click();
   await page.getByRole("heading", { name: "Sửa lớp học" }).waitFor();
   await page.getByRole("tab", { name: "Hoãn lớp" }).click();
-  await page.getByRole("heading", { name: "Hoãn và học bù — Lớp 6A1" }).waitFor();
+  await page.getByRole("heading", { name: "Hoãn buổi học — Lớp 6A1" }).waitFor();
+};
+
+const chooseEndDate = async (page: Page) => {
+  const target = new Date();
+  target.setDate(target.getDate() + 14);
+  await page.getByRole("button", { name: /^Đến ngày/ }).click();
+  // The workspace keeps the outer class-form date pickers mounted but hidden.
+  // Scope to the visible dialog to avoid resolving a hidden duplicate with the
+  // same date-picker title/id when this production path is rendered.
+  const picker = page
+    .locator('[role="dialog"]:visible')
+    .filter({ hasText: "Chọn ngày kết thúc hoãn" })
+    .last();
+  await expect(picker).toBeVisible();
+  await picker.getByRole("button", { name: String(target.getFullYear()), exact: true }).click();
+  await picker
+    .getByRole("button", { name: `Tháng ${target.getMonth() + 1}`, exact: true })
+    .click();
+  await picker.getByRole("button", { name: String(target.getDate()), exact: true }).click();
+  await picker.getByRole("button", { name: "Xác nhận", exact: true }).click();
 };
 
 test.beforeEach(async ({ page }) => {
@@ -364,59 +261,41 @@ test.beforeEach(async ({ page }) => {
   ]);
 });
 
-test("T-E2E-PROD-MK-001: postpone one occurrence sends the exact command and keeps the template untouched", async ({ page }) => {
+test("T-E2E-PROD-MK-001: date range postpones every eligible occurrence and keeps the template untouched", async ({ page }) => {
   await openMakeupMode(page);
-  await page.getByText(/Tổng.*buổi chưa hoàn tất/).waitFor();
-  const available = page.locator('[data-workspace-mode="makeup"] input[type="checkbox"]:not([disabled])');
-  await expect(available).toHaveCount(1);
-  await available.check();
-  await page.getByRole("button", { name: /Hoãn \(1\)/ }).click();
+  await chooseEndDate(page);
+  await expect(page.locator('[data-workspace-mode="makeup"] input[type="checkbox"]')).toHaveCount(0);
+  const autoSelectionSummary = page.getByText(/Hệ thống sẽ tự động hoãn/);
+  await expect(autoSelectionSummary).toBeVisible();
+  await expect(autoSelectionSummary).toContainText("2 buổi");
+  await page.getByRole("button", { name: /Hoãn \(2\)/ }).click();
   await expect
     .poll(() => postponePayloads.length, { timeout: 5_000 })
     .toBe(1);
   await page.waitForTimeout(400);
   expect(postponePayloads.length).toBe(1);
-  const payload = postponePayloads[0] as {
-    original_start_at: string[];
+  const payload = postponePayloads[postponePayloads.length - 1] as {
+    suspended_from: string;
+    resume_on: string;
     reason_code: string;
-    schedule_now: boolean;
     request_id: string;
   };
-  expect(payload.original_start_at.length).toBe(1);
+  expect(payload.suspended_from).toBe(daysFromNow(0));
+  expect(payload.resume_on).toBe(daysFromNow(14));
   expect(payload.reason_code).toBe("TEACHER_UNAVAILABLE");
-  expect(payload.schedule_now).toBe(true);
   expect(payload.request_id).toBeTruthy();
   await expect(page.getByText("Đã hoãn buổi học.")).toBeVisible();
 });
 
-test("T-E2E-PROD-MK-002: schedule panel is read-only for staff/duration and forwards the schedule command", async ({ page }) => {
+test("T-E2E-PROD-MK-002: workspace does not expose legacy make-up scheduling", async ({ page }) => {
   await openMakeupMode(page);
-  await page.getByRole("button", { name: "Xếp lịch bù" }).first().click();
-  await expect(page.getByText("Thời lượng:")).toBeVisible();
-  await expect(page.getByText("Học viên đủ điều kiện:")).toBeVisible();
-  await expect(page.locator('[data-workspace-mode="makeup"] select')).toHaveCount(1);
-  await page.getByPlaceholder("YYYY-MM-DD HH:MM").fill("2026-09-10 18:00");
-  await expect(page.getByText("Khung giờ trống.")).toBeVisible({ timeout: 5_000 });
-  await page.getByRole("button", { name: "Xếp buổi bù" }).click();
-  await expect
-    .poll(() => schedulePayloads.length, { timeout: 5_000 })
-    .toBe(1);
-  const payload = schedulePayloads[0] as {
-    replacement_start_at: string;
-    expected_version: number;
-    request_id: string;
-  };
-  expect(payload.expected_version).toBe(1);
-  expect(payload.request_id).toBeTruthy();
+  await chooseEndDate(page);
+  await expect(page.getByRole("button", { name: /Xếp lịch bù|Xếp bù ngay|Xếp sau/ })).toHaveCount(0);
+  await expect(page.getByText(/Ngày thu sẽ dời theo số ngày hoãn thực tế/)).toBeVisible();
 });
 
-test("T-E2E-PROD-MK-003: restore forwards the exception id and version", async ({ page }) => {
+test("T-E2E-PROD-MK-003: preview keeps the suspension flow authoritative", async ({ page }) => {
   await openMakeupMode(page);
-  await page.getByRole("button", { name: "Khôi phục buổi gốc" }).first().click();
-  await expect
-    .poll(() => restorePayloads.length, { timeout: 5_000 })
-    .toBe(1);
-  const payload = restorePayloads[0] as { expected_version: number; request_id: string };
-  expect(payload.expected_version).toBe(1);
-  expect(payload.request_id).toBeTruthy();
+  await expect(page.getByText(/Chọn khoảng ngày để xem các buổi học/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Đóng", exact: true }).last()).toBeVisible();
 });

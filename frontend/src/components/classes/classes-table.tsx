@@ -126,6 +126,11 @@ export function ClassesTable({
               <DataCell col="time" className="px-3 text-gray-700">
                 <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
                   <ClassStatus status={class_.effective_status} />
+                  {class_.active_suspension ? (
+                    <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-1.5 py-0.5 text-[12px] font-semibold leading-4 text-amber-800 ring-1 ring-inset ring-amber-200">
+                      Đang hoãn · đến {formatDate(class_.active_suspension.resume_on)}
+                    </span>
+                  ) : null}
                   {totalDurationLabel ? (
                     <span className="whitespace-nowrap text-[13px] font-medium leading-[18px] text-gray-600">
                       · {totalDurationLabel}
@@ -327,7 +332,7 @@ function FeeMetaLine({ class_ }: { class_: ClassResponse }) {
     clusters.push({
       key: "due",
       tone: "amber",
-      text: `· Quá hạn ${formatDate(class_.next_fee_due_date)}`,
+      text: `Đang thu · Hạn ${formatDate(class_.next_fee_due_date)}`,
     });
   } else if (class_.next_fee_due_state === "UPCOMING" && class_.next_fee_due_date) {
     clusters.push({
@@ -336,17 +341,32 @@ function FeeMetaLine({ class_ }: { class_: ClassResponse }) {
     });
   }
 
+  const modeClusters = clusters.filter((cluster) => cluster.key !== "due");
+  const dueCluster = clusters.find((cluster) => cluster.key === "due");
+  const separateDueCluster = dueCluster?.tone === "amber" ? dueCluster : null;
+  const inlineClusters = separateDueCluster
+    ? modeClusters
+    : dueCluster
+      ? [...modeClusters, dueCluster]
+      : modeClusters;
+
   return (
-    <span className="mt-1 flex min-w-0 flex-wrap items-baseline gap-x-1 text-[13px] font-medium leading-[18px] tabular-nums text-gray-600">
-      {clusters.map((cluster) => (
-        <span
-          key={cluster.key}
-          className={`whitespace-nowrap ${cluster.tone === "amber" ? "font-semibold text-amber-700" : ""}`}
+    <div className="mt-1 min-w-0 text-[13px] font-medium leading-[18px] tabular-nums text-gray-600">
+      <div className="flex min-w-0 flex-wrap items-baseline gap-x-1">
+        {inlineClusters.map((cluster) => (
+          <span key={cluster.key} className="whitespace-nowrap">
+            {cluster.text}
+          </span>
+        ))}
+      </div>
+      {separateDueCluster ? (
+        <div
+          className="mt-0.5 whitespace-nowrap font-semibold text-amber-700"
         >
-          {cluster.text}
-        </span>
-      ))}
-    </span>
+          {separateDueCluster.text}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -454,10 +474,10 @@ export function MakeupPendingBadge({ count }: { count: number }) {
   }
   return (
     <span
-      title={`${count} buổi chờ bù`}
-      className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-1.5 py-0.5 text-[12px] font-semibold leading-4 text-amber-700 ring-1 ring-inset ring-amber-200"
+      title={`${count} buổi đã hoãn`}
+      className="inline-flex items-center gap-1 rounded-md bg-sky-50 px-1.5 py-0.5 text-[12px] font-semibold leading-4 text-sky-700 ring-1 ring-inset ring-sky-200"
     >
-      {count} buổi chờ bù
+      {count} buổi đã hoãn
     </span>
   );
 }

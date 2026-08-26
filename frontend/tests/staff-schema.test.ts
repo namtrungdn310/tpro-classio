@@ -66,6 +66,8 @@ test("staff form rejects phone values containing letters and normalizes Vietname
     staff_type: "TEACHER",
     zalo_name: "Cô Hạnh",
     phone: "0912345678",
+    email: "",
+    checkin_window_after_hours: 24,
   } as const;
 
   assert.equal(staffFormSchema.safeParse(baseForm).success, true);
@@ -76,12 +78,80 @@ test("staff form rejects phone values containing letters and normalizes Vietname
   assert.equal(normalizeVietnamPhone("+84 912 345 678"), "0912345678");
 });
 
+test("staff form accepts an optional email and rejects malformed ones", () => {
+  const baseForm = {
+    full_name: "Cô Hạnh",
+    staff_type: "TEACHER",
+    zalo_name: "Cô Hạnh",
+    phone: "0912345678",
+    email: "",
+    checkin_window_after_hours: 24,
+  } as const;
+
+  assert.equal(staffFormSchema.safeParse(baseForm).success, true);
+  assert.equal(
+    staffFormSchema.safeParse({ ...baseForm, email: "cohanh@tpro.test" }).success,
+    true,
+  );
+  assert.equal(
+    staffFormSchema.safeParse({ ...baseForm, email: "not-an-email" }).success,
+    false,
+  );
+  assert.equal(
+    staffCreateFormSchema.safeParse({ ...baseForm, email: "cohanh@tpro.test" }).success,
+    true,
+  );
+});
+
+test("staff form accepts a custom check-in window and rejects out-of-range values", () => {
+  const baseForm = {
+    full_name: "Cô Hạnh",
+    staff_type: "TEACHER",
+    zalo_name: "Cô Hạnh",
+    phone: "0912345678",
+    email: "",
+    checkin_window_after_hours: 24,
+  } as const;
+
+  assert.equal(staffFormSchema.safeParse(baseForm).success, true);
+  assert.equal(
+    staffFormSchema.safeParse({ ...baseForm, checkin_window_after_hours: 2 }).success,
+    true,
+  );
+  assert.equal(
+    staffFormSchema.safeParse({ ...baseForm, checkin_window_after_hours: 0 }).success,
+    false,
+  );
+  assert.equal(
+    staffFormSchema.safeParse({ ...baseForm, checkin_window_after_hours: 999 }).success,
+    false,
+  );
+});
+
+test("staff response schema carries the optional staff email", () => {
+  const withEmail = { ...validStaff, email: "cohanh@tpro.test" };
+  assert.equal(staffResponseSchema.parse(withEmail).email, "cohanh@tpro.test");
+  assert.equal(staffResponseSchema.parse(validStaff).email, null);
+});
+
+test("staff response schema carries the attendance email connection status", () => {
+  const connected = {
+    ...validStaff,
+    email: "cohanh@tpro.test",
+    attendance_account_status: "connected",
+  } as const;
+  assert.equal(staffResponseSchema.parse(connected).attendance_account_status, "connected");
+  assert.equal(staffResponseSchema.parse(validStaff).attendance_account_status, "not_connected");
+});
+
 test("new staff require both Zalo name and phone while legacy edits may keep both empty", () => {
   const contactlessStaff = {
     full_name: "Cô Hạnh",
     staff_type: "TEACHER",
     zalo_name: "",
     phone: "",
+    email: "",
+    checkin_window_after_hours: 24,
   } as const;
 
   assert.equal(staffFormSchema.safeParse(contactlessStaff).success, true);

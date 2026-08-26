@@ -1,26 +1,24 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { Suspense, useCallback, useDeferredValue, useEffect, useId, useMemo, useRef, useState } from "react";
+import { startTransition, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createPortal } from "react-dom";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
   RiArrowLeftLine as ArrowLeft,
-  RiDownload2Line as Download,
   RiEyeLine as Eye,
   RiEyeOffLine as EyeOff,
   RiLoader4Line as LoaderCircle,
-  RiPencilLine as Pencil,
   RiAddLine as Plus,
   RiSearchLine as SearchX,
-  RiDeleteBinLine as Trash2,
   RiTeamLine as UsersRound,
 } from "react-icons/ri";
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm, UseFormRegisterReturn } from "react-hook-form";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
+import { ExcelExportButton } from "@/components/ui/excel-export-button";
 import {
   createEntityDialogFrameClassName,
   FormDialogBody,
@@ -48,7 +46,7 @@ import { HeaderControlsPortal } from "@/components/layout/header-controls-portal
 import { HeaderFilterControls } from "@/components/layout/header-filter-controls";
 import { ClassSelectionView } from "@/components/students/class-selection-view";
 import { StudentReactivationSlide } from "@/components/students/student-reactivation-slide";
-import { EntityActionsDialog } from "@/components/shared/entity-actions-dialog";
+import { StudentWorkspaceDialog } from "@/components/students/student-workspace-dialog";
 import {
   StudentClassDetailSkeleton,
   StudentTableSkeleton,
@@ -60,21 +58,28 @@ import {
 } from "@/components/students/students-table-layout";
 import { getClasses } from "@/lib/api/classes";
 import { classQueryKeys } from "@/lib/classes/query-keys";
+import { invalidateDomainQueries } from "@/lib/query/invalidation";
 import { getApiErrorMessage } from "@/lib/api/errors";
+import { exportExcelWorkbook, sanitizeExcelFileName } from "@/lib/excel/workbook";
 import { useClickableRowProps } from "@/lib/ui/click-guard";
 import {
-  createEnrollment,
   createStudent,
   dropEnrollment,
+  archiveStudent,
+  applyStudentMembershipCommand,
+  getStudent,
+  getStudentScopeSummary,
   getStudentIdentityConflict,
-  getStudents,
+  getStudentsPage,
   reactivateStudent,
-  updateEnrollment,
-  updateStudent,
+  restoreStudent,
 } from "@/lib/api/students";
+import { formatStudentCode } from "@/lib/students/student-code";
+import { getEnrollmentFeeSuggestion } from "@/lib/students/enrollment-pricing";
+import { studentQueryKeys, type StudentListFilters } from "@/lib/students/query-keys";
 import { useAuth } from "@/lib/hooks/useAuth";
+import { useDebouncedValue } from "@/lib/hooks/useDebouncedValue";
 import { isManagementUser } from "@/lib/auth/permissions";
-import { useModalDialog } from "@/lib/hooks/useModalDialog";
 import { usePersistentState } from "@/lib/hooks/usePersistentState";
 import { useScopedTextSelection } from "@/lib/hooks/useScopedTextSelection";
 import {
@@ -92,6 +97,8 @@ import type {
   StudentIdentityConflict,
   StudentEnrollmentInfo,
   StudentResponse,
+  StudentListPageResponse,
+  StudentListState,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { getClassSortKey } from "@/lib/utils/class-groups";
@@ -99,7 +106,7 @@ import {
   getClassBillingDurationLabel,
   getClassGroupInfoForRecord,
 } from "@/lib/classes/presentation";
-import { formatDate } from "@/lib/utils/format";
+import { formatCurrency, formatDate } from "@/lib/utils/format";
 import { validationMessages } from "@/lib/forms/validation-messages";
 import type { EnrollmentFeeValues } from "@/lib/students/enrollment-fees";
 import {
@@ -139,15 +146,34 @@ const DatePickerSlide = dynamic(
 );
 
 type EnrollmentActionMode = "transfer" | "supplement";
+type EnrollmentTargetConfig = {
+  class_id: string;
+  custom_fee: number | null;
+  selected_slot_ids: string[];
+};
 type EnrollmentActionPlan = {
   mode: EnrollmentActionMode;
   targetClassIds: string[];
+  targetConfigs: Record<string, EnrollmentTargetConfig>;
 };
 
 type PendingStudentIdentityConflict = {
   conflict: StudentIdentityConflict;
   values: StudentCreate;
 };
+
+type StudentView = "class" | "unassigned" | "stopped";
+
+const STUDENT_VIEWS: Array<{
+  value: StudentView;
+  label: string;
+  state?: StudentListState;
+  countKey?: "unassigned" | "stopped";
+}> = [
+  { value: "class", label: "Học viên đang học" },
+  { value: "unassigned", label: "Học viên chưa xếp lớp", state: "UNASSIGNED", countKey: "unassigned" },
+  { value: "stopped", label: "Học viên ngừng học trung tâm", state: "STOPPED", countKey: "stopped" },
+];
 
 const STUDENT_FEEDBACK_FIELDS = [
   "full_name",
@@ -216,6 +242,7 @@ function addStudentFormIssues(
   values: StudentFormObjectValues,
   context: z.RefinementCtx,
   requireCreateFields: boolean,
+  requireEnrollment = requireCreateFields,
 ) {
   if (requireCreateFields) {
     const requiredFields = [
@@ -239,11 +266,11 @@ function addStudentFormIssues(
         path: "parent_phone" as const,
         message: validationMessages.required("số điện thoại phụ huynh"),
       },
-      {
+      ...(requireEnrollment ? [{
         missing: !values.enrollment_date,
         path: "enrollment_date" as const,
         message: validationMessages.required("ngày bắt đầu"),
-      },
+      }] : []),
     ];
 
     for (const field of requiredFields) {
@@ -291,6 +318,10 @@ const studentCreateSchema = studentFormObjectSchema.superRefine((values, context
   addStudentFormIssues(values, context, true);
 });
 
+const studentProfileCreateSchema = studentFormObjectSchema.superRefine((values, context) => {
+  addStudentFormIssues(values, context, true, false);
+});
+
 type StudentFormValues = z.infer<typeof studentSchema>;
 
 const defaultStudentValues: StudentFormValues = {
@@ -323,18 +354,30 @@ function StudentsContent() {
   const isAdmin = isManagementUser(user);
   const [search, setSearch] = usePersistentState("tpro:students:selected-class-search", "");
   const [classSearch, setClassSearch] = usePersistentState("tpro:students:class-search", "");
-  const deferredSearch = useDeferredValue(search);
+  const deferredSearch = useDebouncedValue(search, 200);
+  const requestedViewParam = searchParams.get("view");
+  // One-release compatibility for old bookmarks. Enrollment history now
+  // lives inside the unassigned profile instead of occupying a fourth tab.
+  const requestedView = requestedViewParam === "former"
+    ? "unassigned"
+    : requestedViewParam === "archived"
+      ? "stopped"
+      : requestedViewParam;
+  const view: StudentView = STUDENT_VIEWS.some((item) => item.value === requestedView)
+    ? (requestedView as StudentView)
+    : "class";
+  const activeView = STUDENT_VIEWS.find((item) => item.value === view) ?? STUDENT_VIEWS[0];
   const [classType, setClassType] = useState<ClassType | "">("");
   const [classDuration, setClassDuration] = useState("");
   const classId = getSelectedStudentClassFromSearchParams(
     new URLSearchParams(searchParams.toString()),
   );
-  const [editingStudent, setEditingStudent] = useState<StudentResponse | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<StudentResponse | null>(null);
-  const [actionTarget, setActionTarget] = useState<StudentResponse | null>(null);
+  const [workspaceStudent, setWorkspaceStudent] = useState<StudentResponse | null>(null);
+  const requestedStudentId = searchParams.get("student_id");
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [pendingIdentityConflict, setPendingIdentityConflict] =
     useState<PendingStudentIdentityConflict | null>(null);
+  const [isExportingStudents, setIsExportingStudents] = useState(false);
   const notify = useToast();
 
   const updateSelectedClass = useCallback(
@@ -347,27 +390,72 @@ function StudentsContent() {
       if (clearStudentSearch) {
         setSearch("");
       }
-      router.replace(nextHref, { scroll: false });
+      startTransition(() => router.replace(nextHref, { scroll: false }));
     },
     [router, searchParams, setSearch, user?.id],
   );
 
-  const filters = useMemo(
-    () => ({
-      class_id: classId,
-      status: "active" as const,
-      search: deferredSearch.trim() || undefined,
-    }),
-    [classId, deferredSearch],
-  );
+  const updateView = useCallback((nextView: StudentView) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("view", nextView);
+    if (nextView !== "class") params.delete("class_id");
+    setSearch("");
+    startTransition(() => router.replace(`/students?${params.toString()}`, { scroll: false }));
+  }, [router, searchParams, setSearch]);
 
-  const studentsQuery = useQuery({
-    queryKey: ["students", filters],
-    queryFn: () => getStudents(filters),
-    enabled: Boolean(user) && Boolean(classId),
-    initialData: () => queryClient.getQueryData<StudentResponse[]>(["students", filters]),
-    initialDataUpdatedAt: () => queryClient.getQueryState(["students", filters])?.dataUpdatedAt,
+  const filters = useMemo<StudentListFilters>(() => ({
+    class_id: view === "class" ? classId : undefined,
+    status: view === "class" ? ("active" as const) : undefined,
+    list_state: view === "class" ? undefined : activeView.state,
+    search: deferredSearch.trim() || undefined,
+    limit: 80,
+  }), [activeView.state, classId, deferredSearch, view]);
+
+  const studentsQuery = useInfiniteQuery({
+    queryKey: studentQueryKeys.list(filters),
+    queryFn: ({ pageParam, signal }) => getStudentsPage({ ...filters, cursor: pageParam }, signal),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (page) => page.has_more ? page.next_cursor ?? undefined : undefined,
+    enabled: Boolean(user) && (view !== "class" || Boolean(classId)),
+    staleTime: 30_000,
   });
+
+  const scopeSummaryQuery = useQuery({
+    queryKey: studentQueryKeys.summary(),
+    queryFn: ({ signal }) => getStudentScopeSummary(signal),
+    enabled: Boolean(user),
+    staleTime: 30_000,
+  });
+
+  const requestedStudentQuery = useQuery({
+    queryKey: studentQueryKeys.detail(requestedStudentId),
+    queryFn: ({ signal }) => getStudent(requestedStudentId!, signal),
+    enabled: Boolean(user && requestedStudentId),
+    retry: false,
+    staleTime: 60_000,
+  });
+
+  useEffect(() => {
+    if (requestedStudentQuery.data) {
+      setWorkspaceStudent(requestedStudentQuery.data);
+    }
+  }, [requestedStudentQuery.data]);
+
+  const openStudentWorkspace = useCallback((student: StudentResponse) => {
+    setWorkspaceStudent(student);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("student_id", student.id);
+    queryClient.setQueryData(studentQueryKeys.detail(student.id), student);
+    startTransition(() => router.replace(`/students?${params.toString()}`, { scroll: false }));
+  }, [queryClient, router, searchParams]);
+
+  const closeStudentWorkspace = useCallback(() => {
+    setWorkspaceStudent(null);
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("student_id");
+    const query = params.toString();
+    startTransition(() => router.replace(query ? `/students?${query}` : "/students", { scroll: false }));
+  }, [router, searchParams]);
 
   const classesQuery = useQuery({
     queryKey: classQueryKeys.list("enrollable"),
@@ -382,14 +470,18 @@ function StudentsContent() {
   const createMutation = useMutation({
     mutationFn: createStudent,
     onSuccess: (createdStudent, variables) => {
-      queryClient.setQueryData<StudentResponse[]>(["students", filters], (current) => {
-        const nextStudents = current ?? [];
-        return [createdStudent, ...nextStudents.filter((item) => item.id !== createdStudent.id)];
-      });
       setIsFormOpen(false);
       setPendingIdentityConflict(null);
-      notify.success(`Đã thêm học viên ${variables.full_name.trim()}.`);
-      void invalidateStudentDependencies();
+      notify.success(
+        variables.class_id
+          ? `Đã thêm ${variables.full_name.trim()} vào lớp.`
+          : `Đã tạo hồ sơ ${formatStudentCode(createdStudent.student_code)}.`,
+      );
+      openStudentWorkspace(createdStudent);
+      void invalidateStudentDependencies({
+        affectsClasses: Boolean(variables.class_id),
+        affectsFees: Boolean(variables.class_id),
+      });
     },
     onError: (error, variables) => {
       const conflict = getStudentIdentityConflict(error);
@@ -425,22 +517,20 @@ function StudentsContent() {
       });
     },
     onSuccess: (restoredStudent, variables) => {
-      queryClient.setQueryData<StudentResponse[]>(["students", filters], (current) => {
-        const nextStudents = current ?? [];
-        return [
-          restoredStudent,
-          ...nextStudents.filter((item) => item.id !== restoredStudent.id),
-        ];
-      });
       setPendingIdentityConflict(null);
       setIsFormOpen(false);
-      setEditingStudent(null);
+      closeStudentWorkspace();
       notify.success(
-        variables.candidate.status === "inactive"
-          ? `Đã khôi phục học viên ${restoredStudent.full_name}.`
+        view !== "class"
+          ? `Đã sử dụng hồ sơ ${restoredStudent.full_name}.`
+          : variables.candidate.status === "inactive"
+          ? `Đã tiếp nhận lại học viên ${restoredStudent.full_name}.`
           : `Đã thêm ${restoredStudent.full_name} vào lớp.`,
       );
-      void invalidateStudentDependencies();
+      void invalidateStudentDependencies({
+        affectsClasses: Boolean(variables.values.class_id),
+        affectsFees: Boolean(variables.values.class_id),
+      });
     },
     onError: (error, variables) => {
       const conflict = getStudentIdentityConflict(error);
@@ -455,7 +545,7 @@ function StudentsContent() {
       notify.error(
         getApiErrorMessage(
           error,
-          "Không thể khôi phục hồ sơ học viên. Vui lòng thử lại.",
+          "Không thể tiếp nhận lại hồ sơ học viên. Vui lòng thử lại.",
         ),
       );
     },
@@ -473,53 +563,44 @@ function StudentsContent() {
       id: string;
       values: StudentFormValues;
     }) => {
-      let updatedStudent = await updateStudent(id, toStudentPayload(values));
-
-      const activeEnrollments = editingStudent?.active_enrollments ?? [];
-      let didEnrollmentChange = false;
-
-      for (const enrollment of activeEnrollments) {
+      const activeEnrollments = workspaceStudent?.active_enrollments ?? [];
+      const enrollmentUpdates = activeEnrollments.flatMap((enrollment) => {
         const billingValues = enrollmentFees[enrollment.id];
         if (!billingValues) {
-          continue;
+          return [];
         }
-
-        const payload: { custom_fee?: number | null; enrollment_date?: string | null } = {};
+        const payload: { custom_fee?: number | null; enrollment_date?: string | null; selected_slot_ids?: string[] } = {};
         if (billingValues.custom_fee !== enrollment.custom_fee) {
           payload.custom_fee = billingValues.custom_fee;
         }
         if (billingValues.enrollment_date !== enrollment.enrollment_date) {
           payload.enrollment_date = billingValues.enrollment_date;
         }
-        if (Object.keys(payload).length > 0) {
-          await updateEnrollment(enrollment.id, payload);
-          didEnrollmentChange = true;
+        const previousSlots = [...enrollment.selected_slot_ids].sort();
+        const nextSlots = [...billingValues.selected_slot_ids].sort();
+        if (previousSlots.length !== nextSlots.length || previousSlots.some((slotId, index) => slotId !== nextSlots[index])) {
+          payload.selected_slot_ids = billingValues.selected_slot_ids;
         }
-      }
-
-      if (enrollmentActionPlan.targetClassIds.length > 0) {
-        for (const targetClassId of enrollmentActionPlan.targetClassIds) {
-          await createEnrollment({
-            student_id: id,
-            class_id: targetClassId,
-          });
-        }
-        didEnrollmentChange = true;
-      }
-
-      if (enrollmentActionPlan.mode === "transfer" && selectedClass) {
-        const sourceEnrollment = editingStudent?.active_enrollments.find(
-          (enrollment) => enrollment.class_id === selectedClass.id,
-        );
-        if (sourceEnrollment) {
-          await dropEnrollment(sourceEnrollment.id);
-          didEnrollmentChange = true;
-        }
-      }
-
-      if (didEnrollmentChange) {
-        updatedStudent = await updateStudent(id, {});
-      }
+        return Object.keys(payload).length > 0
+          ? [{ enrollment_id: enrollment.id, ...payload }]
+          : [];
+      });
+      const sourceEnrollment = enrollmentActionPlan.mode === "transfer" && selectedClass
+        ? activeEnrollments.find((enrollment) => enrollment.class_id === selectedClass.id)
+        : null;
+      const updatedStudent = await applyStudentMembershipCommand(id, {
+        request_id: crypto.randomUUID(),
+        expected_updated_at: workspaceStudent?.updated_at ?? "",
+        profile: toStudentPayload(values),
+        enrollment_updates: enrollmentUpdates,
+        targets: enrollmentActionPlan.targetClassIds.map((class_id) => ({
+          class_id,
+          custom_fee: enrollmentActionPlan.targetConfigs[class_id]?.custom_fee ?? null,
+          selected_slot_ids: enrollmentActionPlan.targetConfigs[class_id]?.selected_slot_ids ?? null,
+        })),
+        mode: enrollmentActionPlan.mode,
+        source_enrollment_id: sourceEnrollment?.id ?? null,
+      });
 
       const studentName = values.full_name.trim();
       const targetClassNames = enrollmentActionPlan.targetClassIds
@@ -535,21 +616,23 @@ function StudentsContent() {
         }
       }
 
-      return { updatedStudent, message };
+      return {
+        updatedStudent,
+        message,
+        affectsEnrollment:
+          enrollmentUpdates.length > 0 ||
+          enrollmentActionPlan.targetClassIds.length > 0 ||
+          enrollmentActionPlan.mode === "transfer",
+      };
     },
-    onSuccess: ({ updatedStudent, message }) => {
-      setIsFormOpen(false);
-      setEditingStudent(null);
+    onSuccess: ({ updatedStudent, message, affectsEnrollment }) => {
+      setWorkspaceStudent((current) => (current?.id === updatedStudent.id ? updatedStudent : current));
       notify.success(`${message}.`);
 
-      queryClient.setQueryData<StudentResponse[]>(["students", filters], (current) => {
-        if (!current) return current;
-        return current.map((student) =>
-          student.id === updatedStudent.id ? updatedStudent : student
-        );
+      void invalidateStudentDependencies({
+        affectsClasses: affectsEnrollment,
+        affectsFees: affectsEnrollment,
       });
-
-      void invalidateStudentDependencies();
     },
     onError: (error) => {
       notify.error(getApiErrorMessage(error, "Không thể cập nhật học viên. Vui lòng thử lại."));
@@ -558,66 +641,70 @@ function StudentsContent() {
 
   const dropEnrollmentMutation = useMutation({
     mutationFn: dropEnrollment,
-    onSuccess: (droppedEnrollment) => {
-      queryClient.setQueryData<StudentResponse[]>(["students", filters], (current) =>
-        (current ?? []).filter((student) => student.id !== droppedEnrollment.student_id),
-      );
-      setDeleteTarget(null);
+    onSuccess: () => {
+      closeStudentWorkspace();
       notify.success("Đã xoá học viên khỏi lớp.");
-      void invalidateStudentDependencies();
+      void invalidateStudentDependencies({ affectsClasses: true, affectsFees: true });
     },
     onError: (error) => {
       notify.error(getApiErrorMessage(error, "Không thể xoá học viên khỏi lớp. Vui lòng thử lại."));
     },
   });
 
-  async function invalidateStudentDependencies() {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["students"] }),
-      queryClient.invalidateQueries({ queryKey: ["classes"] }),
-      queryClient.invalidateQueries({ queryKey: ["fees"] }),
-      queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
-    ]);
+  const archiveMutation = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) => archiveStudent(id, reason),
+    onSuccess: (student) => {
+      closeStudentWorkspace();
+      notify.success(`Đã chuyển ${student.full_name} sang nhóm ngừng học.`);
+      void invalidateStudentDependencies();
+    },
+    onError: (error) => notify.error(getApiErrorMessage(error, "Không thể cập nhật trạng thái ngừng học. Vui lòng thử lại.")),
+  });
+
+  const restoreMutation = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) => restoreStudent(id, reason),
+    onSuccess: (student) => {
+      closeStudentWorkspace();
+      notify.success(`Đã tiếp nhận lại hồ sơ ${student.full_name}.`);
+      void invalidateStudentDependencies();
+    },
+    onError: (error) => notify.error(getApiErrorMessage(error, "Không thể tiếp nhận lại hồ sơ. Vui lòng thử lại.")),
+  });
+
+  async function invalidateStudentDependencies({
+    affectsClasses = false,
+    affectsFees = false,
+  }: {
+    affectsClasses?: boolean;
+    affectsFees?: boolean;
+  } = {}) {
+    await invalidateDomainQueries(queryClient, {
+      students: true,
+      classes: affectsClasses,
+      fees: affectsFees,
+      dashboard: true,
+    });
   }
 
   function openCreateForm() {
-    if (!selectedClass) {
+    if (view === "class" && !selectedClass) {
       notify.warning("Vui lòng chọn lớp trước khi thêm học viên.");
       return;
     }
 
-    setEditingStudent(null);
     setPendingIdentityConflict(null);
     setIsFormOpen(true);
   }
-
-  function openEditForm(student: StudentResponse) {
-    setEditingStudent(student);
-    setPendingIdentityConflict(null);
-    setIsFormOpen(true);
-  }
-
-  const indexedStudents = useMemo(
-    () =>
-      [...(studentsQuery.data ?? [])]
-        .sort(compareStudentsByCreationOrder)
-        .map((student) => ({
-          searchCorpus: "",
-          student,
-        })),
-    [studentsQuery.data],
-  );
 
   // R6-D08: tìm kiếm do server thực hiện (indexed, cursor); FE không lọc
-  // toàn bộ danh sách bằng Python/JS.
+  // hoặc sort lại toàn bộ danh sách bằng JS. Backend giữ thứ tự keyset.
   const students = useMemo(
-    () => indexedStudents.map(({ student }) => student),
-    [indexedStudents],
+    () => studentsQuery.data?.pages.flatMap((page) => page.items) ?? [],
+    [studentsQuery.data],
   );
-  const studentQueryData = studentsQuery.data;
   const contactSuggestionSources = useMemo<ContactSuggestionSource[]>(
     () =>
-      (studentQueryData ?? []).flatMap((student) => {
+      students.flatMap((student) => {
         if (student.status !== "active" || student.active_enrollments.length === 0) {
           return [];
         }
@@ -639,10 +726,10 @@ function StudentsContent() {
         }
         return sources;
       }),
-    [studentQueryData],
+    [students],
   );
-  const totalStudentCount = studentQueryData?.length ?? 0;
-  const hasStudentQueryData = studentQueryData !== undefined;
+  const totalStudentCount = students.length;
+  const hasStudentQueryData = studentsQuery.data !== undefined;
   const hasBlockingStudentError = studentsQuery.isError && !hasStudentQueryData;
   const hasSearch = Boolean(search.trim());
   const classes = useMemo(() => classesQuery.data ?? [], [classesQuery.data]);
@@ -653,7 +740,7 @@ function StudentsContent() {
     updateMutation.isPending;
 
   useEffect(() => {
-    if (!user) {
+    if (!user || view !== "class") {
       return;
     }
 
@@ -666,34 +753,57 @@ function StudentsContent() {
     if (rememberedClassId) {
       updateSelectedClass(rememberedClassId, false);
     }
-  }, [classId, updateSelectedClass, user]);
+  }, [classId, updateSelectedClass, user, view]);
 
   useEffect(() => {
-    if (!user || !classId || !classesQuery.isSuccess) {
+    if (!user || view !== "class" || !classId || !classesQuery.isSuccess) {
       return;
     }
 
     if (!classes.some((class_) => class_.id === classId)) {
       updateSelectedClass("", false);
     }
-  }, [classId, classes, classesQuery.isSuccess, updateSelectedClass, user]);
+  }, [classId, classes, classesQuery.isSuccess, updateSelectedClass, user, view]);
 
   async function handleExportStudents() {
     if (!selectedClass || students.length === 0) {
       return;
     }
 
+    setIsExportingStudents(true);
     try {
-      await exportStudents(students, selectedClass);
-      notify.success(`Đã xuất ${students.length} học viên ra Excel.`);
+      const exportStudentsData: StudentResponse[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = await getStudentsPage({
+          class_id: selectedClass.id,
+          status: "active",
+          search: deferredSearch.trim() || undefined,
+          cursor,
+          limit: 500,
+        });
+        exportStudentsData.push(...page.items);
+        cursor = page.has_more ? page.next_cursor ?? undefined : undefined;
+      } while (cursor);
+
+      await exportStudents(exportStudentsData, selectedClass);
+      notify.success(`Đã xuất danh sách ${exportStudentsData.length} học viên ra file Excel.`);
     } catch {
       notify.error("Không thể xuất danh sách học viên. Vui lòng thử lại.");
+    } finally {
+      setIsExportingStudents(false);
     }
   }
 
   return (
     <div className="flex flex-col gap-4 overflow-x-hidden md:h-full md:overflow-hidden">
-      {!classId ? (
+      <StudentScopeTabs
+        activeView={view}
+        summary={scopeSummaryQuery.data}
+        onChange={updateView}
+      />
+
+      {view === "class" && !classId ? (
         <ClassSelectionView
           classSearch={classSearch}
           classType={classType}
@@ -710,9 +820,19 @@ function StudentsContent() {
           isRefreshing={classesQuery.isFetching}
           onClassSearchChange={setClassSearch}
           onPrefetchClass={(nextClassId) => {
-            void queryClient.prefetchQuery({
-              queryKey: ["students", { class_id: nextClassId, status: "active" }],
-              queryFn: () => getStudents({ class_id: nextClassId, status: "active" }),
+            const nextFilters: StudentListFilters = {
+              class_id: nextClassId,
+              status: "active",
+              limit: 80,
+            };
+            void queryClient.prefetchInfiniteQuery({
+              queryKey: studentQueryKeys.list(nextFilters),
+              queryFn: ({ pageParam, signal }) =>
+                getStudentsPage({ ...nextFilters, cursor: pageParam }, signal),
+              initialPageParam: undefined as string | undefined,
+              getNextPageParam: (page: StudentListPageResponse) =>
+                page.has_more ? page.next_cursor ?? undefined : undefined,
+              staleTime: 30_000,
             });
           }}
           onRetry={() => void classesQuery.refetch()}
@@ -724,9 +844,9 @@ function StudentsContent() {
         />
       ) : null}
 
-      {isResolvingSelectedClass ? <StudentClassDetailSkeleton isAdmin={isAdmin} /> : null}
+      {view === "class" && isResolvingSelectedClass ? <StudentClassDetailSkeleton isAdmin={isAdmin} /> : null}
 
-      {selectedClass ? (
+      {view === "class" && selectedClass ? (
         <>
           <HeaderControlsPortal>
             <div className="flex min-w-0 items-center gap-2">
@@ -747,6 +867,7 @@ function StudentsContent() {
 
           <SelectedClassBar
             canExport={students.length > 0}
+            isExporting={isExportingStudents}
             class_={selectedClass}
             onChangeClass={() => {
               updateSelectedClass("");
@@ -810,7 +931,11 @@ function StudentsContent() {
                   currentClassId={selectedClass.id}
                   students={students}
                   isAdmin={isAdmin}
-                  onRowClick={setActionTarget}
+                  onRowClick={(student) => {
+                    if (isAdmin) {
+                      openStudentWorkspace(student);
+                    }
+                  }}
                 />
               ) : hasSearch && totalStudentCount > 0 ? (
                 <DataSectionEmpty
@@ -839,59 +964,89 @@ function StudentsContent() {
         </>
       ) : null}
 
-      {isFormOpen ? (
+      {view !== "class" ? (
+        <StudentProfileScope
+          view={view}
+          students={students}
+          search={search}
+          isAdmin={isAdmin}
+          isLoading={studentsQuery.isLoading && !hasStudentQueryData}
+          isRefreshing={studentsQuery.isFetching}
+          error={studentsQuery.error}
+          hasError={hasBlockingStudentError}
+          hasMore={studentsQuery.hasNextPage}
+          isLoadingMore={studentsQuery.isFetchingNextPage}
+          onLoadMore={() => void studentsQuery.fetchNextPage()}
+          onRetry={() => void studentsQuery.refetch()}
+          onSearchChange={setSearch}
+          onCreate={openCreateForm}
+          onOpen={openStudentWorkspace}
+        />
+      ) : null}
+
+      {isFormOpen && (view !== "class" || selectedClass) ? (
         <StudentFormDialog
           classes={classes}
           contactSuggestionSources={contactSuggestionSources}
-          currentClassId={selectedClass?.id ?? null}
+          currentClassId={view === "class" ? selectedClass?.id ?? null : null}
           isSaving={isStudentFormSaving}
-          student={editingStudent}
+          student={null}
           onClose={() => {
             setIsFormOpen(false);
-            setEditingStudent(null);
             setPendingIdentityConflict(null);
           }}
-          onSubmit={(values, enrollmentFees, enrollmentActionPlan, slotIds) => {
-            if (editingStudent) {
-              updateMutation.mutate({
-                enrollmentActionPlan,
-                id: editingStudent.id,
+          onSubmit={(values, _fees, _plan, slotIds) => {
+            createMutation.mutate(
+              toStudentCreatePayload(
                 values,
-                enrollmentFees,
-              });
-            } else {
-              createMutation.mutate(
-                toStudentCreatePayload(values, selectedClass!.id, slotIds),
-              );
-            }
+                view === "class" ? selectedClass?.id ?? null : null,
+                slotIds,
+              ),
+            );
           }}
         />
       ) : null}
 
-      {deleteTarget ? (
-        <RemoveFromClassDialog
-          className={selectedClass?.name ?? "lớp đang chọn"}
+      {workspaceStudent && isAdmin ? (
+        <StudentWorkspaceDialog
+          student={workspaceStudent}
+          initialMode={workspaceStudent.status === "archived" ? "restore" : "edit"}
+          selectedClass={view === "class" ? selectedClass : null}
+          isSaving={updateMutation.isPending}
           isDeleting={dropEnrollmentMutation.isPending}
-          student={deleteTarget}
-          onClose={() => setDeleteTarget(null)}
-          onConfirm={() => {
-            const enrollment = deleteTarget.active_enrollments.find((e) => e.class_id === classId);
+          isLifecyclePending={archiveMutation.isPending || restoreMutation.isPending}
+          onArchive={(reason) => archiveMutation.mutate({ id: workspaceStudent.id, reason })}
+          onRestore={(reason) => restoreMutation.mutate({ id: workspaceStudent.id, reason })}
+          onClose={closeStudentWorkspace}
+          onRemoveFromClass={() => {
+            const enrollment = workspaceStudent.active_enrollments.find(
+              (e) => e.class_id === classId,
+            );
             if (enrollment) {
               dropEnrollmentMutation.mutate(enrollment.id);
             }
           }}
-        />
-      ) : null}
-
-      {actionTarget && !isFormOpen && !deleteTarget && !pendingIdentityConflict ? (
-        <EntityActionsDialog
-          open
-          title={`Thao tác với học viên ${actionTarget.full_name}`}
-          onClose={() => setActionTarget(null)}
-          actions={[
-            { label: "Sửa học viên", icon: <Pencil className="h-4 w-4" aria-hidden="true" />, onClick: () => openEditForm(actionTarget) },
-            { label: `Xoá ${actionTarget.full_name} khỏi lớp`, icon: <Trash2 className="h-4 w-4" aria-hidden="true" />, tone: "danger" as const, onClick: () => setDeleteTarget(actionTarget) },
-          ]}
+          renderEditPanel={({ embedded, onDirtyChange, onNestedOverlayChange, onClose }) => (
+            <StudentFormDialog
+              embedded={embedded}
+              onDirtyChange={onDirtyChange}
+              onNestedOverlayChange={onNestedOverlayChange}
+              classes={classes}
+              contactSuggestionSources={contactSuggestionSources}
+              currentClassId={view === "class" ? selectedClass?.id ?? null : null}
+              isSaving={isStudentFormSaving}
+              student={workspaceStudent}
+              onClose={onClose}
+              onSubmit={(values, enrollmentFees, enrollmentActionPlan) => {
+                updateMutation.mutate({
+                  enrollmentActionPlan,
+                  id: workspaceStudent.id,
+                  values,
+                  enrollmentFees,
+                });
+              }}
+            />
+          )}
         />
       ) : null}
 
@@ -919,17 +1074,234 @@ function StudentsContent() {
         }}
       />
 
-      {isAdmin ? <QuickActionFab label="Thêm học viên" onClick={openCreateForm} /> : null}
+      {isAdmin && view === "class" ? (
+        <QuickActionFab label="Thêm học viên" onClick={openCreateForm} />
+      ) : null}
 
+    </div>
+  );
+}
+
+function StudentScopeTabs({
+  activeView,
+  summary,
+  onChange,
+}: {
+  activeView: StudentView;
+  summary?: { unassigned: number; current: number; stopped: number };
+  onChange: (view: StudentView) => void;
+}) {
+  return (
+    <nav
+      aria-label="Phạm vi hồ sơ học viên"
+      className="shrink-0 rounded-xl border border-gray-200 bg-white p-1.5"
+    >
+      <div
+        className="grid grid-cols-3 gap-1"
+        role="tablist"
+        onKeyDown={(event) => {
+          if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+          event.preventDefault();
+          const tabs = Array.from(
+            event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]'),
+          );
+          const currentIndex = tabs.indexOf(document.activeElement as HTMLButtonElement);
+          if (currentIndex < 0) return;
+          const direction = event.key === "ArrowLeft" ? -1 : 1;
+          tabs[(currentIndex + direction + tabs.length) % tabs.length]?.focus();
+        }}
+      >
+        {STUDENT_VIEWS.map((item) => {
+          const count = item.value === "class"
+            ? summary?.current
+            : item.countKey
+              ? summary?.[item.countKey]
+              : undefined;
+          const selected = item.value === activeView;
+          return (
+            <button
+              key={item.value}
+              type="button"
+              role="tab"
+              aria-selected={selected}
+              tabIndex={selected ? 0 : -1}
+              onClick={() => onChange(item.value)}
+              className={cn(
+                "inline-flex min-h-11 min-w-0 items-center justify-center gap-1 rounded-lg px-1.5 text-center text-[12px] font-medium leading-5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 sm:gap-1.5 sm:px-3 sm:text-sm md:min-h-9",
+                selected
+                  ? "bg-primary-soft font-semibold text-primary ring-1 ring-inset ring-primary/20"
+                  : "text-gray-600 hover:bg-primary-soft/60 hover:text-primary",
+              )}
+            >
+              <span className="min-w-0">{item.label}</span>
+              {count !== undefined ? (
+                <span
+                  className={cn(
+                    "inline-flex min-w-4 shrink-0 items-center justify-center text-xs font-semibold tabular-nums",
+                    selected ? "text-primary" : "text-gray-500",
+                  )}
+                >
+                  {count}
+                </span>
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
+    </nav>
+  );
+}
+
+function StudentProfileScope({
+  view,
+  students,
+  search,
+  isAdmin,
+  isLoading,
+  isRefreshing,
+  error,
+  hasError,
+  hasMore,
+  isLoadingMore,
+  onLoadMore,
+  onRetry,
+  onSearchChange,
+  onCreate,
+  onOpen,
+}: {
+  view: Exclude<StudentView, "class">;
+  students: StudentResponse[];
+  search: string;
+  isAdmin: boolean;
+  isLoading: boolean;
+  isRefreshing: boolean;
+  error: unknown;
+  hasError: boolean;
+  hasMore: boolean;
+  isLoadingMore: boolean;
+  onLoadMore: () => void;
+  onRetry: () => void;
+  onSearchChange: (value: string) => void;
+  onCreate: () => void;
+  onOpen: (student: StudentResponse) => void;
+}) {
+  const labels = {
+    unassigned: { title: "Học viên chưa xếp lớp", empty: "Chưa có học viên chờ xếp lớp." },
+    stopped: { title: "Học viên ngừng học trung tâm", empty: "Chưa có học viên ngừng học." },
+  }[view];
+
+  return (
+    <section className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
+      <HeaderControlsPortal>
+        <div className="flex min-w-0 items-center gap-2">
+          <HeaderFilterControls
+            searchPlaceholder="Tìm tên, mã học viên, SĐT..."
+            searchValue={search}
+            onSearchChange={onSearchChange}
+            filters={[]}
+          />
+          <StudentListStatus filteredCount={students.length} totalCount={students.length} isRefreshing={isRefreshing} />
+          {isAdmin && view === "unassigned" ? <AddStudentButton label="Thêm hồ sơ" onClick={onCreate} /> : null}
+        </div>
+      </HeaderControlsPortal>
+
+      <div className="flex shrink-0 items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
+        <div>
+          <h1 className="text-lg font-semibold text-gray-950">{labels.title}</h1>
+          <p className="mt-0.5 text-sm text-gray-500">Mã học viên được giữ nguyên trong suốt quá trình học.</p>
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-hidden">
+        {isLoading ? <StudentTableSkeleton isAdmin={isAdmin} /> : null}
+        {hasError ? (
+          <DataSectionError
+            className="h-full"
+            title="Chưa tải được danh sách học viên"
+            description={getApiErrorMessage(error, "Không thể tải danh sách học viên. Vui lòng thử lại.")}
+            isRetrying={isRefreshing}
+            onRetry={onRetry}
+          />
+        ) : null}
+        {!isLoading && !hasError && students.length === 0 ? (
+          <DataSectionEmpty
+            className="h-full"
+            icon={UsersRound}
+            title={search.trim() ? "Không tìm thấy học viên phù hợp" : labels.empty}
+            description={search.trim() ? "Thử tìm bằng tên, mã học viên hoặc số điện thoại khác." : "Danh sách sẽ tự cập nhật khi trạng thái hồ sơ thay đổi."}
+            {...(search.trim() ? { actionLabel: "Xóa từ khóa tìm kiếm", onAction: () => onSearchChange("") } : {})}
+          />
+        ) : null}
+        {!isLoading && !hasError && students.length > 0 ? (
+          <StudentProfileTable students={students} view={view} isAdmin={isAdmin} onOpen={onOpen} />
+        ) : null}
+      </div>
+      {hasMore ? (
+        <div className="flex shrink-0 justify-center">
+          <Button type="button" variant="outline" className="h-8 rounded-md px-4 text-sm" disabled={isLoadingMore} onClick={onLoadMore}>
+            {isLoadingMore ? <LoadingLabel label="Đang tải" /> : "Tải thêm"}
+          </Button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function StudentProfileTable({ students, view, isAdmin, onOpen }: {
+  students: StudentResponse[];
+  view: Exclude<StudentView, "class">;
+  isAdmin: boolean;
+  onOpen: (student: StudentResponse) => void;
+}) {
+  return (
+    <div className="scrollbar-hidden h-full overflow-auto rounded-xl border border-gray-200 bg-white">
+      <div role="table" aria-label="Danh sách hồ sơ học viên" className="min-w-[920px]">
+        <div role="row" className="grid grid-cols-[180px_minmax(210px,1.2fr)_150px_minmax(180px,1fr)_minmax(230px,1.2fr)] border-b border-gray-200 bg-gray-50 text-sm font-semibold text-gray-700">
+          <div role="columnheader" className="px-4 py-3">Mã HV</div>
+          <div role="columnheader" className="px-3 py-3">Họ tên</div>
+          <div role="columnheader" className="px-3 py-3">Ngày sinh</div>
+          <div role="columnheader" className="px-3 py-3">Trường</div>
+          <div role="columnheader" className="px-3 py-3">{view === "stopped" ? "Thông tin ngừng học" : "Liên hệ / lớp gần nhất"}</div>
+        </div>
+        {students.map((student) => (
+          <div
+            key={student.id}
+            role="row"
+            tabIndex={isAdmin ? 0 : undefined}
+            onClick={isAdmin ? () => onOpen(student) : undefined}
+            onKeyDown={isAdmin ? (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onOpen(student);
+              }
+            } : undefined}
+            className={cn("grid grid-cols-[180px_minmax(210px,1.2fr)_150px_minmax(180px,1fr)_minmax(230px,1.2fr)] border-b border-gray-100 text-[15px] text-gray-700 last:border-b-0", isAdmin && "cursor-pointer hover:bg-primary/[0.035]")}
+          >
+            <div role="cell" className="px-4 py-3 font-semibold tabular-nums text-primary">{formatStudentCode(student.student_code)}</div>
+            <div role="cell" className="px-3 py-3 font-semibold text-gray-950">{student.full_name}</div>
+            <div role="cell" className="px-3 py-3">{formatDate(student.birth_date)}</div>
+            <div role="cell" className="px-3 py-3">{student.school || "—"}</div>
+            <div role="cell" className="px-3 py-3">
+              {view === "stopped"
+                ? <><span>{formatDate(student.archived_at?.slice(0, 10) ?? null)}</span>{student.archived_reason ? <span className="ml-2 text-gray-500">· {student.archived_reason}</span> : null}</>
+                : student.last_enrollment
+                  ? <><span className="font-medium text-gray-900">{student.last_enrollment.class_name}</span>{student.last_enrollment.ended_at ? <span className="ml-2 text-gray-500">· {formatDate(student.last_enrollment.ended_at.slice(0, 10))}</span> : null}</>
+                  : formatContactCell(student, "parent_contact", student.parent_zalo, student.parent_phone)}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
 
 function AddStudentButton({
   compact = false,
+  label = "Thêm học viên",
   onClick,
 }: {
   compact?: boolean;
+  label?: string;
   onClick: () => void;
 }) {
   return (
@@ -940,38 +1312,20 @@ function AddStudentButton({
       className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md bg-primary px-2.5 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
     >
       <Plus className="h-4 w-4" aria-hidden="true" />
-      {compact ? "Thêm" : "Thêm học viên"}
-    </button>
-  );
-}
-
-function ExportStudentsButton({
-  disabled,
-  onClick,
-}: {
-  disabled: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onClick}
-      className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-[#217346] px-3 text-sm font-medium text-white transition hover:bg-[#1b5f3a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-200 disabled:cursor-not-allowed disabled:opacity-50"
-    >
-      <Download className="h-3.5 w-3.5" aria-hidden="true" />
-      Excel
+      {compact ? "Thêm" : label}
     </button>
   );
 }
 
 function SelectedClassBar({
   canExport,
+  isExporting,
   class_,
   onChangeClass,
   onExportStudents,
 }: {
   canExport: boolean;
+  isExporting: boolean;
   class_: ClassResponse;
   onChangeClass: () => void;
   onExportStudents: () => void;
@@ -1005,7 +1359,7 @@ function SelectedClassBar({
         </div>
 
         <div className="flex shrink-0 items-center gap-1.5">
-          <ExportStudentsButton disabled={!canExport} onClick={onExportStudents} />
+          <ExcelExportButton disabled={!canExport} isExporting={isExporting} onClick={onExportStudents} />
           <Button
             type="button"
             variant="outline"
@@ -1567,6 +1921,7 @@ function StudentsTable({
       >
         <div role="rowgroup" className="shrink-0 border-b border-gray-200 bg-gray-100">
           <div role="row" className={`${tableGridClass} table-heading-text text-left text-gray-800`}>
+            <div role="columnheader" className="whitespace-nowrap px-2.5 py-3">Mã HV</div>
             <div role="columnheader" className="whitespace-nowrap px-2.5 py-3">Họ tên</div>
             <div role="columnheader" className="whitespace-nowrap px-2.5 py-3">Ngày sinh</div>
             <div role="columnheader" className="whitespace-nowrap px-2.5 py-3">Trường</div>
@@ -1620,7 +1975,7 @@ function StudentCard({
           </h2>
           {student.student_code ? (
             <p className="mt-0.5 text-[13px] font-medium tabular-nums text-gray-500">
-              Mã: <SelectableStudentValue value={student.student_code} />
+              Mã: <SelectableStudentValue value={formatStudentCode(student.student_code)} />
             </p>
           ) : null}
           <StudentCustomFeeLine classId={currentClassId} student={student} />
@@ -1694,6 +2049,9 @@ function StudentTableRow({
       }}
       className={`${tableGridClass} cv-auto items-start ${isAdmin ? "cursor-pointer hover:bg-gray-100/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/30" : ""}`}
     >
+      <div role="cell" className="min-w-0 whitespace-nowrap px-2.5 py-3 font-semibold tabular-nums text-primary">
+        <SelectableStudentValue value={formatStudentCode(student.student_code)} />
+      </div>
       <div role="cell" className="min-w-0 break-words px-2.5 py-3 font-medium text-gray-900">
         <SelectableStudentValue value={student.full_name} />
         <StudentCustomFeeLine classId={currentClassId} student={student} />
@@ -1724,16 +2082,22 @@ function StudentFormDialog({
   classes,
   contactSuggestionSources,
   currentClassId,
+  embedded = false,
   isSaving,
   onClose,
+  onDirtyChange,
+  onNestedOverlayChange,
   onSubmit,
   student,
 }: {
   classes: ClassResponse[];
   contactSuggestionSources: ContactSuggestionSource[];
   currentClassId: string | null;
+  embedded?: boolean;
   isSaving: boolean;
   onClose: () => void;
+  onDirtyChange?: (dirty: boolean) => void;
+  onNestedOverlayChange?: (open: boolean) => void;
   onSubmit: (
     values: StudentFormValues,
     enrollmentFees: EnrollmentFeeValues,
@@ -1751,6 +2115,8 @@ function StudentFormDialog({
   const [draftEnrollmentActionMode, setDraftEnrollmentActionMode] =
     useState<EnrollmentActionMode>("supplement");
   const [draftTransferTargetClassIds, setDraftTransferTargetClassIds] = useState<string[]>([]);
+  const [targetEnrollmentConfigs, setTargetEnrollmentConfigs] = useState<Record<string, EnrollmentTargetConfig>>({});
+  const [draftTargetEnrollmentConfigs, setDraftTargetEnrollmentConfigs] = useState<Record<string, EnrollmentTargetConfig>>({});
   const [transferError, setTransferError] = useState("");
   const [isEnrollmentTransferOpen, setIsEnrollmentTransferOpen] = useState(false);
   const [datePickerTarget, setDatePickerTarget] = useState<"initial" | `enrollment:${string}` | null>(null);
@@ -1759,6 +2125,7 @@ function StudentFormDialog({
     () => classes.find((class_) => class_.id === currentClassId) ?? null,
     [classes, currentClassId],
   );
+  const isStandaloneProfileCreate = student === null && currentClassId === null;
   const initialCreateFormKeyRef = useRef(normalizedStudentCreateFormKey(defaultStudentValues));
 
   useEffect(() => {
@@ -1786,7 +2153,7 @@ function StudentFormDialog({
     getValues,
     watch,
   } = useForm<StudentFormValues>({
-    resolver: zodResolver(student ? studentSchema : studentCreateSchema),
+    resolver: zodResolver(student ? studentSchema : currentClass ? studentCreateSchema : studentProfileCreateSchema),
     mode: "onChange",
     shouldFocusError: true,
     defaultValues: defaultStudentValues,
@@ -1832,6 +2199,8 @@ function StudentFormDialog({
       setTransferTargetClassIds([]);
       setDraftEnrollmentActionMode("supplement");
       setDraftTransferTargetClassIds([]);
+      setTargetEnrollmentConfigs({});
+      setDraftTargetEnrollmentConfigs({});
       setTransferError("");
       setIsEnrollmentTransferOpen(false);
       return;
@@ -1844,6 +2213,7 @@ function StudentFormDialog({
           {
             custom_fee: enrollment.custom_fee,
             enrollment_date: enrollment.enrollment_date,
+            selected_slot_ids: enrollment.selected_slot_ids,
           },
         ]),
       ),
@@ -1852,6 +2222,8 @@ function StudentFormDialog({
     setTransferTargetClassIds([]);
     setDraftEnrollmentActionMode("supplement");
     setDraftTransferTargetClassIds([]);
+    setTargetEnrollmentConfigs({});
+    setDraftTargetEnrollmentConfigs({});
     setTransferError("");
     setIsEnrollmentTransferOpen(false);
   }, [student]);
@@ -1877,12 +2249,28 @@ function StudentFormDialog({
   const draftSelectedTransferClasses = draftTransferTargetClassIds
     .map((classId) => availableTransferClasses.find((class_) => class_.id === classId) ?? null)
     .filter((class_): class_ is ClassResponse => class_ !== null);
+  const hasMissingSessionSelection = student
+    ? activeEnrollments.some((enrollment) => {
+        const enrollmentClass = classes.find((class_) => class_.id === enrollment.class_id);
+        const slotCount = enrollmentClass?.schedule?.slots?.filter((slot) => slot.id).length ?? 0;
+        const selected = enrollmentFees[enrollment.id]?.selected_slot_ids ?? enrollment.selected_slot_ids;
+        return slotCount > 0 && selected.length === 0;
+      })
+    : Boolean(
+        currentClass &&
+          (currentClass.schedule?.slots?.filter((slot) => slot.id).length ?? 0) > 0 &&
+          selectedSlotIds.length === 0,
+      );
+  const sessionSelectionError = hasMissingSessionSelection
+    ? "Vui lòng chọn ít nhất một buổi học trước khi lưu."
+    : "";
   const hasEnrollmentFeeChanges = activeEnrollments.some((enrollment) => {
     const draft = enrollmentFees[enrollment.id];
     return Boolean(
       draft &&
       ((draft.custom_fee ?? null) !== (enrollment.custom_fee ?? null) ||
-        (draft.enrollment_date ?? null) !== (enrollment.enrollment_date ?? null)),
+        (draft.enrollment_date ?? null) !== (enrollment.enrollment_date ?? null) ||
+        [...draft.selected_slot_ids].sort().join("|") !== [...enrollment.selected_slot_ids].sort().join("|")),
     );
   });
   const watchedStudentValues = watch();
@@ -1964,7 +2352,8 @@ function StudentFormDialog({
       parentContactError ||
       notesError ||
       enrollmentDateError ||
-      transferError,
+      transferError ||
+      sessionSelectionError,
   );
   const unsavedNoticeHasErrors = student
     ? hasStudentFormErrors
@@ -2076,6 +2465,7 @@ function StudentFormDialog({
   function openEnrollmentTransfer() {
     setDraftEnrollmentActionMode(enrollmentActionMode);
     setDraftTransferTargetClassIds([...transferTargetClassIds]);
+    setDraftTargetEnrollmentConfigs(structuredClone(targetEnrollmentConfigs));
     setTransferError("");
     setIsEnrollmentTransferOpen(true);
   }
@@ -2085,136 +2475,155 @@ function StudentFormDialog({
     setIsEnrollmentTransferOpen(false);
   }
 
+  useEffect(() => {
+    onDirtyChange?.(hasUnsavedChanges);
+  }, [hasUnsavedChanges, onDirtyChange]);
+
+  useEffect(() => {
+    onNestedOverlayChange?.(isEnrollmentTransferOpen || datePickerTarget !== null);
+  }, [datePickerTarget, isEnrollmentTransferOpen, onNestedOverlayChange]);
+
   if (!mounted) return null;
 
-  return (
-    <FormDialogShell
-      title={student ? "Chỉnh sửa học viên" : "Thêm học viên"}
-      width={student ? "lg" : "standard"}
-      isBusy={isSaving}
-      dirty={hasUnsavedChanges}
-      onClose={smartRequestClose}
-      suspended={isEnrollmentTransferOpen || datePickerTarget !== null}
-      frameProps={{
-        className: student ? undefined : createEntityDialogFrameClassName,
-        inert: isEnrollmentTransferOpen || datePickerTarget !== null,
+  const overlayExtra = (
+    <>
+      {student ? (
+        <EnrollmentTransferSlide
+          availableClasses={availableTransferClasses}
+          currentClassId={currentClassId}
+          transferError={transferError}
+          isOpen={isEnrollmentTransferOpen}
+          mode={draftEnrollmentActionMode}
+          selectedClasses={draftSelectedTransferClasses}
+          targetConfigs={draftTargetEnrollmentConfigs}
+          onAddClass={(classId) => {
+            setTransferError("");
+            setDraftTransferTargetClassIds((current) =>
+              current.includes(classId) ? current : [...current, classId],
+            );
+            const targetClass = availableTransferClasses.find((class_) => class_.id === classId);
+            const slotIds = targetClass?.schedule?.slots?.flatMap((slot) => slot.id ? [slot.id] : []) ?? [];
+            setDraftTargetEnrollmentConfigs((current) => ({
+              ...current,
+              [classId]: current[classId] ?? { class_id: classId, custom_fee: null, selected_slot_ids: slotIds },
+            }));
+          }}
+          onClose={closeEnrollmentTransfer}
+          onConfirm={() => {
+            if (draftEnrollmentActionMode === "transfer" && draftTransferTargetClassIds.length === 0) {
+              setTransferError("Vui lòng chọn ít nhất một lớp mới để chuyển học viên.");
+              return;
+            }
+            const missingSessions = draftTransferTargetClassIds.find(
+              (classId) => (draftTargetEnrollmentConfigs[classId]?.selected_slot_ids.length ?? 0) === 0,
+            );
+            if (missingSessions) {
+              setTransferError("Mỗi lớp cần chọn ít nhất một buổi học cho học viên.");
+              return;
+            }
+            setEnrollmentActionMode(draftEnrollmentActionMode);
+            setTransferTargetClassIds([...draftTransferTargetClassIds]);
+            setTargetEnrollmentConfigs(structuredClone(draftTargetEnrollmentConfigs));
+            setTransferError("");
+            setIsEnrollmentTransferOpen(false);
+          }}
+          onModeChange={(mode) => {
+            setTransferError("");
+            setDraftEnrollmentActionMode(mode);
+          }}
+          onRemoveClass={(classId) =>
+            setDraftTransferTargetClassIds((current) => current.filter((id) => id !== classId))
+          }
+          onUpdateTarget={(config) => setDraftTargetEnrollmentConfigs((current) => ({ ...current, [config.class_id]: config }))}
+        />
+      ) : null}
+
+      <DatePickerSlide
+        isOpen={datePickerTarget !== null}
+        onClose={() => setDatePickerTarget(null)}
+        currentValue={getDatePickerCurrentValue(datePickerTarget, watch("enrollment_date"), activeEnrollments, enrollmentFees)}
+        minDate={getEnrollmentDateBounds(datePickerTarget, currentClass, activeEnrollments).minDate}
+        maxDate={getEnrollmentDateBounds(datePickerTarget, currentClass, activeEnrollments).maxDate}
+        onSelectDate={(dateStr) => {
+          if (datePickerTarget === "initial") {
+            markInput("enrollment_date", dateStr);
+            setValue("enrollment_date", dateStr, {
+              shouldDirty: true,
+              shouldValidate: true,
+            });
+            return;
+          }
+
+          if (datePickerTarget?.startsWith("enrollment:")) {
+            const enrollmentId = datePickerTarget.slice("enrollment:".length);
+            setEnrollmentFees((current) => ({
+              ...current,
+              [enrollmentId]: {
+                ...(current[enrollmentId] ?? { custom_fee: null, enrollment_date: null, selected_slot_ids: [] }),
+                enrollment_date: dateStr,
+              },
+            }));
+          }
+        }}
+      />
+    </>
+  );
+
+  const formElement = (
+    <form
+      {...noSavedInfoFormProps}
+      noValidate
+      className="flex min-h-0 flex-1 flex-col"
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          const target = e.target as HTMLElement;
+          if (target.tagName === "INPUT") {
+            e.preventDefault();
+          }
+        } else if (moveFocusByFormArrow(e)) {
+          return;
+        }
       }}
-      overlayExtra={
-        <>
-          {student ? (
-            <EnrollmentTransferSlide
-              availableClasses={availableTransferClasses}
-              currentClassId={currentClassId}
-              transferError={transferError}
-              isOpen={isEnrollmentTransferOpen}
-              mode={draftEnrollmentActionMode}
-              selectedClasses={draftSelectedTransferClasses}
-              onAddClass={(classId) => {
-                setTransferError("");
-                setDraftTransferTargetClassIds((current) =>
-                  current.includes(classId) ? current : [...current, classId],
-                );
-              }}
-              onClose={closeEnrollmentTransfer}
-              onConfirm={() => {
-                if (draftEnrollmentActionMode === "transfer" && draftTransferTargetClassIds.length === 0) {
-                  setTransferError("Vui lòng chọn ít nhất một lớp mới để chuyển học viên.");
-                  return;
-                }
-                setEnrollmentActionMode(draftEnrollmentActionMode);
-                setTransferTargetClassIds([...draftTransferTargetClassIds]);
-                setTransferError("");
-                setIsEnrollmentTransferOpen(false);
-              }}
-              onModeChange={(mode) => {
-                setTransferError("");
-                setDraftEnrollmentActionMode(mode);
-              }}
-              onRemoveClass={(classId) =>
-                setDraftTransferTargetClassIds((current) => current.filter((id) => id !== classId))
-              }
-            />
-          ) : null}
+      onSubmit={(event) => {
+        markSubmitted();
+        if (sessionSelectionError) {
+          event.preventDefault();
+          return;
+        }
+        if (enrollmentFeeDraftError) {
+          event.preventDefault();
+          markBlur("custom_fee");
+          window.requestAnimationFrame(() => {
+            document.getElementById("student-enrollment-custom-fee")?.focus();
+          });
+          return;
+        }
+        void handleSubmit((values) => {
+          const enrollmentActionPlan: EnrollmentActionPlan = {
+            mode: enrollmentActionMode,
+            targetClassIds: transferTargetClassIds,
+            targetConfigs: targetEnrollmentConfigs,
+          };
 
-          <DatePickerSlide
-            isOpen={datePickerTarget !== null}
-            onClose={() => setDatePickerTarget(null)}
-            currentValue={getDatePickerCurrentValue(datePickerTarget, watch("enrollment_date"), activeEnrollments, enrollmentFees)}
-            minDate={getEnrollmentDateBounds(datePickerTarget, currentClass, activeEnrollments).minDate}
-            maxDate={getEnrollmentDateBounds(datePickerTarget, currentClass, activeEnrollments).maxDate}
-            onSelectDate={(dateStr) => {
-              if (datePickerTarget === "initial") {
-                markInput("enrollment_date", dateStr);
-                setValue("enrollment_date", dateStr, {
-                  shouldDirty: true,
-                  shouldValidate: true,
-                });
-                return;
-              }
+          if (
+            student &&
+            enrollmentActionMode === "transfer" &&
+            enrollmentActionPlan.targetClassIds.length === 0
+          ) {
+            setTransferError("Vui lòng chọn ít nhất một lớp mới để chuyển học viên.");
+            setIsEnrollmentTransferOpen(true);
+            return;
+          }
 
-              if (datePickerTarget?.startsWith("enrollment:")) {
-                const enrollmentId = datePickerTarget.slice("enrollment:".length);
-                setEnrollmentFees((current) => ({
-                  ...current,
-                  [enrollmentId]: {
-                    ...(current[enrollmentId] ?? { custom_fee: null, enrollment_date: null }),
-                    enrollment_date: dateStr,
-                  },
-                }));
-              }
-            }}
-          />
-        </>
-      }
+          setTransferError("");
+          onSubmit(values, enrollmentFees, enrollmentActionPlan, selectedSlotIds);
+        })(event);
+      }}
     >
-          <form
-          {...noSavedInfoFormProps}
-          noValidate
-          className="flex min-h-0 flex-1 flex-col"
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              const target = e.target as HTMLElement;
-              if (target.tagName === "INPUT") {
-                e.preventDefault();
-              }
-            } else if (moveFocusByFormArrow(e)) {
-              return;
-            }
-          }}
-          onSubmit={(event) => {
-            markSubmitted();
-            if (enrollmentFeeDraftError) {
-              event.preventDefault();
-              markBlur("custom_fee");
-              window.requestAnimationFrame(() => {
-                document.getElementById("student-enrollment-custom-fee")?.focus();
-              });
-              return;
-            }
-            void handleSubmit((values) => {
-              const enrollmentActionPlan: EnrollmentActionPlan = {
-                mode: enrollmentActionMode,
-                targetClassIds: transferTargetClassIds,
-              };
-
-              if (
-                student &&
-                enrollmentActionMode === "transfer" &&
-                enrollmentActionPlan.targetClassIds.length === 0
-              ) {
-                setTransferError("Vui lòng chọn ít nhất một lớp mới để chuyển học viên.");
-                setIsEnrollmentTransferOpen(true);
-                return;
-              }
-
-              setTransferError("");
-              onSubmit(values, enrollmentFees, enrollmentActionPlan, selectedSlotIds);
-            })(event);
-          }}
-        >
-          <FormDialogBody>
-                <FormSection label="Hồ sơ học viên" order={1}>
-                  <div className="grid gap-x-3 gap-y-2 sm:grid-cols-2">
+      <FormDialogBody>
+        <FormSection label="Hồ sơ học viên" order={1}>
+          <div className="grid gap-x-3 gap-y-2 sm:grid-cols-2">
+            <div className={isStandaloneProfileCreate ? "sm:col-span-2" : undefined}>
               <FormField controlId="student-full-name" label="Họ và tên" error={fullNameError} errorId="student-full-name-error">
                 <input
                   {...fullNameField}
@@ -2229,6 +2638,8 @@ function StudentFormDialog({
                   data-col={0}
                 />
               </FormField>
+            </div>
+            <div className={isStandaloneProfileCreate ? "sm:col-start-2 sm:row-start-2" : undefined}>
               <BirthDateInput
                 value={watch("birth_date") ?? null}
                 onChange={(val) => {
@@ -2240,150 +2651,151 @@ function StudentFormDialog({
                 }}
                 onBlur={() => markBlur("birth_date")}
                 error={birthDateError}
-                dataRow={0}
+                dataRow={isStandaloneProfileCreate ? 1 : 0}
                 dataCol={1}
                 privacyToggle={renderPrivacyToggle("birth_date", "Ngày sinh")}
                 isContentHidden={hiddenFields.includes("birth_date")}
               />
-              <div>
-                <FormField controlId="student-school" label="Trường" error={schoolError} errorId="student-school-error">
-                  <div className="relative">
-                    <input
-                      {...schoolField}
-                      id="student-school"
-                      aria-invalid={Boolean(schoolError)}
-                      aria-describedby={schoolError ? "student-school-error" : undefined}
-                      maxLength={160}
-                      autoComplete={savedInfoAutocomplete.disabled}
-                      className={`${getFormInputClass(Boolean(schoolError))} ${student ? "!pr-10" : ""}`}
-                      data-private-hidden={hiddenFields.includes("school")}
-                      data-row={1}
-                      data-col={0}
-                    />
-                    {student ? (
-                      <div className="absolute inset-y-0 right-1 z-20 flex items-center">
-                        {renderPrivacyToggle("school", "Trường")}
-                      </div>
-                    ) : null}
-                  </div>
-                </FormField>
-              </div>
-              {student && primaryEnrollment ? (
-                <div>
-                  <FormField
-                    controlId="student-enrollment-custom-fee"
-                    label="Học phí riêng"
-                    error={visibleEnrollmentFeeDraftError}
-                    errorId="student-enrollment-custom-fee-error"
-                  >
-                    <SmartMoneyInput
-                      id="student-enrollment-custom-fee"
-                      ariaInvalid={Boolean(visibleEnrollmentFeeDraftError)}
-                      ariaDescribedBy={
-                        visibleEnrollmentFeeDraftError
-                          ? "student-enrollment-custom-fee-error"
-                          : undefined
-                      }
-                      value={enrollmentFees[primaryEnrollment.id]?.custom_fee ?? null}
-                      onBlur={() => markBlur("custom_fee")}
-                      onChange={(val) =>
-                        setEnrollmentFees((current) => ({
-                          ...current,
-                          [primaryEnrollment.id]: {
-                            ...current[primaryEnrollment.id],
-                            custom_fee: val,
-                          },
-                        }))
-                      }
-                      onDraftChange={(rawValue, isComplete) => {
-                        markInput("custom_fee", rawValue);
-                        if (rawValue && !isComplete) {
-                          setEnrollmentFeeDraftError(validationMessages.feeFormat);
-                          setError("custom_fee", {
-                            type: "manual",
-                            message: validationMessages.feeFormat,
-                          });
-                        } else {
-                          setEnrollmentFeeDraftError("");
-                          clearErrors("custom_fee");
-                        }
-                      }}
-                      placeholder="Dùng học phí mặc định của lớp"
-                      className={`${numberInputClassName} !pr-10`}
-                      dataRow={1}
-                      dataCol={1}
-                      isContentHidden={hiddenFields.includes("custom_fee")}
-                      trailingControl={renderPrivacyToggle("custom_fee", "Học phí riêng")}
-                    />
-                  </FormField>
+            </div>
+            <div className={isStandaloneProfileCreate ? "sm:col-start-1 sm:row-start-2" : undefined}>
+              <FormField controlId="student-school" label="Tên trường" error={schoolError} errorId="student-school-error">
+                <div className="relative">
+                  <input
+                    {...schoolField}
+                    id="student-school"
+                    aria-invalid={Boolean(schoolError)}
+                    aria-describedby={schoolError ? "student-school-error" : undefined}
+                    maxLength={160}
+                    autoComplete={savedInfoAutocomplete.disabled}
+                    className={`${getFormInputClass(Boolean(schoolError))} ${student ? "!pr-10" : ""}`}
+                    data-private-hidden={hiddenFields.includes("school")}
+                    data-row={1}
+                    data-col={0}
+                  />
+                  {student ? (
+                    <div className="absolute inset-y-0 right-1 z-20 flex items-center">
+                      {renderPrivacyToggle("school", "Tên trường")}
+                    </div>
+                  ) : null}
                 </div>
-              ) : (
-                <FormField controlId="student-custom-fee" label="Học phí riêng" error={customFeeError} errorId="student-custom-fee-error">
+              </FormField>
+            </div>
+            {student && primaryEnrollment ? (
+              <div>
+                <FormField
+                  controlId="student-enrollment-custom-fee"
+                  label="Học phí riêng"
+                  error={visibleEnrollmentFeeDraftError}
+                  errorId="student-enrollment-custom-fee-error"
+                >
                   <SmartMoneyInput
-                    id="student-custom-fee"
-                    ariaInvalid={Boolean(customFeeError)}
-                    ariaDescribedBy={customFeeError ? "student-custom-fee-error" : undefined}
-                    value={watch("custom_fee") ?? null}
+                    id="student-enrollment-custom-fee"
+                    ariaInvalid={Boolean(visibleEnrollmentFeeDraftError)}
+                    ariaDescribedBy={
+                      visibleEnrollmentFeeDraftError
+                        ? "student-enrollment-custom-fee-error"
+                        : undefined
+                    }
+                    value={enrollmentFees[primaryEnrollment.id]?.custom_fee ?? null}
                     onBlur={() => markBlur("custom_fee")}
-                    onChange={(val) => {
-                      setValue("custom_fee", val, {
-                        shouldDirty: true,
-                        shouldValidate: true,
-                      });
-                    }}
+                    onChange={(val) =>
+                      setEnrollmentFees((current) => ({
+                        ...current,
+                        [primaryEnrollment.id]: {
+                          ...current[primaryEnrollment.id],
+                          custom_fee: val,
+                        },
+                      }))
+                    }
                     onDraftChange={(rawValue, isComplete) => {
                       markInput("custom_fee", rawValue);
                       if (rawValue && !isComplete) {
+                        setEnrollmentFeeDraftError(validationMessages.feeFormat);
                         setError("custom_fee", {
                           type: "manual",
                           message: validationMessages.feeFormat,
                         });
                       } else {
+                        setEnrollmentFeeDraftError("");
                         clearErrors("custom_fee");
                       }
                     }}
-                    placeholder="Để trống nếu dùng học phí lớp"
-                    className={getNumberInputClass(Boolean(customFeeError))}
+                    placeholder="Dùng học phí mặc định của lớp"
+                    className={`${numberInputClassName} !pr-10`}
                     dataRow={1}
                     dataCol={1}
+                    isContentHidden={hiddenFields.includes("custom_fee")}
+                    trailingControl={renderPrivacyToggle("custom_fee", "Học phí riêng")}
                   />
                 </FormField>
-              )}
-                  </div>
-                </FormSection>
+              </div>
+            ) : currentClass ? (
+              <FormField controlId="student-custom-fee" label="Học phí riêng" error={customFeeError} errorId="student-custom-fee-error">
+                <SmartMoneyInput
+                  id="student-custom-fee"
+                  ariaInvalid={Boolean(customFeeError)}
+                  ariaDescribedBy={customFeeError ? "student-custom-fee-error" : undefined}
+                  value={watch("custom_fee") ?? null}
+                  onBlur={() => markBlur("custom_fee")}
+                  onChange={(val) => {
+                    setValue("custom_fee", val, {
+                      shouldDirty: true,
+                      shouldValidate: true,
+                    });
+                  }}
+                  onDraftChange={(rawValue, isComplete) => {
+                    markInput("custom_fee", rawValue);
+                    if (rawValue && !isComplete) {
+                      setError("custom_fee", {
+                        type: "manual",
+                        message: validationMessages.feeFormat,
+                      });
+                    } else {
+                      clearErrors("custom_fee");
+                    }
+                  }}
+                  placeholder="Để trống nếu dùng học phí lớp"
+                  className={getNumberInputClass(Boolean(customFeeError))}
+                  dataRow={1}
+                  dataCol={1}
+                />
+              </FormField>
+            ) : null}
+          </div>
+        </FormSection>
 
-                <FormSection label="Thông tin liên hệ" order={2}>
-                  <div className="grid gap-x-3 gap-y-2 sm:grid-cols-2">
-                    <StudentContactFields
-                      zaloField={studentZaloField}
-                      phoneField={studentPhoneField}
-                      error={studentContactError}
-                      onBlur={() => markBlur("student_contact")}
-                      suggestion={studentContactSuggestion}
-                      onAcceptSuggestion={() =>
-                        acceptContactSuggestion("student", studentContactSuggestion)
-                      }
-                      privacyToggle={renderPrivacyToggle("student_contact", "Liên hệ học viên")}
-                      isContentHidden={hiddenFields.includes("student_contact")}
-                    />
-                    <ParentContactFields
-                      zaloField={parentZaloField}
-                      phoneField={parentPhoneField}
-                      error={parentContactError}
-                      onBlur={() => markBlur("parent_contact")}
-                      suggestion={parentContactSuggestion}
-                      onAcceptSuggestion={() =>
-                        acceptContactSuggestion("parent", parentContactSuggestion)
-                      }
-                      privacyToggle={renderPrivacyToggle("parent_contact", "Liên hệ phụ huynh")}
-                      isContentHidden={hiddenFields.includes("parent_contact")}
-                    />
-                  </div>
-                </FormSection>
+        <FormSection label="Thông tin liên hệ" order={2}>
+          <div className="grid gap-x-3 gap-y-2 sm:grid-cols-2">
+            <StudentContactFields
+              zaloField={studentZaloField}
+              phoneField={studentPhoneField}
+              error={studentContactError}
+              onBlur={() => markBlur("student_contact")}
+              suggestion={studentContactSuggestion}
+              onAcceptSuggestion={() =>
+                acceptContactSuggestion("student", studentContactSuggestion)
+              }
+              privacyToggle={renderPrivacyToggle("student_contact", "Liên hệ học viên")}
+              isContentHidden={hiddenFields.includes("student_contact")}
+            />
+            <ParentContactFields
+              zaloField={parentZaloField}
+              phoneField={parentPhoneField}
+              error={parentContactError}
+              onBlur={() => markBlur("parent_contact")}
+              suggestion={parentContactSuggestion}
+              onAcceptSuggestion={() =>
+                acceptContactSuggestion("parent", parentContactSuggestion)
+              }
+              privacyToggle={renderPrivacyToggle("parent_contact", "Liên hệ phụ huynh")}
+              isContentHidden={hiddenFields.includes("parent_contact")}
+            />
+          </div>
+        </FormSection>
 
-              <FormSection label="Quá trình học" order={3}>
-                <div className="w-full">
-            {!student ? (
+        <FormSection label="Quá trình học" order={3}>
+          <div className="w-full">
+            {!student && currentClass ? (
               <InitialEnrollmentFields
                 enrollmentDateValue={watch("enrollment_date") ?? null}
                 error={enrollmentDateError}
@@ -2392,24 +2804,22 @@ function StudentFormDialog({
               />
             ) : null}
 
-            {!student ? (
+            {!student && currentClass ? (
               <SessionSelector
                 class_={currentClass}
                 selectedSlotIds={selectedSlotIds}
                 onChange={setSelectedSlotIds}
-              />
-            ) : null}
-
-            {!student ? (
-              <SessionSelector
-                class_={currentClass}
-                selectedSlotIds={selectedSlotIds}
-                onChange={setSelectedSlotIds}
+                customFee={watch("custom_fee") ?? null}
+                onApplySuggestedFee={(amount) => setValue("custom_fee", amount, {
+                  shouldDirty: true,
+                  shouldValidate: true,
+                })}
               />
             ) : null}
 
             {student ? (
               <EnrollmentFeeSection
+                classes={classes}
                 currentClassId={currentClassId}
                 enrollments={activeEnrollments}
                 isLoading={false}
@@ -2419,65 +2829,99 @@ function StudentFormDialog({
                 enrollmentFees={enrollmentFees}
                 onEnrollmentDateClick={(enrollmentId) => setDatePickerTarget(`enrollment:${enrollmentId}`)}
                 privacyToggle={renderPrivacyToggle("enrollment_date", "Ngày bắt đầu")}
+                onEnrollmentSlotsChange={(enrollmentId, selected_slot_ids) => setEnrollmentFees((current) => ({
+                  ...current,
+                  [enrollmentId]: { ...current[enrollmentId], selected_slot_ids },
+                }))}
+                onEnrollmentCustomFeeChange={(enrollmentId, custom_fee) => setEnrollmentFees((current) => ({
+                  ...current,
+                  [enrollmentId]: { ...current[enrollmentId], custom_fee },
+                }))}
               />
             ) : null}
 
-                <div className="mt-2">
-                  <FormField controlId="student-notes" label="Ghi chú" error={notesError} errorId="student-notes-error">
-                    <div className="relative">
-                      <textarea
-                        {...notesField}
-                        id="student-notes"
-                        aria-invalid={Boolean(notesError)}
-                        aria-describedby={notesError ? "student-notes-error" : undefined}
-                        maxLength={1000}
-                        autoComplete={savedInfoAutocomplete.disabled}
-                        rows={2}
-                        className={`${getFormInputClass(Boolean(notesError))} block h-16 min-h-16 resize-none py-2 leading-5 ${student ? "!pr-10" : ""}`}
-                        data-private-hidden={hiddenFields.includes("notes")}
-                        data-row={5}
-                        data-col={0}
-                        placeholder="Thông tin cần lưu ý về học viên (nếu có)"
-                      />
-                      {student ? (
-                        <div className="absolute inset-y-0 right-1 z-20 flex items-center">
-                          {renderPrivacyToggle("notes", "Ghi chú")}
-                        </div>
-                      ) : null}
+            <div className={currentClass || student ? "mt-2" : ""}>
+              <FormField controlId="student-notes" label="Ghi chú" error={notesError} errorId="student-notes-error">
+                <div className="relative">
+                  <textarea
+                    {...notesField}
+                    id="student-notes"
+                    aria-invalid={Boolean(notesError)}
+                    aria-describedby={notesError ? "student-notes-error" : undefined}
+                    maxLength={1000}
+                    autoComplete={savedInfoAutocomplete.disabled}
+                    rows={2}
+                    className={`${getFormInputClass(Boolean(notesError))} block h-16 min-h-16 resize-none py-2 leading-5 ${student ? "!pr-10" : ""}`}
+                    data-private-hidden={hiddenFields.includes("notes")}
+                    data-row={5}
+                    data-col={0}
+                    placeholder="Thông tin cần lưu ý về học viên (nếu có)"
+                  />
+                  {student ? (
+                    <div className="absolute inset-y-0 right-1 z-20 flex items-center">
+                      {renderPrivacyToggle("notes", "Ghi chú")}
                     </div>
-                  </FormField>
+                  ) : null}
                 </div>
-                </div>
-              </FormSection>
-          </FormDialogBody>
+              </FormField>
+            </div>
+          </div>
+        </FormSection>
+      </FormDialogBody>
 
-          <FormDialogFooter
-            left={
-              shouldShowUnsavedNotice ? (
-                <UnsavedChangesNotice
-                  hasChanges={hasUnsavedChanges}
-                  hasErrors={unsavedNoticeHasErrors}
-                  isSaving={isSaving}
-                />
-              ) : null
-            }
-            right={
-              <>
-                <Button type="button" variant="outline" className="h-8 rounded-md px-3 text-sm" disabled={isSaving} onClick={smartRequestClose}>
-                  Huỷ
-                </Button>
-                <SaveButton
-                  type="submit"
-                  isSaving={isSaving}
-                  disabled={Boolean(student && !hasUnsavedChanges)}
-                />
-              </>
-            }
-          />
-        </form>
-      </FormDialogShell>
+      <FormDialogFooter
+        left={
+          shouldShowUnsavedNotice ? (
+            <UnsavedChangesNotice
+              hasChanges={hasUnsavedChanges}
+              hasErrors={unsavedNoticeHasErrors}
+              isSaving={isSaving}
+            />
+          ) : null
+        }
+        right={
+          <>
+            <Button type="button" variant="outline" className="h-8 rounded-md px-3 text-sm" disabled={isSaving} onClick={smartRequestClose}>
+              Huỷ
+            </Button>
+            <SaveButton
+              type="submit"
+              isSaving={isSaving}
+              disabled={Boolean(student && !hasUnsavedChanges)}
+            />
+          </>
+        }
+      />
+    </form>
+  );
+
+  if (embedded) {
+    return (
+      <>
+        {formElement}
+        {overlayExtra}
+      </>
     );
   }
+
+  return (
+    <FormDialogShell
+      title={student ? "Chỉnh sửa học viên" : currentClass ? "Thêm học viên" : "Thêm hồ sơ"}
+      width={student ? "lg" : "standard"}
+      isBusy={isSaving}
+      dirty={hasUnsavedChanges}
+      onClose={smartRequestClose}
+      suspended={isEnrollmentTransferOpen || datePickerTarget !== null}
+      frameProps={{
+        className: student ? undefined : createEntityDialogFrameClassName,
+        inert: isEnrollmentTransferOpen || datePickerTarget !== null,
+      }}
+      overlayExtra={overlayExtra}
+    >
+      {formElement}
+    </FormDialogShell>
+  );
+}
 
 function PrivacyToggleButton({
   field,
@@ -2556,10 +3000,14 @@ function SessionSelector({
   class_,
   selectedSlotIds,
   onChange,
+  customFee,
+  onApplySuggestedFee,
 }: {
   class_: ClassResponse | null;
   selectedSlotIds: string[];
   onChange: (slotIds: string[]) => void;
+  customFee?: number | null;
+  onApplySuggestedFee?: (amount: number) => void;
 }) {
   const slots = class_?.schedule?.slots?.filter((slot) => slot.id) ?? [];
   if (class_ === null || slots.length === 0) {
@@ -2568,6 +3016,8 @@ function SessionSelector({
   const availableIds = slots.map((slot) => slot.id as string);
   const allSelected = availableIds.every((id) => selectedSlotIds.includes(id));
   const noneSelected = selectedSlotIds.length === 0;
+  const selectedSlots = slots.filter((slot) => selectedSlotIds.includes(slot.id as string));
+  const suggestion = getEnrollmentFeeSuggestion(class_.base_fee, slots, selectedSlots);
 
   return (
     <div className="mt-3">
@@ -2612,6 +3062,21 @@ function SessionSelector({
           Vui lòng chọn ít nhất một buổi học.
         </p>
       ) : null}
+      {suggestion && onApplySuggestedFee ? (
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-primary/15 bg-primary-soft/40 px-3 py-2">
+          <p className="text-sm text-gray-700">
+            Gợi ý học phí <strong className="font-semibold text-gray-950">{formatCurrency(suggestion.amount)}</strong> cho {suggestion.selectedCount}/{suggestion.totalCount} buổi.
+          </p>
+          <button
+            type="button"
+            onClick={() => onApplySuggestedFee(suggestion.amount)}
+            disabled={customFee === suggestion.amount}
+            className="inline-flex h-8 items-center rounded-md bg-primary px-3 text-sm font-medium text-white disabled:cursor-default disabled:opacity-60"
+          >
+            {customFee === suggestion.amount ? "Đã áp dụng" : "Áp dụng gợi ý"}
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -2623,11 +3088,13 @@ function EnrollmentTransferSlide({
   isOpen,
   mode,
   selectedClasses,
+  targetConfigs,
   onAddClass,
   onClose,
   onConfirm,
   onModeChange,
   onRemoveClass,
+  onUpdateTarget,
 }: {
   availableClasses: ClassResponse[];
   currentClassId: string | null;
@@ -2635,11 +3102,13 @@ function EnrollmentTransferSlide({
   isOpen: boolean;
   mode: EnrollmentActionMode;
   selectedClasses: ClassResponse[];
+  targetConfigs: Record<string, EnrollmentTargetConfig>;
   onAddClass: (classId: string) => void;
   onClose: () => void;
   onConfirm: () => void;
   onModeChange: (mode: EnrollmentActionMode) => void;
   onRemoveClass: (classId: string) => void;
+  onUpdateTarget: (config: EnrollmentTargetConfig) => void;
 }) {
   const sortedAvailableClasses = sortClassesForSelection(availableClasses);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -2701,7 +3170,7 @@ function EnrollmentTransferSlide({
     }
   }
 
-  return (
+  return createPortal(
     <div
       role="dialog"
       aria-modal="true"
@@ -2743,7 +3212,7 @@ function EnrollmentTransferSlide({
         </div>
 
         <div className="flex-1 overflow-hidden p-4 sm:p-5">
-          <div className="grid h-full gap-4 lg:grid-cols-[290px_minmax(0,1fr)]">
+          <div className="grid h-full gap-4 lg:grid-cols-[360px_minmax(0,1fr)]">
             <div className="flex flex-col rounded-md border border-gray-200 bg-white">
               <div className="border-b border-gray-200 px-4 py-3">
                 <p className="text-base font-semibold text-gray-900">Thao tác</p>
@@ -2794,6 +3263,28 @@ function EnrollmentTransferSlide({
                       <p className="text-sm text-gray-500">Chưa chọn lớp nào.</p>
                     )}
                   </div>
+                  {selectedClasses.map((class_) => {
+                    const config = targetConfigs[class_.id];
+                    if (!config) return null;
+                    return (
+                      <div key={`${class_.id}-configuration`} className="mt-3 border-t border-gray-100 pt-3">
+                        <p className="text-sm font-semibold text-gray-900">{class_.name}</p>
+                        <SessionSelector
+                          class_={class_}
+                          selectedSlotIds={config.selected_slot_ids}
+                          onChange={(selected_slot_ids) => onUpdateTarget({ ...config, selected_slot_ids })}
+                          customFee={config.custom_fee}
+                          onApplySuggestedFee={(custom_fee) => onUpdateTarget({ ...config, custom_fee })}
+                        />
+                        <SmartMoneyInput
+                          value={config.custom_fee}
+                          onChange={(custom_fee) => onUpdateTarget({ ...config, custom_fee })}
+                          placeholder="Dùng học phí của lớp"
+                          className="form-input-text mt-2 h-8 w-full rounded-md border border-gray-300 px-2.5"
+                        />
+                      </div>
+                    );
+                  })}
                 </div>
 
                 {mode === "transfer" && currentClassId ? (
@@ -2882,7 +3373,8 @@ function EnrollmentTransferSlide({
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -2913,6 +3405,7 @@ function SelectedClassChip({
 }
 
 function EnrollmentFeeSection({
+  classes,
   currentClassId,
   enrollmentActionMode,
   enrollments,
@@ -2922,7 +3415,10 @@ function EnrollmentFeeSection({
   enrollmentFees,
   privacyToggle,
   selectedTransferClasses,
+  onEnrollmentSlotsChange,
+  onEnrollmentCustomFeeChange,
 }: {
+  classes: ClassResponse[];
   currentClassId: string | null;
   enrollmentActionMode: EnrollmentActionMode;
   enrollments: StudentEnrollmentInfo[];
@@ -2932,6 +3428,8 @@ function EnrollmentFeeSection({
   enrollmentFees: EnrollmentFeeValues;
   privacyToggle?: React.ReactNode;
   selectedTransferClasses: ClassResponse[];
+  onEnrollmentSlotsChange: (enrollmentId: string, slotIds: string[]) => void;
+  onEnrollmentCustomFeeChange: (enrollmentId: string, fee: number | null) => void;
 }) {
   const sortedEnrollments = useMemo(() => {
     return [...enrollments].sort((left, right) => {
@@ -2970,7 +3468,7 @@ function EnrollmentFeeSection({
     <div className="space-y-2">
       {isLoading ? (
         <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-500">
-          Đang tải lớp đang học...
+          <LoadingLabel label="Đang tải lớp đang học" />
         </div>
       ) : null}
 
@@ -3034,26 +3532,43 @@ function EnrollmentFeeSection({
           </div>
 
           {sortedEnrollments.length > 0 ? (
-            <div className="grid gap-2 sm:grid-cols-2">
+            <div className="grid gap-2">
               {sortedEnrollments.map((enrollment) => {
                 const value = enrollmentFees[enrollment.id]?.enrollment_date ?? enrollment.enrollment_date;
+                const class_ = classes.find((item) => item.id === enrollment.class_id) ?? null;
+                const isPrimary = enrollment.class_id === currentClassId;
                 return (
-                  <FormField key={enrollment.id} label={`Ngày bắt đầu · ${enrollment.class_name}`} labelId={`enrollment-date-${enrollment.id}-label`}>
-                    <div className="relative">
-                      <button
-                        type="button"
-                        onClick={() => onEnrollmentDateClick(enrollment.id)}
-                        className={`${datePickerButtonClassName} ${privacyToggle ? "!pr-10" : ""}`}
-                        aria-haspopup="dialog"
-                        aria-labelledby={`enrollment-date-${enrollment.id}-label enrollment-date-${enrollment.id}-value`}
-                      >
-                        <span id={`enrollment-date-${enrollment.id}-value`}>{formatDate(value)}</span>
-                      </button>
-                      {privacyToggle ? (
-                        <div className="absolute inset-y-0 right-1 z-20 flex items-center">{privacyToggle}</div>
-                      ) : null}
+                  <div key={enrollment.id} className="rounded-md border border-gray-200 bg-white p-2.5 pb-3.5">
+                    <FormField label={`Ngày bắt đầu · ${enrollment.class_name}`} labelId={`enrollment-date-${enrollment.id}-label`}>
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() => onEnrollmentDateClick(enrollment.id)}
+                          className={`${datePickerButtonClassName} ${privacyToggle ? "!pr-10" : ""}`}
+                          aria-haspopup="dialog"
+                          aria-labelledby={`enrollment-date-${enrollment.id}-label enrollment-date-${enrollment.id}-value`}
+                        >
+                          <span id={`enrollment-date-${enrollment.id}-value`}>{formatDate(value)}</span>
+                        </button>
+                        {privacyToggle ? <div className="absolute inset-y-0 right-1 z-20 flex items-center">{privacyToggle}</div> : null}
+                      </div>
+                    </FormField>
+                    <SessionSelector
+                      class_={class_}
+                      selectedSlotIds={enrollmentFees[enrollment.id]?.selected_slot_ids ?? enrollment.selected_slot_ids}
+                      onChange={(slotIds) => onEnrollmentSlotsChange(enrollment.id, slotIds)}
+                      customFee={enrollmentFees[enrollment.id]?.custom_fee ?? null}
+                      onApplySuggestedFee={(fee) => onEnrollmentCustomFeeChange(enrollment.id, fee)}
+                    />
+                    {!isPrimary ? (
+                      <SmartMoneyInput
+                        value={enrollmentFees[enrollment.id]?.custom_fee ?? null}
+                        onChange={(fee) => onEnrollmentCustomFeeChange(enrollment.id, fee)}
+                        placeholder="Học phí riêng (nếu có)"
+                        className="form-input-text mt-2 h-8 w-full rounded-md border border-gray-300 px-2.5"
+                      />
+                    ) : null}
                     </div>
-                  </FormField>
                 );
               })}
             </div>
@@ -3061,90 +3576,6 @@ function EnrollmentFeeSection({
         </>
       ) : null}
     </div>
-  );
-}
-
-function RemoveFromClassDialog({
-  className,
-  isDeleting,
-  onClose,
-  onConfirm,
-  student,
-}: {
-  className: string;
-  isDeleting: boolean;
-  onClose: () => void;
-  onConfirm: () => void;
-  student: StudentResponse;
-}) {
-  const [mounted, setMounted] = useState(false);
-  const titleId = useId();
-  const descriptionId = useId();
-  const isLastActiveClass = student.active_enrollments.length <= 1;
-  const { backdropPointerDownRef, dialogRef, requestClose } = useModalDialog({
-    isBusy: isDeleting,
-    onClose,
-  });
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  if (!mounted) return null;
-
-  return createPortal(
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4"
-      onPointerDown={(event) => {
-        backdropPointerDownRef.current = event.target === event.currentTarget;
-      }}
-      onPointerUp={(event) => {
-        if (backdropPointerDownRef.current && event.target === event.currentTarget) {
-          requestClose();
-        }
-        backdropPointerDownRef.current = false;
-      }}
-    >
-      <div
-        ref={dialogRef}
-        role="alertdialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        aria-describedby={descriptionId}
-        aria-busy={isDeleting}
-        tabIndex={-1}
-        className="relative w-full max-w-md overflow-hidden rounded-xl bg-white shadow-xl"
-      >
-        <div className="border-b border-destructive/15 bg-destructive-soft/60 px-5 py-3.5">
-          <h2 id={titleId} className="section-title-text select-none text-destructive">Xoá khỏi lớp</h2>
-        </div>
-        <div className="p-5">
-          <p id={descriptionId} className="text-sm font-normal leading-6 text-gray-600">
-            Học viên <strong className="font-semibold text-gray-800">{student.full_name}</strong> sẽ
-            được xoá khỏi lớp <strong className="font-semibold text-gray-800">{className}</strong>.{" "}
-            {isLastActiveClass
-              ? "Đây là lớp đang học cuối cùng nên hồ sơ cũng sẽ được xoá khỏi danh sách học viên. Lịch sử học phí vẫn được giữ nguyên."
-              : "Hồ sơ và các lớp đang học khác vẫn được giữ nguyên."}
-          </p>
-          <div className="mt-5 flex justify-end gap-2">
-            <Button type="button" variant="outline" className="h-8 rounded-md px-3 text-sm" disabled={isDeleting} onClick={requestClose}>
-              Huỷ
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              className="h-8 rounded-md bg-destructive px-3 text-sm text-destructive-foreground hover:bg-destructive/90"
-              disabled={isDeleting}
-              onClick={onConfirm}
-              data-dialog-autofocus
-            >
-              {isDeleting ? <LoadingLabel label="Đang xoá" /> : "Xoá khỏi lớp"}
-            </Button>
-          </div>
-        </div>
-      </div>
-    </div>,
-    document.body
   );
 }
 
@@ -3186,17 +3617,23 @@ function normalizedStudentCreateFormKey(values: StudentFormValues) {
 
 function toStudentCreatePayload(
   values: StudentFormValues,
-  classId: string,
+  classId: string | null,
   selectedSlotIds: string[],
 ) {
-  return {
+  const profile = {
     ...toStudentPayload(values),
-    class_id: classId,
-    custom_fee: values.custom_fee,
     birth_date: values.birth_date ?? "",
     school: values.school?.trim() ?? "",
     parent_phone: normalizeOptionalText(values.parent_phone) ?? "",
     parent_zalo: normalizeOptionalText(values.parent_zalo) ?? "",
+  };
+  if (!classId) {
+    return profile;
+  }
+  return {
+    ...profile,
+    class_id: classId,
+    custom_fee: values.custom_fee,
     enrollment_date: values.enrollment_date || getTodayInputValue(),
     selected_slot_ids: selectedSlotIds,
   };
@@ -3304,11 +3741,6 @@ function addIsoDays(value: string, amount: number) {
   return date.toISOString().slice(0, 10);
 }
 
-function compareStudentsByCreationOrder(left: StudentResponse, right: StudentResponse) {
-  const createdAtComparison = right.created_at.localeCompare(left.created_at);
-  return createdAtComparison || left.id.localeCompare(right.id);
-}
-
 function getEnrollmentDateForClass(student: StudentResponse, classId: string) {
   return (
     student.active_enrollments.find((enrollment) => enrollment.class_id === classId)?.enrollment_date ?? null
@@ -3338,12 +3770,12 @@ function getOtherClassesText(student: StudentResponse, currentClassId: string) {
 }
 
 async function exportStudents(students: StudentResponse[], selectedClass: ClassResponse) {
-  const { default: writeExcelFile } = await import("write-excel-file/browser");
   const rows = students.map((student) => {
     const studentContact = getCompleteContactPair(student.student_zalo, student.student_phone);
     const parentContact = getCompleteContactPair(student.parent_zalo, student.parent_phone);
 
     return {
+      "Mã học viên": formatStudentCode(student.student_code),
       "Họ tên": student.full_name,
       "Ngày sinh": getStudentExportValue(
         student,
@@ -3370,30 +3802,12 @@ async function exportStudents(students: StudentResponse[], selectedClass: ClassR
       "Lớp đang học": student.classes.map((class_) => class_.name).join(", "),
     };
   });
-  const headers = Object.keys(rows[0] ?? {});
-  const data = [
-    headers.map((header) => ({ value: header, fontWeight: "bold" as const })),
-    ...rows.map((row) => headers.map((header) => row[header as keyof typeof row] ?? "")),
-  ];
-
-  await writeExcelFile(data, {
-    columns: getAutoFitColumns(rows),
-    sheet: "HocVien",
-    stickyRowsCount: 1,
-  }).toFile(`HocVien_${sanitizeFileName(selectedClass.name)}_${getCurrentMonthKey()}.xlsx`);
-}
-
-function getAutoFitColumns(rows: Record<string, string | number>[]) {
-  const headers = rows[0] ? Object.keys(rows[0]) : [];
-
-  return headers.map((header) => {
-    const maxContentLength = rows.reduce((maxLength, row) => {
-      const cellValue = row[header] ?? "";
-      return Math.max(maxLength, String(cellValue).length);
-    }, header.length);
-
-    return { width: Math.min(Math.max(maxContentLength + 3, 12), 48) };
-  });
+  await exportExcelWorkbook([{
+    name: "Hoc vien",
+    title: "TPRO English · Danh sách học viên",
+    description: `Lớp ${selectedClass.name} · ${rows.length} học viên đang xem`,
+    rows,
+  }], `HocVien_${sanitizeExcelFileName(selectedClass.name)}_${getCurrentMonthKey()}.xlsx`);
 }
 
 function getCurrentMonthKey() {
@@ -3416,13 +3830,6 @@ function sortClassesForSelection(classes: ClassResponse[]) {
 
     return nameA.localeCompare(nameB, "vi");
   });
-}
-
-function sanitizeFileName(value: string) {
-  return value
-    .trim()
-    .replace(/[\\/:*?"<>|]/g, "-")
-    .replace(/\s+/g, "_");
 }
 
 const inputClassName = `${formTextControlClassName} select-text`;

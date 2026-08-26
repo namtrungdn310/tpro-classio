@@ -22,6 +22,7 @@ test("student response validation matches the backend privacy and enrollment con
   const students = studentResponseListSchema.parse([
     {
       id: enrollment.student_id,
+      student_code: "TP000000018",
       full_name: "Nguyễn Văn A",
       birth_date: "2014-01-01",
       school: "THCS Nguyễn Du",
@@ -46,6 +47,7 @@ test("student response validation matches the backend privacy and enrollment con
         },
       ],
       created_at: "2026-07-01T08:00:00+07:00",
+      updated_at: "2026-07-01T08:00:00+07:00",
     },
   ]);
 
@@ -57,6 +59,7 @@ test("student responses accept legacy text beyond current form limits", () => {
   const [student] = studentResponseListSchema.parse([
     {
       id: enrollment.student_id,
+      student_code: "TP000000018",
       full_name: "H".repeat(121),
       birth_date: null,
       school: "S".repeat(161),
@@ -71,6 +74,7 @@ test("student responses accept legacy text beyond current form limits", () => {
       classes: [],
       active_enrollments: [],
       created_at: "2026-07-01T08:00:00+07:00",
+      updated_at: "2026-07-01T08:00:00+07:00",
     },
   ]);
 
@@ -126,7 +130,9 @@ test("student identity conflicts expose only bounded masked candidates", () => {
     candidates: [
       {
         id: enrollment.student_id,
+        student_code: "TP000000018",
         status: "inactive",
+        list_state: "UNASSIGNED",
         full_name: "Nguyễn Văn A",
         birth_date: "2014-01-01",
         school: "THCS Nguyễn Du",

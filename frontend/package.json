@@ -11,10 +11,14 @@
     "lint": "eslint .",
     "test": "node scripts/run-tests.mjs",
     "test:e2e:schedule": "playwright test --project=chromium",
-    "test:e2e:schedule:firefox": "playwright test --project=firefox"
+    "test:e2e:schedule:firefox": "playwright test --project=firefox",
+    "test:e2e:perf": "node scripts/run-perf-e2e.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",
+    "@codemirror/commands": "^6.11.0",
+    "@codemirror/state": "^6.7.1",
+    "@codemirror/view": "^6.43.9",
     "@hookform/resolvers": "^5.4.0",
     "@tanstack/react-query": "^5.101.0",
     "axios": "^1.18.0",
@@ -34,15 +38,15 @@
   "devDependencies": {
     "@emnapi/core": "^1.11.3",
     "@emnapi/runtime": "^1.11.3",
+    "@playwright/test": "^1.62.1",
     "@types/jsdom": "^28.0.3",
     "@types/node": "^22.0.0",
     "@types/react": "^18",
     "@types/react-dom": "^18",
+    "esbuild": "^0.28.1",
     "eslint": "^9.39.4",
     "eslint-config-next": "16.2.11",
     "jsdom": "^29.1.1",
-    "esbuild": "^0.28.1",
-    "@playwright/test": "^1.62.1",
     "tailwindcss": "^3.4.1",
     "tsx": "^4.23.0",
     "typescript": "^5"

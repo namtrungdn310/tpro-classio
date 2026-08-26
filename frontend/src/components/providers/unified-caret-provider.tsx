@@ -356,6 +356,12 @@ function restartCaretBlink(overlay: HTMLElement) {
 function isUnifiedCaretElement(
   target: EventTarget | null,
 ): target is EditableCaretElement {
+  if (
+    target instanceof HTMLElement &&
+    target.closest('[data-unified-caret-opt-out="true"]')
+  ) {
+    return false;
+  }
   if (target instanceof HTMLInputElement) {
     return supportsUnifiedCaret({
       disabled: target.disabled,

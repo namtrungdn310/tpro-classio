@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import Link from "next/link";
 import { RiReceiptLine as ReceiptText, RiCloseLine as X } from "react-icons/ri";
 import { DataSectionError } from "@/components/ui/data-section-state";
 import type {
@@ -12,6 +13,7 @@ import {
   getPaidReceiptActor,
   getPaidReceiptCode,
   getPaymentMethodLabel,
+  getPaymentOriginLabel,
   PAID_RECEIPT_REFUND_META,
   PAID_RECEIPT_TIMELINE_META,
 } from "@/lib/reports/paid-report-view-model";
@@ -20,6 +22,7 @@ import {
   formatDateTime,
   formatPeriod,
 } from "@/lib/utils/format";
+import { formatStudentCode } from "@/lib/students/student-code";
 
 type PaidReceiptDetailProps = {
   detail: FeePaidReceiptDetail | null;
@@ -185,7 +188,7 @@ function PaidReceiptDetailContent({
               </p>
               <ReceiptState state={detail.refund_state} />
             </div>
-            <p className="mt-1 text-[11px] font-medium tabular-nums tracking-[0.04em] text-slate-400">
+            <p className="mt-1 text-xs font-medium tabular-nums tracking-[0.04em] text-slate-500">
               {getPaidReceiptCode(detail.payment_operation_id)}
             </p>
           </div>
@@ -198,6 +201,14 @@ function PaidReceiptDetailContent({
           <p className="truncate text-[17px] font-semibold text-slate-950">
             {detail.student_name}
           </p>
+          {detail.student_code && detail.student_id ? (
+            <Link
+              href={`/students?student_id=${encodeURIComponent(detail.student_id)}`}
+              className="mt-1 inline-flex text-[13px] font-medium tabular-nums text-primary hover:underline"
+            >
+              {formatStudentCode(detail.student_code)}
+            </Link>
+          ) : null}
           <p className="mt-1 text-[13px] text-slate-500">
             {detail.period ? formatPeriod(detail.period) : "Nhiều kỳ học phí"} ·{" "}
             <time dateTime={detail.paid_at}>
@@ -233,6 +244,14 @@ function PaidReceiptDetailContent({
               label="Người ghi nhận"
               value={getPaidReceiptActor(detail)}
             />
+            <DetailFact
+              label="Nguồn ghi nhận"
+              value={getPaymentOriginLabel(detail.payment_origin)}
+            />
+            <DetailFact
+              label="Tài khoản nhận"
+              value={getSettlementAccountLabel(detail)}
+            />
           </dl>
 
           {state.tone === "gray" ? (
@@ -257,7 +276,7 @@ function PaidReceiptDetailContent({
                     <p className="truncate text-[13px] font-semibold text-slate-900">
                       {item.class_name}
                     </p>
-                    <p className="mt-0.5 text-[11px] text-slate-500">
+                    <p className="mt-0.5 text-xs text-slate-500">
                       {formatPeriod(item.period)}
                     </p>
                   </div>
@@ -266,7 +285,7 @@ function PaidReceiptDetailContent({
                   </p>
                 </div>
                 {item.refunded_amount > 0 ? (
-                  <p className="mt-1 text-right text-[11px] tabular-nums text-rose-700">
+                  <p className="mt-1 text-right text-xs tabular-nums text-rose-700">
                     Đã nhận {formatCurrency(item.gross_amount)} · hoàn{" "}
                     {formatCurrency(item.refunded_amount)}
                   </p>
@@ -295,6 +314,15 @@ function PaidReceiptDetailContent({
   );
 }
 
+function getSettlementAccountLabel(detail: FeePaidReceiptDetail) {
+  if (detail.payment_method === "cash") return "Tiền mặt";
+  if (!detail.settlement_bank_name) return "Chưa có thông tin";
+  const suffix = detail.settlement_account_number
+    ? ` · ••••${detail.settlement_account_number.slice(-4)}`
+    : "";
+  return `${detail.settlement_bank_name}${suffix}`;
+}
+
 function TimelineEntry({ entry }: { entry: FeePaidReceiptTimelineItem }) {
   const meta = PAID_RECEIPT_TIMELINE_META[entry.event];
 
@@ -310,7 +338,7 @@ function TimelineEntry({ entry }: { entry: FeePaidReceiptTimelineItem }) {
             <p className="text-[13px] font-semibold text-slate-800">
               {meta.label}
             </p>
-            <p className="mt-0.5 truncate text-[11px] text-slate-500">
+            <p className="mt-0.5 truncate text-xs text-slate-500">
               {entry.actor_name ||
                 entry.actor_username ||
                 "Dữ liệu lịch sử"}
@@ -324,7 +352,7 @@ function TimelineEntry({ entry }: { entry: FeePaidReceiptTimelineItem }) {
             </p>
             <time
               dateTime={entry.occurred_at}
-              className="mt-0.5 block text-[10px] tabular-nums text-slate-400"
+              className="mt-0.5 block text-xs tabular-nums text-slate-500"
             >
               {formatDateTime(entry.occurred_at)}
             </time>
@@ -364,7 +392,7 @@ function MoneyFact({
 function DetailFact({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
-      <dt className="text-[11px] font-medium text-slate-500">{label}</dt>
+      <dt className="text-xs font-medium text-slate-500">{label}</dt>
       <dd className="mt-0.5 truncate text-[13px] font-semibold text-slate-800">
         {value}
       </dd>
@@ -376,7 +404,7 @@ function ReceiptState({ state }: { state: FeePaidReceiptRefundState }) {
   const meta = PAID_RECEIPT_REFUND_META[state];
   return (
     <span
-      className={`inline-flex h-6 items-center rounded-full px-2 text-[11px] font-semibold ${getStateBadgeClass(meta.tone)}`}
+      className={`inline-flex h-6 items-center rounded-full px-2 text-xs font-semibold ${getStateBadgeClass(meta.tone)}`}
     >
       {meta.label}
     </span>

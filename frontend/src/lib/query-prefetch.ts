@@ -7,8 +7,8 @@ import { getDashboardOverview } from "@/lib/api/dashboard";
 import { getFeeMessageTemplates, getFeeRecords } from "@/lib/api/fees";
 import { getActiveTeacherOptions, getStaffMembers } from "@/lib/api/staff";
 import { staffQueryKeys } from "@/lib/staff/query-keys";
-import { getStudents } from "@/lib/api/students";
 import { getFeePaidReceipts } from "@/lib/api/reports";
+import { getBankingOverview } from "@/lib/api/banking";
 import type { FeePaidReceiptListResponse } from "@/lib/types";
 
 const ROOT_STALE_MS: Record<string, number> = {
@@ -20,6 +20,7 @@ const ROOT_STALE_MS: Record<string, number> = {
   reports: 30 * 1000,
   staff: 10 * 60 * 1000,
   students: 3 * 60 * 1000,
+  "banking-overview": 15 * 1000,
 };
 
 type PrefetchContext = {
@@ -86,12 +87,6 @@ export async function prefetchRouteData(
           getClasses({ scope: "enrollable" }),
         ),
       );
-      if (context.selectedStudentClassId) {
-        const filters = { class_id: context.selectedStudentClassId, status: "active" as const };
-        tasks.push(() =>
-          prefetchIfStale(queryClient, ["students", filters], () => getStudents(filters)),
-        );
-      }
       break;
     case "/classes":
       tasks.push(() =>
@@ -167,6 +162,13 @@ export async function prefetchRouteData(
     case "/settings":
       if (context.isOwner) {
         tasks.push(() => prefetchIfStale(queryClient, authQueryKeys.users, getUsers));
+      }
+      break;
+    case "/banking":
+      if (context.isAdmin) {
+        tasks.push(() =>
+          prefetchIfStale(queryClient, ["banking-overview"], getBankingOverview),
+        );
       }
       break;
     default:

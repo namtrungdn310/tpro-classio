@@ -8,6 +8,7 @@ import { getApiErrorMessage } from "@/lib/api/errors";
 import { useAuth } from "@/lib/hooks/useAuth";
 import { useToast } from "@/components/providers/toast-provider";
 import { LoadingLabel } from "@/components/ui/loading-label";
+import { PendingActionButton } from "@/components/ui/pending-action-button";
 
 const queryKey = ["attendance", "me", "today"] as const;
 
@@ -20,7 +21,6 @@ export default function AttendancePage() {
     queryFn: getAttendanceToday,
     enabled: user?.role === "teacher",
     staleTime: 30_000,
-    refetchOnWindowFocus: true,
   });
   const checkinMutation = useMutation({
     mutationFn: checkInAttendance,
@@ -95,9 +95,7 @@ export default function AttendancePage() {
                     {checked ? (
                       <div className="inline-flex min-h-11 items-center gap-2 self-start rounded-xl bg-emerald-50 px-3 text-sm font-semibold text-emerald-700 sm:self-auto"><RiCheckboxCircleLine aria-hidden className="h-5 w-5" /> Đã chấm công</div>
                     ) : (
-                      <button type="button" disabled={checkinMutation.isPending} onClick={() => checkinMutation.mutate(occurrence.occurrence_id)} className="min-h-11 self-stretch rounded-xl bg-gray-950 px-4 text-sm font-semibold text-white transition hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 disabled:cursor-not-allowed disabled:opacity-60 sm:self-auto">
-                        {checkinMutation.isPending ? <LoadingLabel label="Đang ghi nhận" /> : "Chấm công"}
-                      </button>
+                      <PendingActionButton type="button" isPending={checkinMutation.isPending} pendingLabel="Đang ghi nhận" onClick={() => checkinMutation.mutate(occurrence.occurrence_id)} className="min-h-11 self-stretch rounded-xl bg-gray-950 px-4 text-sm font-semibold text-white transition hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 disabled:cursor-not-allowed disabled:opacity-60 sm:self-auto">Chấm công</PendingActionButton>
                     )}
                   </div>
                 </article>

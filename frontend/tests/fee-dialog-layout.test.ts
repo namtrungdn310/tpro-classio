@@ -51,13 +51,28 @@ test("unpay target uses a compact segmented control matching staff type selectio
   );
 });
 
-test("refund method and reason share a compact responsive row", () => {
+test("bank-transfer refunds require an account in the compact responsive form", () => {
   assert.match(
     refundDialogSource,
-    /sm:grid-cols-\[248px_minmax\(0,1fr\)\]/,
+    /sm:grid-cols-2/,
   );
-  assert.match(refundDialogSource, /<legend[^>]*>[\s\S]*Hình thức hoàn/);
+  assert.match(
+    refundDialogSource,
+    /<FormField label="Hình thức hoàn" labelId="refund-method-label">/,
+  );
+  assert.match(
+    refundDialogSource,
+    /controlId="refund-settlement-account"[\s\S]*label="Tài khoản dùng để hoàn"/,
+  );
+  assert.match(refundDialogSource, /Tài khoản dùng để hoàn/);
+  assert.match(refundDialogSource, /settlement_account_id:/);
+  assert.match(refundDialogSource, /Hãy chọn tài khoản ngân hàng dùng để chuyển khoản hoàn phí/);
   assert.match(refundDialogSource, /<span[^>]*>[\s\S]*Lý do hoàn phí/);
+  assert.match(refundDialogSource, /<label className="block min-w-0 sm:col-span-2">/);
+  assert.match(
+    refundDialogSource,
+    /<textarea[\s\S]*?rows=\{2\}[\s\S]*?h-16 min-h-16 w-full resize-none py-2 leading-5/,
+  );
   assert.match(refundDialogSource, /h-8 bg-primary/);
   assert.match(refundDialogSource, /<SegmentedControl/);
   assert.match(refundDialogSource, /options=\{\[\.\.\.REFUND_METHODS\]\}/);
@@ -75,6 +90,14 @@ test("refund form omits the redundant total panel and reason example", () => {
     refundDialogSource,
     /Vui lòng nhập lý do hoàn phí có ít nhất 3 ký tự\./,
   );
+});
+
+test("refund-all action uses the shared compact button size", () => {
+  assert.match(
+    refundDialogSource,
+    /className="h-8 shrink-0 px-3 text-sm"[\s\S]*?>[\s\S]*?Hoàn toàn bộ/,
+  );
+  assert.doesNotMatch(refundDialogSource, /h-10 shrink-0 px-4 text-base/);
 });
 
 test("refund validation reports each required amount while the reason remains optional", () => {
@@ -104,14 +127,18 @@ test("refund reversal keeps invalid feedback live and exposes it accessibly", ()
   assert.doesNotMatch(refundDialogSource, /setReversalError\(null\)/);
 });
 
-test("fee page reaches first usable state before lazy refund history loads", () => {
+test("fee page preloads only the selected workspace refund history", () => {
   assert.match(
     feesPageSource,
-    /queryKey: \["fee-transactions", "period", \{ period, feeRecordIds \}\]/,
+    /"fee-transactions",[\s\S]*"refund-workspace",[\s\S]*groupKey: refundTarget\?\.group_key/,
   );
   assert.match(
     feesPageSource,
-    /feesQuery\.data !== undefined &&[\s\S]*refundTarget !== null/,
+    /queryFn: \(\) => loadFeeTransactionHistories\(refundFeeRecordIds\)/,
+  );
+  assert.match(
+    feesPageSource,
+    /activeFeeData !== undefined &&[\s\S]*refundTarget !== null &&[\s\S]*refundFeeRecordIds\.length > 0/,
   );
   assert.doesNotMatch(
     feesPageSource,

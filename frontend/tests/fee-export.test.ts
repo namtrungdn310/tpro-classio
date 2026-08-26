@@ -77,6 +77,29 @@ test("fee export identifies the duration of course-based tuition", () => {
   assert.equal(detail["Hình thức học phí"], "Theo gói · 12 tuần");
 });
 
+test("outstanding export keeps each record's original fee period", () => {
+  const groups = buildStudentFeeGroups(
+    [
+      feeRecord({ period: "2026-06" }),
+      feeRecord({
+        id: "07a649b7-4438-47aa-b858-3055267f27e1",
+        period: "2026-07",
+      }),
+    ],
+    { separatePeriods: true },
+  );
+  const outstandingContext = { ...context, period: "outstanding" };
+
+  assert.deepEqual(
+    buildFeeSummaryRows(groups, outstandingContext).map((row) => row["Kỳ thu"]),
+    ["Tháng 6/2026", "Tháng 7/2026"],
+  );
+  assert.deepEqual(
+    buildFeeDetailRows(groups, outstandingContext).map((row) => row["Kỳ thu"]),
+    ["Tháng 6/2026", "Tháng 7/2026"],
+  );
+});
+
 test("fee export leaves redacted contact pairs empty", () => {
   const group = buildStudentFeeGroups([
     feeRecord({
@@ -111,6 +134,7 @@ test("fee export includes immutable refund ledger details", () => {
             amount: -250_000,
             transaction_date: "2026-07-16",
             payment_method: "bank_transfer",
+            payment_origin: "manual",
             note: "Học viên dừng khóa học sớm",
             related_payment_id: "595f4526-5505-4255-8142-510e42f8b0b0",
             request_id: "147ed194-1ad7-4a52-be9e-df4ec709ba1d",

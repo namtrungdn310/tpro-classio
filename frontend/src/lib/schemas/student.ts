@@ -28,6 +28,7 @@ export const enrollmentResponseSchema = z.object({
   class_start_date: nullableDateSchema.default(null),
   class_end_date: nullableDateSchema.default(null),
   effective_fee: moneySchema,
+  selected_slot_ids: z.array(z.string().uuid()).default([]),
 });
 
 const studentEnrollmentInfoSchema = z.object({
@@ -43,6 +44,7 @@ const studentEnrollmentInfoSchema = z.object({
   effective_fee: moneySchema,
   enrollment_date: nullableDateSchema,
   status: z.enum(["active", "dropped", "completed", "cancelled"]),
+  selected_slot_ids: z.array(z.string().uuid()).default([]),
 });
 
 export const studentResponseSchema = z.object({
@@ -50,7 +52,7 @@ export const studentResponseSchema = z.object({
   // Response validation protects the transport shape, not write-time business
   // limits. Legacy rows can predate the current form constraints and must not
   // make the whole students page fail to render.
-  student_code: z.string().nullable().optional(),
+  student_code: z.string().regex(/^TP\d{9}$/),
   full_name: z.string(),
   birth_date: nullableDateSchema,
   school: z.string().nullable(),
@@ -62,7 +64,7 @@ export const studentResponseSchema = z.object({
   notes: z.string().nullable(),
   hidden_fields: z.array(studentHiddenFieldSchema).max(7),
   status: z.enum(["active", "inactive", "archived"]),
-  list_state: z.enum(["UNASSIGNED", "CURRENT", "FORMER", "ARCHIVED"]).default("UNASSIGNED"),
+  list_state: z.enum(["UNASSIGNED", "CURRENT", "STOPPED"]).default("UNASSIGNED"),
   archived_at: z.string().datetime({ offset: true }).nullable().default(null),
   archived_reason: z.string().nullable().default(null),
   classes: z.array(
@@ -72,14 +74,37 @@ export const studentResponseSchema = z.object({
     }),
   ),
   active_enrollments: z.array(studentEnrollmentInfoSchema),
+  last_enrollment: z.object({
+    class_id: z.string().uuid(),
+    class_name: z.string(),
+    status: z.enum(["active", "dropped", "completed", "cancelled"]),
+    enrollment_date: nullableDateSchema,
+    ended_at: z.string().datetime({ offset: true }).nullable(),
+    end_reason: z.string().nullable(),
+  }).nullable().default(null),
   created_at: z.string().datetime({ offset: true }),
+  updated_at: z.string().datetime({ offset: true }),
 });
 
 export const studentResponseListSchema = z.array(studentResponseSchema);
 
+export const studentListPageResponseSchema = z.object({
+  items: studentResponseListSchema,
+  next_cursor: z.string().uuid().nullable(),
+  has_more: z.boolean(),
+});
+
+export const studentScopeSummarySchema = z.object({
+  unassigned: z.number().int().nonnegative(),
+  current: z.number().int().nonnegative(),
+  stopped: z.number().int().nonnegative(),
+});
+
 export const studentIdentityCandidateSchema = z.object({
   id: z.string().uuid(),
-  status: z.enum(["active", "inactive"]),
+  student_code: z.string().regex(/^TP\d{9}$/),
+  status: z.enum(["active", "inactive", "archived"]),
+  list_state: z.enum(["UNASSIGNED", "CURRENT", "STOPPED"]),
   full_name: z.string().min(1),
   birth_date: nullableDateSchema,
   school: z.string().nullable(),

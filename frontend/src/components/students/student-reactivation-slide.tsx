@@ -272,16 +272,12 @@ export function StudentReactivationSlide({
                 Quay lại
               </button>
               <button
-                className="inline-flex h-9 min-w-[142px] items-center justify-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex h-9 items-center justify-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
                 disabled={isPending}
                 onClick={() => onCreateNew(candidateIds)}
                 type="button"
               >
-                <LoadingLabel
-                  idleLabel="Tạo hồ sơ mới"
-                  isLoading={isPending}
-                  label="Đang tạo"
-                />
+                {isPending ? <LoadingLabel label="Đang tạo" /> : "Tạo hồ sơ mới"}
               </button>
             </div>
           ) : (
@@ -304,7 +300,7 @@ export function StudentReactivationSlide({
                   Quay lại chỉnh sửa
                 </button>
                 <button
-                  className="inline-flex h-9 min-w-[174px] items-center justify-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex h-9 items-center justify-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
                   disabled={
                     isPending ||
                     !selectedCandidate ||
@@ -315,15 +311,13 @@ export function StudentReactivationSlide({
                   }}
                   type="button"
                 >
-                  <LoadingLabel
-                    idleLabel={
-                      selectedCandidate?.status === "inactive"
-                        ? `Khôi phục vào ${className}`
-                        : `Thêm vào ${className}`
-                    }
-                    isLoading={isPending}
-                    label="Đang xử lý"
-                  />
+                  {isPending ? (
+                    <LoadingLabel label="Đang xử lý" />
+                  ) : selectedCandidate?.status === "inactive" ? (
+                    `Khôi phục vào ${className}`
+                  ) : (
+                    `Thêm vào ${className}`
+                  )}
                 </button>
               </div>
             </div>

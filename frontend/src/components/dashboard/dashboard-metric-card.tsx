@@ -13,7 +13,7 @@ export function DashboardMetricCard({
 }: DashboardMetricCardProps) {
   return (
     <article
-      className="dashboard-metric-enter relative flex min-h-[82px] min-w-0 flex-col overflow-hidden rounded-[18px] border border-primary/10 bg-white px-3 py-2 shadow-[0_2px_14px_rgba(0,39,135,0.05)]"
+      className="dashboard-metric-enter relative flex min-h-[82px] min-w-0 flex-col overflow-hidden rounded-[18px] border border-slate-300 bg-white px-3 py-2 shadow-[0_2px_14px_rgba(15,23,42,0.06)]"
       style={{ animationDelay: `${delayMs}ms` }}
     >
       <span
@@ -21,7 +21,7 @@ export function DashboardMetricCard({
         className="absolute inset-x-3 top-0 h-[2px] rounded-b-full bg-primary"
       />
 
-      <h2 className="table-heading-text truncate text-gray-500">{label}</h2>
+      <h2 className="table-heading-text truncate text-slate-600">{label}</h2>
 
       <div className="mt-auto min-w-0 pt-1.5">
         <p
@@ -31,7 +31,7 @@ export function DashboardMetricCard({
           {value}
         </p>
         <p
-          className="mt-0.5 truncate text-[11px] font-medium leading-4 text-gray-500"
+          className="mt-0.5 truncate text-[12px] font-medium leading-4 text-slate-600"
           title={hint}
         >
           {hint}

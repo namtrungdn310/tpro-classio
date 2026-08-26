@@ -68,6 +68,10 @@ test("metric cards are compact, icon-free and use one restrained accent", () => 
   assert.doesNotMatch(dashboardSource, /featured/);
   assert.doesNotMatch(metricCardSource, /meta:/);
   assert.match(metricCardSource, /text-\[17px\]/);
+  assert.match(metricCardSource, /border-slate-300/);
+  assert.match(metricCardSource, /text-slate-600/);
+  assert.match(feeSummarySource, /border-slate-300/);
+  assert.match(feeSummarySource, /bg-slate-300/);
 });
 
 test("fee summary shows the collection rate with a creative bar and breakdown", () => {
@@ -91,7 +95,7 @@ test("fee summary shows the collection rate with a creative bar and breakdown", 
 });
 
 test("metric skeleton mirrors the compact cards and financial summary", () => {
-  assert.match(skeletonSource, /rounded-\[22px\] border border-gray-200 bg-white/);
+  assert.match(skeletonSource, /rounded-\[22px\] border border-slate-300 bg-white/);
   assert.doesNotMatch(skeletonSource, /\[72, 65, 48, 53, 31, 20\]/);
   assert.doesNotMatch(skeletonSource, /absolute inset-x-0 top-/);
   assert.doesNotMatch(skeletonSource, /rounded-\[17px\] border border-blue-100/);
@@ -113,4 +117,6 @@ test("overview schedule fits its panel without horizontal scrolling", () => {
   assert.doesNotMatch(weeklyScheduleSource, /overflow-x-auto|min-w-\[760px\]/);
   assert.match(weeklyScheduleSource, /grid-cols-\[56px_repeat\(7,minmax\(0,1fr\)\)\]/);
   assert.match(weeklyScheduleSource, /compactDayLabel/);
+  assert.match(weeklyScheduleSource, /border-slate-300/);
+  assert.match(weeklyScheduleSource, /border-slate-200/);
 });

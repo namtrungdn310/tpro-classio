@@ -7,39 +7,44 @@ import {
   RiCalendarCheckLine as CalendarCheck,
   RiCloseCircleLine as CloseCircle,
   RiPencilLine as Pencil,
+  RiShareForwardLine as ContinueClass,
 } from "react-icons/ri";
 import { ClassCancelContent } from "@/components/classes/class-cancel-content";
 import { ClassFormDialog } from "@/components/classes/class-form-dialog";
 import { ClassHistoryContent } from "@/components/classes/class-history-slide";
-import { ClassMakeupWorkspace, type MakeupAction } from "@/components/classes/class-makeup-workspace";
+import { ClassMakeupWorkspace } from "@/components/classes/class-makeup-workspace";
+import { ClassContinuationWorkspace } from "@/components/classes/class-continuation-workspace";
 import { ConfirmationDialog } from "@/components/ui/confirmation-dialog";
 import { DataSectionError } from "@/components/ui/data-section-state";
 import { FormDialogHeader } from "@/components/ui/form-dialog-header";
+import { LoadingLabel } from "@/components/ui/loading-label";
 import { useModalDialog } from "@/lib/hooks/useModalDialog";
 import { classQueryKeys } from "@/lib/classes/query-keys";
 import { getClassHistory } from "@/lib/api/classes";
 import { getApiErrorMessage } from "@/lib/api/errors";
 import { useQuery } from "@tanstack/react-query";
-import type { ClassHistory, ClassResponse, ClassUpdate, TeacherOptionResponse } from "@/lib/types";
+import type { ClassContinuationCreate, ClassHistory, ClassResponse, ClassUpdate, TeacherOptionResponse } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { formatDate } from "@/lib/utils/format";
 
-type WorkspaceMode = "edit" | "history" | "cancel" | "makeup";
+type WorkspaceMode = "edit" | "history" | "cancel" | "makeup" | "continuation";
 
 type ClassWorkspaceDialogProps = {
   class_: ClassResponse | null;
   initialMode: "edit" | "history" | "makeup";
   showModeRail: boolean;
+  canEdit: boolean;
+  canContinue: boolean;
   isSaving: boolean;
+  isContinuing: boolean;
   isDeleting: boolean;
   isTeachersError: boolean;
   isTeachersLoading: boolean;
   onClose: () => void;
   onRetryTeachers: () => void;
   onSubmit: (payload: ClassUpdate) => void;
+  onCreateContinuation: (payload: ClassContinuationCreate) => void;
   onCancelClass: () => void;
-  onMakeupAction?: (action: MakeupAction, exceptionId: string, payload: object) => void;
-  isMakeupSaving?: boolean;
   onPostponed?: () => void;
   teachers: TeacherOptionResponse[];
 };
@@ -48,23 +53,26 @@ const MODE_HEADERS: Record<WorkspaceMode, string> = {
   edit: "Sửa lớp học",
   history: "Hồ sơ lớp",
   cancel: "Hủy lớp",
-  makeup: "Hoãn / học bù",
+  makeup: "Hoãn lớp",
+  continuation: "Tạo lớp kế tiếp",
 };
 
 export function ClassWorkspaceDialog({
   class_,
   initialMode,
   showModeRail,
+  canEdit,
+  canContinue,
   isSaving,
+  isContinuing,
   isDeleting,
   isTeachersError,
   isTeachersLoading,
   onClose,
   onRetryTeachers,
   onSubmit,
+  onCreateContinuation,
   onCancelClass,
-  onMakeupAction,
-  isMakeupSaving = false,
   onPostponed,
   teachers,
 }: ClassWorkspaceDialogProps) {
@@ -100,16 +108,16 @@ export function ClassWorkspaceDialog({
   }, []);
 
   const requestClose = useCallback(() => {
-    if (dirty && !isSaving && !isDeleting) {
+    if (dirty && !isSaving && !isDeleting && !isContinuing) {
       setConfirmDiscardOpen(true);
       return;
     }
     onClose();
-  }, [dirty, isSaving, isDeleting, onClose]);
+  }, [dirty, isSaving, isDeleting, isContinuing, onClose]);
 
   const { backdropPointerDownRef, dialogRef, requestClose: requestShellClose } =
     useModalDialog({
-      isBusy: isSaving || isDeleting,
+      isBusy: isSaving || isDeleting || isContinuing,
       onClose: requestClose,
       suspended: nestedOverlayOpen || confirmDiscardOpen,
     });
@@ -193,6 +201,8 @@ export function ClassWorkspaceDialog({
       dirty={dirty}
       canCancel={Boolean(class_.can_cancel)}
       canMakeup={Boolean(class_.can_edit)}
+      canEdit={canEdit}
+      canContinue={canContinue}
       onSelect={changeMode}
     />
   ) : null;
@@ -229,7 +239,7 @@ export function ClassWorkspaceDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="class-workspace-title"
-        aria-busy={isSaving || isDeleting || undefined}
+        aria-busy={isSaving || isDeleting || isContinuing || undefined}
         tabIndex={-1}
         inert={nestedOverlayOpen || confirmDiscardOpen ? true : undefined}
         data-workspace-dismiss-surface="true"
@@ -242,9 +252,9 @@ export function ClassWorkspaceDialog({
               subtitle={headerSubtitle}
               titleId="class-workspace-title"
               onClose={requestShellClose}
-              closeDisabled={isSaving || isDeleting}
+              closeDisabled={isSaving || isDeleting || isContinuing}
             />
-            {rail ? <MobileModeRail mode={mode} dirty={dirty} canCancel={Boolean(class_.can_cancel)} canMakeup={Boolean(class_.can_edit)} onSelect={changeMode} /> : null}
+            {rail ? <MobileModeRail mode={mode} dirty={dirty} canCancel={Boolean(class_.can_cancel)} canMakeup={Boolean(class_.can_edit)} canEdit={canEdit} canContinue={canContinue} onSelect={changeMode} /> : null}
             <div
               id="class-workspace-panel"
               role="tabpanel"
@@ -255,7 +265,7 @@ export function ClassWorkspaceDialog({
                 leaving ? "workspace-panel-out" : animateIn ? "workspace-panel-in" : "",
               )}
             >
-            {showModeRail ? (
+            {showModeRail && canEdit ? (
               <div
                 data-workspace-mode="edit"
                 className={cn(
@@ -279,6 +289,31 @@ export function ClassWorkspaceDialog({
                   onRetryTeachers={onRetryTeachers}
                   onSubmit={onSubmit}
                   teachers={teachers}
+                />
+              </div>
+            ) : null}
+            {showModeRail && canContinue ? (
+              <div
+                data-workspace-mode="continuation"
+                className={cn(
+                  "absolute inset-0 flex min-h-0 flex-col",
+                  displayMode === "continuation" ? "z-10 opacity-100" : "pointer-events-none invisible z-0 opacity-0",
+                )}
+                aria-hidden={displayMode !== "continuation"}
+                inert={displayMode !== "continuation" ? true : undefined}
+              >
+                <ClassContinuationWorkspace
+                  sourceClass={class_}
+                  active={displayMode === "continuation"}
+                  teachers={teachers}
+                  isTeachersLoading={isTeachersLoading}
+                  isTeachersError={isTeachersError}
+                  isSaving={isContinuing}
+                  onClose={requestShellClose}
+                  onRetryTeachers={onRetryTeachers}
+                  onDirtyChange={setDirty}
+                  onNestedOverlayChange={setNestedOverlayOpen}
+                  onSubmit={onCreateContinuation}
                 />
               </div>
             ) : null}
@@ -357,15 +392,10 @@ export function ClassWorkspaceDialog({
               >
                 <ClassMakeupWorkspace
                   class_={class_}
-                  isSaving={isSaving || isMakeupSaving}
+                  isSaving={isSaving}
                   onClose={requestShellClose}
+                  onNestedOverlayChange={setNestedOverlayOpen}
                   onPostponed={onPostponed}
-                  onAction={
-                    onMakeupAction ??
-                    (() => {
-                      /* mode này chỉ mở khi có handler từ trang chủ */
-                    })
-                  }
                 />
               </div>
             ) : null}
@@ -399,18 +429,23 @@ function ClassWorkspaceRail({
   dirty,
   canCancel,
   canMakeup,
+  canEdit,
+  canContinue,
   onSelect,
 }: {
   mode: WorkspaceMode;
   dirty: boolean;
   canCancel: boolean;
   canMakeup: boolean;
+  canEdit: boolean;
+  canContinue: boolean;
   onSelect: (mode: WorkspaceMode) => void;
 }) {
   const items: Array<{ mode: WorkspaceMode; label: string; icon: React.ReactNode; danger?: boolean }> = [
     { mode: "history", label: "Xem hồ sơ", icon: <BookOpen className="h-[18px] w-[18px]" aria-hidden="true" /> },
-    { mode: "edit", label: "Sửa lớp", icon: <Pencil className="h-[18px] w-[18px]" aria-hidden="true" /> },
   ];
+  if (canEdit) items.push({ mode: "edit", label: "Sửa lớp", icon: <Pencil className="h-[18px] w-[18px]" aria-hidden="true" /> });
+  if (canContinue) items.push({ mode: "continuation", label: "Tạo lớp kế tiếp", icon: <ContinueClass className="h-[18px] w-[18px]" aria-hidden="true" /> });
   if (canMakeup) {
     items.push({ mode: "makeup", label: "Hoãn lớp", icon: <CalendarCheck className="h-[18px] w-[18px]" aria-hidden="true" /> });
   }
@@ -438,7 +473,7 @@ function ClassWorkspaceRail({
         const nextIndex = (currentIndex + direction + buttons.length) % buttons.length;
         buttons[nextIndex]?.focus();
       }}
-      className="flex w-[144px] shrink-0 flex-col gap-1 rounded-xl border border-gray-200 bg-white p-2 shadow-xl shadow-gray-900/15"
+      className="flex w-[176px] shrink-0 flex-col gap-1 rounded-xl border border-gray-200 bg-white p-2 shadow-xl shadow-gray-900/15"
     >
       {items.map((item) => (
         <RailTabButton
@@ -460,18 +495,23 @@ function MobileModeRail({
   dirty,
   canCancel,
   canMakeup,
+  canEdit,
+  canContinue,
   onSelect,
 }: {
   mode: WorkspaceMode;
   dirty: boolean;
   canCancel: boolean;
   canMakeup: boolean;
+  canEdit: boolean;
+  canContinue: boolean;
   onSelect: (mode: WorkspaceMode) => void;
 }) {
   const items: Array<{ mode: WorkspaceMode; label: string; icon: React.ReactNode; danger?: boolean }> = [
     { mode: "history", label: "Hồ sơ", icon: <BookOpen className="h-4 w-4" aria-hidden="true" /> },
-    { mode: "edit", label: "Sửa lớp", icon: <Pencil className="h-4 w-4" aria-hidden="true" /> },
   ];
+  if (canEdit) items.push({ mode: "edit", label: "Sửa lớp", icon: <Pencil className="h-4 w-4" aria-hidden="true" /> });
+  if (canContinue) items.push({ mode: "continuation", label: "Lớp kế tiếp", icon: <ContinueClass className="h-4 w-4" aria-hidden="true" /> });
   if (canMakeup) {
     items.push({ mode: "makeup", label: "Hoãn lớp", icon: <CalendarCheck className="h-4 w-4" aria-hidden="true" /> });
   }
@@ -483,7 +523,7 @@ function MobileModeRail({
     <div
       role="tablist"
       aria-label="Chế độ xem lớp"
-      className="flex shrink-0 items-center gap-1.5 border-b border-gray-200 bg-gray-100/60 px-3 py-1.5 min-[900px]:hidden"
+      className="scrollbar-hidden flex shrink-0 items-center gap-1.5 overflow-x-auto border-b border-gray-200 bg-gray-100/60 px-3 py-1.5 min-[900px]:hidden"
     >
       {items.map((item) => (
         <MobileRailTabButton
@@ -526,7 +566,7 @@ function RailTabButton({
       tabIndex={active ? 0 : -1}
       onClick={onSelect}
       className={cn(
-        "relative flex min-h-11 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[14px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40",
+        "font-ui relative flex h-11 min-h-11 w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 text-left text-[14px] font-semibold leading-5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40",
         active
           ? danger
             ? "bg-red-50 text-red-700"
@@ -538,7 +578,7 @@ function RailTabButton({
     >
       {active ? <span aria-hidden="true" className={cn("absolute inset-y-2 left-0.5 w-0.5 rounded-full", danger ? "bg-red-600" : "bg-primary")} /> : null}
       {icon}
-      <span className="min-w-0 flex-1 truncate">{label}</span>
+      <span className="min-w-0 flex-1 whitespace-nowrap">{label}</span>
       {dirty ? (
         <span aria-label="Có thay đổi chưa lưu" className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
       ) : null}
@@ -569,7 +609,7 @@ function MobileRailTabButton({
       aria-controls="class-workspace-panel"
       onClick={onSelect}
       className={cn(
-        "relative inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-[13px] font-semibold leading-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40",
+        "font-ui relative inline-flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2.5 text-[13px] font-semibold leading-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40",
         active
           ? danger
             ? "bg-red-600 text-white"
@@ -607,8 +647,8 @@ function HistoryPanel({
         Hồ sơ lớp {class_.primary_label}
       </h2>
       {isLoading ? (
-        <div className="flex min-h-48 items-center justify-center text-sm text-gray-600">
-          Đang tải lịch sử…
+        <div aria-busy="true" className="flex min-h-48 items-center justify-center text-sm font-medium text-gray-600">
+          <LoadingLabel label="Đang tải lịch sử" />
         </div>
       ) : null}
       {errorMessage ? (

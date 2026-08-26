@@ -3,6 +3,7 @@ import { getContactPairError } from "@/lib/forms/contact-pair";
 import { validationMessages } from "@/lib/forms/validation-messages";
 
 const PHONE_ALLOWED_CHARACTERS = /^[\d+().\s-]*$/;
+const EMAIL_PATTERN = /^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$/;
 
 const staffFormFields = {
   full_name: z
@@ -24,6 +25,33 @@ const staffFormFields = {
       (value) => !value || /^0(?:3|5|7|8|9)\d{8}$/.test(normalizeVietnamPhone(value)),
       validationMessages.phoneFormat,
     ),
+  email: z
+    .string()
+    .trim()
+    .max(320, "Email không được vượt quá 320 ký tự.")
+    .refine(
+      (value) => !value || EMAIL_PATTERN.test(value),
+      "Email nhân sự không hợp lệ.",
+    ),
+  checkin_window_hours: z
+    .union([z.number(), z.string()])
+    .optional()
+    .refine((val) => {
+      if (val === "" || val === null || val === undefined) return true;
+      const num = Number(val);
+      return !isNaN(num) && Number.isInteger(num) && num >= 0 && num <= 720;
+    }, "Số giờ phải từ 0 đến 720."),
+  checkin_window_minutes: z
+    .union([z.number(), z.string()])
+    .optional()
+    .refine((val) => {
+      if (val === "" || val === null || val === undefined) return true;
+      const num = Number(val);
+      return !isNaN(num) && Number.isInteger(num) && num >= 0 && num <= 59;
+    }, "Số phút phải từ 0 đến 59."),
+  checkin_window_after_hours: z
+    .number()
+    .optional(),
 };
 
 function buildStaffFormSchema(requireContact: boolean) {
@@ -43,6 +71,35 @@ function buildStaffFormSchema(requireContact: boolean) {
       });
     }
     addContactPairIssue(values.zalo_name, values.phone, context);
+
+    const hasExplicitHours = values.checkin_window_hours !== undefined && values.checkin_window_hours !== "";
+    const hasExplicitMinutes = values.checkin_window_minutes !== undefined && values.checkin_window_minutes !== "";
+
+    if (hasExplicitHours || hasExplicitMinutes) {
+      const h = hasExplicitHours ? Number(values.checkin_window_hours) : 24;
+      const m = hasExplicitMinutes ? Number(values.checkin_window_minutes) : 0;
+      if (h === 0 && m === 0) {
+        context.addIssue({
+          code: "custom",
+          path: ["checkin_window_hours"],
+          message: "Cửa sổ chấm công tối thiểu 1 phút.",
+        });
+      }
+    } else if (values.checkin_window_after_hours !== undefined) {
+      if (values.checkin_window_after_hours < 1) {
+        context.addIssue({
+          code: "custom",
+          path: ["checkin_window_after_hours"],
+          message: "Cửa sổ chấm công tối thiểu 1 giờ.",
+        });
+      } else if (values.checkin_window_after_hours > 720) {
+        context.addIssue({
+          code: "custom",
+          path: ["checkin_window_after_hours"],
+          message: "Cửa sổ chấm công tối đa 720 giờ.",
+        });
+      }
+    }
   });
 }
 
@@ -60,6 +117,12 @@ export const staffResponseSchema = z.object({
   staff_type: z.enum(["TEACHER", "ASSISTANT"]),
   zalo_name: z.string().trim().min(1).max(100).nullable(),
   phone: z.string().max(32).nullable(),
+  email: z.string().trim().max(320).nullable().nullish().default(null),
+  checkin_window_after_hours: z.number().int().min(1).max(720).default(24),
+  current_rate: z.number().int().nullable().nullish().default(null),
+  attendance_account_status: z
+    .enum(["connected", "disabled", "invited", "expired", "not_connected"])
+    .default("not_connected"),
   is_active: z.boolean(),
   assigned_classes: z
     .array(
@@ -83,6 +146,7 @@ export const teacherOptionResponseListSchema = z.array(
     id: z.string().uuid(),
     full_name: z.string().trim().min(1).max(255),
     staff_type: z.enum(["TEACHER", "ASSISTANT"]),
+    email: z.string().trim().max(320).nullable().nullish().default(null),
   }),
 );
 

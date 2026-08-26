@@ -1,6 +1,7 @@
 import type { IconType } from "react-icons";
 import {
   RiBarChartBoxLine,
+  RiBankLine,
   RiDashboardLine,
   RiFileList3Line,
   RiGraduationCapLine,
@@ -28,6 +29,7 @@ export const MAIN_NAVIGATION_ITEMS: readonly NavigationItem[] = [
     opticalSize: 19,
   },
   { href: "/fees", label: "Học phí", icon: RiFileList3Line },
+  { href: "/banking", label: "Ngân hàng", icon: RiBankLine },
   { href: "/report", label: "Báo cáo", icon: RiBarChartBoxLine },
 ];
 

@@ -87,13 +87,13 @@ export function WeeklyScheduleBoard({
   const detailSlotCount = detailSlots.length;
 
   return (
-    <div className={cn("grid min-h-[520px] gap-3 overflow-hidden", detailWidthClassName, className)}>
-      <div className="min-h-0 min-w-0 overflow-hidden rounded-lg border border-gray-200 bg-white">
+    <div className={cn("dashboard-schedule-board grid min-h-[520px] gap-3 overflow-hidden", detailWidthClassName, className)}>
+      <div className="min-h-0 min-w-0 overflow-hidden rounded-lg border border-slate-300 bg-white">
         <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
-        <div className="table-heading-text grid grid-cols-[56px_repeat(7,minmax(0,1fr))] border-b border-gray-200 bg-gray-100 text-center text-gray-800">
-          <div className="border-r border-gray-200 py-1">Giờ</div>
+        <div className="table-heading-text grid grid-cols-[56px_repeat(7,minmax(0,1fr))] border-b border-slate-300 bg-slate-100 text-center text-slate-800">
+          <div className="border-r border-slate-300 py-1">Giờ</div>
           {DAYS_OF_WEEK.map((day) => (
-            <div key={day} className="min-w-0 border-r border-gray-200 px-0.5 py-1 last:border-r-0">
+            <div key={day} className="min-w-0 border-r border-slate-300 px-0.5 py-1 last:border-r-0">
               <span className="hidden sm:inline">{day}</span>
               <span className="sm:hidden" aria-hidden="true">{compactDayLabel(day)}</span>
             </div>
@@ -104,8 +104,8 @@ export function WeeklyScheduleBoard({
           {TIME_BLOCKS.map((timeBlock, timeIndex) => (
             <div key={timeBlock} className="grid min-h-0 flex-1 grid-cols-[56px_repeat(7,minmax(0,1fr))] text-center text-xs">
               <div
-                className={`font-ui flex items-center justify-center border-r border-gray-200 bg-gray-100/70 text-[11px] font-medium leading-3 text-gray-600 ${
-                  timeIndex > 0 ? "border-t border-gray-100" : ""
+                className={`font-ui flex items-center justify-center border-r border-slate-300 bg-slate-100 text-[12px] font-medium leading-3 text-slate-600 ${
+                  timeIndex > 0 ? "border-t border-slate-200" : ""
                 }`}
               >
                 {formatTimeBlock(timeBlock)}
@@ -113,7 +113,7 @@ export function WeeklyScheduleBoard({
               {DAYS_OF_WEEK.map((day) => (
                 <div
                   key={day}
-                  className={`${timeIndex === 0 ? "" : "border-t"} border-r border-gray-100 last:border-r-0`}
+                  className={`${timeIndex === 0 ? "" : "border-t border-slate-200"} border-r border-slate-200 last:border-r-0`}
                 />
               ))}
             </div>
@@ -180,14 +180,14 @@ export function WeeklyScheduleBoard({
         </div>
       </div>
 
-      <aside className="flex min-h-0 flex-col rounded-lg border border-gray-200 bg-white">
-        <div className="border-b border-gray-200 px-3 py-3">
+      <aside className="flex min-h-0 flex-col rounded-lg border border-slate-300 bg-white">
+        <div className="border-b border-slate-200 px-3 py-3">
           <h3 className="section-title-text text-gray-900">
             {detailDay} - {detailSlotCount} ca
           </h3>
         </div>
         {detailSlots.length === 0 ? (
-          <p className="helper-text px-3 py-3 italic text-gray-400">
+          <p className="helper-text px-3 py-3 text-slate-600">
             Không có ca học trong ngày này.
           </p>
         ) : (
@@ -239,14 +239,14 @@ export function WeeklyScheduleBoardSkeleton({
         className,
       )}
     >
-      <div className="min-h-0 min-w-0 overflow-hidden rounded-lg border border-gray-200 bg-white">
+      <div className="min-h-0 min-w-0 overflow-hidden rounded-lg border border-slate-300 bg-white">
         <div className="flex h-full min-h-[518px] min-w-0 flex-col overflow-hidden">
-        <div className="grid grid-cols-[56px_repeat(7,minmax(0,1fr))] border-b border-gray-200 bg-gray-100 text-center">
-          <div className="border-r border-gray-200 px-3 py-2">
+        <div className="grid grid-cols-[56px_repeat(7,minmax(0,1fr))] border-b border-slate-300 bg-slate-100 text-center">
+          <div className="border-r border-slate-300 px-3 py-2">
             <div className="h-3 rounded bg-gray-200" />
           </div>
           {DAYS_OF_WEEK.map((day) => (
-            <div key={day} className="min-w-0 border-r border-gray-200 px-1 py-2 last:border-r-0">
+            <div key={day} className="min-w-0 border-r border-slate-300 px-1 py-2 last:border-r-0">
               <div className="mx-auto h-3 max-w-[56px] rounded bg-gray-200" />
             </div>
           ))}
@@ -256,8 +256,8 @@ export function WeeklyScheduleBoardSkeleton({
           {TIME_BLOCKS.map((timeBlock, timeIndex) => (
             <div key={timeBlock} className="grid flex-1 grid-cols-[56px_repeat(7,minmax(0,1fr))] text-center text-xs">
               <div
-                className={`flex items-center justify-center border-r border-gray-200 bg-gray-100/70 px-2 ${
-                  timeIndex > 0 ? "border-t border-gray-100" : ""
+                className={`flex items-center justify-center border-r border-slate-300 bg-slate-100 px-2 ${
+                  timeIndex > 0 ? "border-t border-slate-200" : ""
                 }`}
               >
                 <div className="h-3 w-10 rounded bg-gray-200" />
@@ -265,7 +265,7 @@ export function WeeklyScheduleBoardSkeleton({
               {DAYS_OF_WEEK.map((day) => (
                 <div
                   key={day}
-                  className={`${timeIndex === 0 ? "" : "border-t"} border-r border-gray-100 last:border-r-0`}
+                  className={`${timeIndex === 0 ? "" : "border-t border-slate-200"} border-r border-slate-200 last:border-r-0`}
                 />
               ))}
             </div>
@@ -280,7 +280,7 @@ export function WeeklyScheduleBoardSkeleton({
           ].map((slot, index) => (
             <div
               key={index}
-              className="absolute rounded-md border border-gray-200 bg-gray-100 shadow-sm"
+              className="absolute rounded-md border border-slate-300 bg-slate-100 shadow-sm"
               style={{
                 left: `calc(${TIME_COLUMN_WIDTH}px + ((100% - ${TIME_COLUMN_WIDTH}px) / 7) * ${slot.dayIndex} + 4px)`,
                 top: `calc(${slot.top} + 2px)`,
@@ -293,15 +293,15 @@ export function WeeklyScheduleBoardSkeleton({
         </div>
       </div>
 
-      <aside className="flex min-h-0 flex-col rounded-lg border border-gray-200 bg-white">
-        <div className="border-b border-gray-200 px-3 py-3">
+      <aside className="flex min-h-0 flex-col rounded-lg border border-slate-300 bg-white">
+        <div className="border-b border-slate-200 px-3 py-3">
           <div className="h-5 w-24 rounded bg-gray-200" />
         </div>
         <div className="flex flex-1 flex-col gap-2 p-2">
           {Array.from({ length: 4 }).map((_, index) => (
-            <div key={index} className="rounded-md border border-gray-200 bg-gray-50 px-2 py-2">
+            <div key={index} className="rounded-md border border-slate-200 bg-slate-50 px-2 py-2">
               <div className="h-4 rounded bg-gray-200" />
-              <div className="mt-2 h-3 w-3/4 rounded bg-gray-100" />
+              <div className="mt-2 h-3 w-3/4 rounded bg-slate-200" />
             </div>
           ))}
         </div>

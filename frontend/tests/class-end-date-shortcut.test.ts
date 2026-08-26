@@ -6,18 +6,30 @@ import {
   getSuggestedClassEndDate,
 } from "../src/lib/classes/end-date-shortcut";
 
-test("monthly shortcut follows the backend EOM minimum semantics", () => {
+test("monthly shortcut follows the independent calendar-month end date", () => {
   assert.equal(
     getSuggestedClassEndDate({ startDate: "2026-08-13", type: "MONTHLY", count: 1 }),
-    "2026-09-14",
+    "2026-09-13",
   );
   assert.equal(
     getSuggestedClassEndDate({ startDate: "2027-01-31", type: "MONTHLY", count: 1 }),
-    "2027-03-01",
+    "2027-02-28",
   );
   assert.equal(
     getSuggestedClassEndDate({ startDate: "2026-08-13", type: "MONTHLY", count: 3 }),
-    "2026-11-14",
+    "2026-11-13",
+  );
+  assert.equal(
+    getSuggestedClassEndDate({ startDate: "2026-08-16", type: "MONTHLY", count: 12 }),
+    "2027-08-16",
+  );
+  assert.equal(
+    getExactEndDateShortcutCount({
+      startDate: "2026-08-16",
+      endDate: "2027-08-16",
+      type: "MONTHLY",
+    }),
+    12,
   );
 });
 

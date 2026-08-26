@@ -1,9 +1,17 @@
-import { StrictMode, useCallback, useEffect, useState } from "react";
+import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ClassMakeupWorkspace } from "@/components/classes/class-makeup-workspace";
 import { classQueryKeys } from "@/lib/classes/query-keys";
-import type { ClassResponse, ClassSessionExceptionResponse } from "@/lib/types";
+import type { ClassResponse } from "@/lib/types";
+
+function daysFromNow(days: number): string {
+  const now = new Date();
+  now.setDate(now.getDate() + days);
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
+    now.getDate(),
+  ).padStart(2, "0")}`;
+}
 
 const mockClass: ClassResponse = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -12,8 +20,8 @@ const mockClass: ClassResponse = {
   base_fee: 750000,
   billing_cycle_months: 1,
   billing_cycle_weeks: null,
-  start_date: "2026-08-27",
-  end_date: "2027-06-06",
+  start_date: daysFromNow(-30),
+  end_date: daysFromNow(120),
   identity_scheme: "ACADEMIC_YEAR",
   class_category: "GENERAL",
   grade_mode: "GRADE",
@@ -46,76 +54,24 @@ const mockClass: ClassResponse = {
   unresolved_makeup_count: 2,
 };
 
-function daysFromNow(days: number): string {
-  const now = new Date();
-  now.setDate(now.getDate() + days);
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
-    now.getDate(),
-  ).padStart(2, "0")}`;
-}
-
-function isoAtLocal(date: string, hour: number): string {
-  const [year, month, day] = date.split("-").map(Number);
-  return new Date(year, month - 1, day, hour).toISOString();
-}
-
-const pendingException: ClassSessionExceptionResponse = {
-  id: "22222222-2222-4222-8222-222222222222",
-  adjustment_id: "33333333-3333-4333-8333-333333333333",
-  class_id: mockClass.id,
-  original_start_at: isoAtLocal(daysFromNow(3), 18),
-  original_end_at: isoAtLocal(daysFromNow(3), 19),
-  original_timezone: "Asia/Ho_Chi_Minh",
-  status: "MAKEUP_PENDING",
-  display_status: "MAKEUP_PENDING",
-  replacement_start_at: null,
-  replacement_end_at: null,
-  completed_at: null,
-  restored_at: null,
-  version: 1,
-  staff: [
-    {
-      staff_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-      role: "TEACHER",
-      display_name: "Cô Hạnh",
-      source_slot_key: "Thứ 2|18:00|19:00",
-    },
-  ],
-  eligible_student_count: 3,
-  billing_impact: "NONE",
-  created_at: "2026-01-01T00:00:00.000Z",
-  updated_at: "2026-01-01T00:00:00.000Z",
-};
-
-declare global {
-  interface Window {
-    __makeupTest?: {
-      getState: () => {
-        actions: Array<{ action: string; exceptionId: string }>;
-        open: boolean;
-      };
-      close: () => void;
-    };
-  }
-}
-
 function Harness() {
   const [open, setOpen] = useState(true);
-  const [actions, setActions] = useState<Array<{ action: string; exceptionId: string }>>([]);
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
 
+  // The end date is intentionally blank on first render. The test selects
+  // today + 14 days, so seed the exact date-range query key that follows.
   const from = daysFromNow(0);
   const to = daysFromNow(14);
   queryClient.setQueryData(classQueryKeys.occurrences(mockClass.id, { from, to }), {
     class_id: mockClass.id,
     occurrences: [
       {
-        key: `${mockClass.id}:${isoAtLocal(daysFromNow(3), 18)}`,
+        key: `${mockClass.id}:${new Date(`${daysFromNow(3)}T18:00:00`).toISOString()}`,
         kind: "REGULAR",
-        original_start_at: isoAtLocal(daysFromNow(3), 18),
-        original_end_at: isoAtLocal(daysFromNow(3), 19),
+        original_start_at: new Date(`${daysFromNow(3)}T18:00:00`).toISOString(),
+        original_end_at: new Date(`${daysFromNow(3)}T19:00:00`).toISOString(),
         source_slot_key: "Thứ 2|18:00|19:00",
         teacher_ids: [],
         assistant_ids: [],
@@ -128,10 +84,10 @@ function Harness() {
         passed: false,
       },
       {
-        key: `${mockClass.id}:${isoAtLocal(daysFromNow(5), 18)}`,
+        key: `${mockClass.id}:${new Date(`${daysFromNow(5)}T18:00:00`).toISOString()}`,
         kind: "REGULAR",
-        original_start_at: isoAtLocal(daysFromNow(5), 18),
-        original_end_at: isoAtLocal(daysFromNow(5), 19),
+        original_start_at: new Date(`${daysFromNow(5)}T18:00:00`).toISOString(),
+        original_end_at: new Date(`${daysFromNow(5)}T19:00:00`).toISOString(),
         source_slot_key: "Thứ 2|18:00|19:00",
         teacher_ids: [],
         assistant_ids: [],
@@ -145,20 +101,17 @@ function Harness() {
       },
     ],
   });
-  queryClient.setQueryData(classQueryKeys.adjustments(mockClass.id, {}), {
-    adjustments: [],
-    exceptions: [pendingException],
+  queryClient.setQueryData(classQueryKeys.suspensionPreview(mockClass.id, from, to), {
+    class_id: mockClass.id,
+    suspended_from: from,
+    resume_on: to,
+    credit_days: 14,
+    member_summary: [
+      { enrollment_id: "55555555-5555-4555-8555-555555555555", overlap_days: 14 },
+    ],
+    target_cycle_count: 1,
+    protected_case_count: 0,
   });
-
-  const getState = useCallback(() => ({ actions, open }), [actions, open]);
-
-  useEffect(() => {
-    window.__makeupTest = {
-      getState,
-      close: () => setOpen(false),
-    };
-  }, [getState]);
-
   if (!open) {
     return null;
   }
@@ -170,9 +123,6 @@ function Harness() {
           class_={mockClass}
           isSaving={false}
           onClose={() => setOpen(false)}
-          onAction={(action, exceptionId) =>
-            setActions((previous) => [...previous, { action, exceptionId }])
-          }
         />
       </QueryClientProvider>
     </StrictMode>

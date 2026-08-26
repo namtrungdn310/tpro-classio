@@ -31,6 +31,7 @@ type DeriveFeeViewModelOptions = {
   matchesFeeSearch: (corpus: PreparedSearchCorpus) => boolean;
   unpaidStage: UnpaidStage;
   classes: FeeClass[];
+  separatePeriods?: boolean;
 };
 
 export function indexFeeRecords(records: FeeRecordResponse[]): IndexedFeeRecord[] {
@@ -38,6 +39,7 @@ export function indexFeeRecords(records: FeeRecordResponse[]): IndexedFeeRecord[
     record,
     searchCorpus: prepareSearchCorpus([
       record.student_name,
+      record.student_code,
       record.class_name,
       record.student_phone,
       record.student_zalo,
@@ -57,8 +59,13 @@ export function deriveFeeViewModel({
   matchesFeeSearch,
   unpaidStage,
   classes,
+  separatePeriods = false,
 }: DeriveFeeViewModelOptions) {
   const records = indexedRecords.map(({ record }) => record);
+  const summaryRecords =
+    classId === ""
+      ? records
+      : records.filter((record) => record.class_id === classId);
   const searchedRecords = indexedRecords
     .filter(({ searchCorpus }) => matchesFeeSearch(searchCorpus))
     .map(({ record }) => record);
@@ -77,7 +84,7 @@ export function deriveFeeViewModel({
   let notified = 0;
   let paid = 0;
 
-  for (const record of records) {
+  for (const record of summaryRecords) {
     total += record.final_amount;
 
     if (record.notification_state === "PAID") {
@@ -109,9 +116,16 @@ export function deriveFeeViewModel({
     }
   }
 
-  const paidGroups = buildStudentFeeGroups(paidRecords);
-  const unnotifiedGroups = buildStudentFeeGroups(unnotifiedRecords);
-  const notifiedUnpaidGroups = buildStudentFeeGroups(notifiedUnpaidRecords);
+  const groupingOptions = { separatePeriods };
+  const paidGroups = buildStudentFeeGroups(paidRecords, groupingOptions);
+  const unnotifiedGroups = buildStudentFeeGroups(
+    unnotifiedRecords,
+    groupingOptions,
+  );
+  const notifiedUnpaidGroups = buildStudentFeeGroups(
+    notifiedUnpaidRecords,
+    groupingOptions,
+  );
 
   const activeGroups =
     activeTab === "paid"
@@ -139,7 +153,7 @@ export function deriveFeeViewModel({
     notified,
     paid,
     refunded,
-    recordCount: records.length,
+    recordCount: summaryRecords.length,
     outstanding,
   };
 

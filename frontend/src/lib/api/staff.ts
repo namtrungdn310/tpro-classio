@@ -14,6 +14,11 @@ const payrollRateSchema = z.object({
 const payrollSettlementSchema = z.object({
   id: z.string().uuid(), total_amount: z.number().int(), cutoff_at: z.string(),
   method: z.string(), reference: z.string().nullable(), created_at: z.string(),
+  settlement_account_id: z.string().uuid().nullable().default(null),
+  settlement_bank_code: z.string().nullable().default(null),
+  settlement_bank_name: z.string().nullable().default(null),
+  settlement_account_number: z.string().nullable().default(null),
+  settlement_account_name: z.string().nullable().default(null),
   reversed_at: z.string().nullable(),
 });
 const payrollSettlementReversalSchema = z.object({
@@ -25,6 +30,52 @@ const payrollSummarySchema = z.object({
   rates: z.array(payrollRateSchema), settlements: z.array(payrollSettlementSchema),
 });
 export type StaffPayrollSummary = z.infer<typeof payrollSummarySchema>;
+
+const attendanceHistoryItemSchema = z.object({
+  attendance_id: z.string().uuid(),
+  class_name: z.string().nullable(),
+  role: z.string(),
+  occurrence_start_at: z.string(),
+  occurrence_end_at: z.string(),
+  kind: z.string(),
+  checkin_at: z.string(),
+  rate_amount: z.number().int(),
+  rate_version: z.number().int(),
+  reversed_at: z.string().nullable().nullish().default(null),
+  reversal_reason: z.string().nullable().nullish().default(null),
+});
+const attendanceHistorySchema = z.object({
+  staff_id: z.string().uuid(),
+  items: z.array(attendanceHistoryItemSchema),
+});
+export type StaffAttendanceHistory = z.infer<typeof attendanceHistorySchema>;
+
+const manualAttendanceTargetSchema = z.object({
+  occurrence_id: z.string().uuid(),
+  class_name: z.string(),
+  role: z.string(),
+  occurrence_start_at: z.string(),
+  occurrence_end_at: z.string(),
+  kind: z.string(),
+  rate_amount: z.number().int().nullable(),
+});
+export type ManualAttendanceTarget = z.infer<typeof manualAttendanceTargetSchema>;
+
+const attendanceCheckInSchema = z.object({
+  attendance_id: z.string().uuid(),
+  status: z.literal("CHECKED_IN"),
+  checkin_at: z.string(),
+  rate_amount: z.number().int(),
+  occurrence_start_at: z.string(),
+});
+export type AttendanceCheckIn = z.infer<typeof attendanceCheckInSchema>;
+
+const attendanceReversalSchema = z.object({
+  attendance_id: z.string().uuid(),
+  reversed_at: z.string(),
+  reason: z.string(),
+});
+export type AttendanceReversal = z.infer<typeof attendanceReversalSchema>;
 
 type GetStaffParams = {
   staff_type?: StaffType;
@@ -64,6 +115,40 @@ export async function getStaffPayroll(id: string): Promise<StaffPayrollSummary> 
   return payrollSummarySchema.parse(data);
 }
 
+export async function getStaffAttendanceHistory(
+  id: string,
+): Promise<StaffAttendanceHistory> {
+  const { data } = await apiClient.get(`/staff/${id}/attendance-history`);
+  return attendanceHistorySchema.parse(data);
+}
+
+export async function getManualAttendanceTargets(
+  id: string,
+): Promise<ManualAttendanceTarget[]> {
+  const { data } = await apiClient.get(`/staff/${id}/attendance/manual-targets`);
+  return z.array(manualAttendanceTargetSchema).parse(data);
+}
+
+export async function createManualAttendance(
+  id: string,
+  payload: { occurrence_id: string; request_id: string; reason?: string | null },
+): Promise<AttendanceCheckIn> {
+  const { data } = await apiClient.post(`/staff/${id}/attendance/manual`, payload);
+  return attendanceCheckInSchema.parse(data);
+}
+
+export async function reverseAttendance(
+  staffId: string,
+  attendanceId: string,
+  payload: { request_id: string; reason: string },
+): Promise<AttendanceReversal> {
+  const { data } = await apiClient.post(
+    `/staff/${staffId}/attendance/${attendanceId}/reversal`,
+    payload,
+  );
+  return attendanceReversalSchema.parse(data);
+}
+
 export async function createStaffCompensationRate(
   id: string,
   payload: { rate_amount: number; effective_from: string; effective_to?: string | null },
@@ -74,7 +159,12 @@ export async function createStaffCompensationRate(
 
 export async function settleStaffPayroll(
   id: string,
-  payload: { request_id: string; method: "bank_transfer" | "cash"; reference?: string | null },
+  payload: {
+    request_id: string;
+    method: "bank_transfer" | "cash";
+    settlement_account_id?: string | null;
+    reference?: string | null;
+  },
 ) {
   const { data } = await apiClient.post(`/staff/${id}/payroll/settlements`, payload);
   return payrollSettlementSchema.parse(data);

@@ -1,23 +1,45 @@
 "use client";
 
+import type {
+  ClassResponse,
+  StaffAttendanceAccountStatus,
+  StaffResponse,
+} from "@/lib/types";
 import { useClickableRowProps } from "@/lib/ui/click-guard";
+import { formatCurrency } from "@/lib/utils/format";
 import { getStaffTypeLabel, type PreparedStaffRecord } from "@/lib/staff/presentation";
+import {
+  getClassAssistantIds,
+  getClassScheduleSlots,
+  getClassScheduleText,
+  getClassTeacherIds,
+  getSlotEffectiveAssistantIds,
+  getSlotEffectiveTeacherIds,
+  normalizeClassScheduleSlots,
+} from "@/lib/classes/presentation";
 
 export const STAFF_MANAGER_GRID =
-  "w-full min-w-0 grid-cols-[minmax(170px,1fr)_minmax(220px,1.25fr)_minmax(300px,1.7fr)_minmax(132px,.72fr)]";
+  "w-full min-w-0 grid-cols-[minmax(140px,0.9fr)_minmax(170px,1fr)_minmax(240px,1.6fr)_minmax(200px,1.1fr)_minmax(120px,0.7fr)]";
 export const STAFF_PRIVATE_VIEWER_GRID =
-  "w-full min-w-0 grid-cols-[minmax(180px,1fr)_minmax(230px,1.25fr)_minmax(320px,1.8fr)_minmax(140px,.75fr)]";
+  "w-full min-w-0 grid-cols-[minmax(180px,1fr)_minmax(220px,1fr)_minmax(340px,2fr)]";
 export const STAFF_PUBLIC_VIEWER_GRID =
-  "w-full min-w-0 grid-cols-[minmax(190px,1fr)_minmax(320px,1.8fr)_minmax(150px,.8fr)]";
+  "w-full min-w-0 grid-cols-[minmax(200px,1fr)_minmax(360px,2.2fr)]";
 
 type StaffTableProps = {
   canManage: boolean;
   canViewPrivate: boolean;
+  classesById?: Map<string, ClassResponse>;
   onRowClick: (record: PreparedStaffRecord) => void;
   records: PreparedStaffRecord[];
 };
 
-export function StaffTable({ canManage, canViewPrivate, onRowClick, records }: StaffTableProps) {
+export function StaffTable({
+  canManage,
+  canViewPrivate,
+  classesById,
+  onRowClick,
+  records,
+}: StaffTableProps) {
   const gridClass = canManage
     ? STAFF_MANAGER_GRID
     : canViewPrivate
@@ -32,6 +54,7 @@ export function StaffTable({ canManage, canViewPrivate, onRowClick, records }: S
             key={record.staff.id}
             canManage={canManage}
             canViewPrivate={canViewPrivate}
+            classesById={classesById}
             onRowClick={() => onRowClick(record)}
             record={record}
           />
@@ -48,7 +71,8 @@ export function StaffTable({ canManage, canViewPrivate, onRowClick, records }: S
             <ColumnHeader>Nhân sự</ColumnHeader>
             {canViewPrivate ? <ColumnHeader>Thông tin nhân sự</ColumnHeader> : null}
             <ColumnHeader>Lớp phụ trách</ColumnHeader>
-            <ColumnHeader>Trạng thái</ColumnHeader>
+            {canManage ? <ColumnHeader>Kết nối Email (Chấm công)</ColumnHeader> : null}
+            {canManage ? <ColumnHeader>Thù lao</ColumnHeader> : null}
           </div>
         </div>
 
@@ -63,6 +87,7 @@ export function StaffTable({ canManage, canViewPrivate, onRowClick, records }: S
                 key={staff.id}
                 canManage={canManage}
                 canViewPrivate={canViewPrivate}
+                classesById={classesById}
                 gridClass={gridClass}
                 onRowClick={() => onRowClick(record)}
                 record={record}
@@ -78,12 +103,14 @@ export function StaffTable({ canManage, canViewPrivate, onRowClick, records }: S
 function StaffTableRow({
   canManage,
   canViewPrivate,
+  classesById,
   gridClass,
   onRowClick,
   record,
 }: {
   canManage: boolean;
   canViewPrivate: boolean;
+  classesById?: Map<string, ClassResponse>;
   gridClass: string;
   onRowClick: () => void;
   record: PreparedStaffRecord;
@@ -115,11 +142,18 @@ function StaffTableRow({
         </DataCell>
       ) : null}
       <DataCell className="text-gray-700">
-        <ClassAssignments record={record} />
+        <ClassAssignments record={record} classesById={classesById} />
       </DataCell>
-      <DataCell>
-        <ActivityStatus isActive={staff.is_active} />
-      </DataCell>
+      {canManage ? (
+        <DataCell className="text-gray-700">
+          <AttendanceEmailConnection staff={staff} />
+        </DataCell>
+      ) : null}
+      {canManage ? (
+        <DataCell className="text-gray-700">
+          <RateCell currentRate={staff.current_rate} />
+        </DataCell>
+      ) : null}
     </div>
   );
 }
@@ -127,11 +161,13 @@ function StaffTableRow({
 function StaffCard({
   canManage,
   canViewPrivate,
+  classesById,
   onRowClick,
   record,
 }: {
   canManage: boolean;
   canViewPrivate: boolean;
+  classesById?: Map<string, ClassResponse>;
   onRowClick: () => void;
   record: PreparedStaffRecord;
 }) {
@@ -165,25 +201,85 @@ function StaffCard({
             <dd className="mt-1 text-gray-700"><ContactSummary record={record} /></dd>
           </div>
         ) : null}
-        <div className="min-w-0">
-          <dt className="table-heading-text select-none text-gray-500">Trạng thái</dt>
-          <dd className="mt-1"><ActivityStatus isActive={staff.is_active} /></dd>
-        </div>
+        {canManage ? (
+          <div className="min-w-0">
+            <dt className="table-heading-text select-none text-gray-500">
+              Kết nối Email (Chấm công)
+            </dt>
+            <dd className="mt-1">
+              <AttendanceEmailConnection staff={staff} />
+            </dd>
+          </div>
+        ) : null}
+        {canManage ? (
+          <div className="min-w-0">
+            <dt className="table-heading-text select-none text-gray-500">Thù lao</dt>
+            <dd className="mt-1"><RateCell currentRate={staff.current_rate} /></dd>
+          </div>
+        ) : null}
         <div className="min-w-0 sm:col-span-2">
           <dt className="table-heading-text select-none text-gray-500">Lớp phụ trách</dt>
-          <dd className="mt-1 text-gray-700"><ClassAssignments record={record} /></dd>
+          <dd className="mt-1 text-gray-700"><ClassAssignments record={record} classesById={classesById} /></dd>
         </div>
       </dl>
     </article>
   );
 }
 
-function ClassAssignments({ record }: { record: PreparedStaffRecord }) {
+export function formatStaffAssignedClassSchedule(
+  class_: ClassResponse,
+  staff: StaffResponse,
+): string {
+  const allSlots = normalizeClassScheduleSlots(getClassScheduleSlots(class_));
+  if (allSlots.length === 0) {
+    return getClassScheduleText(class_);
+  }
+
+  const staffSlots = allSlots.filter((slot) => {
+    if (staff.staff_type === "TEACHER") {
+      const teacherIds = getSlotEffectiveTeacherIds(slot, getClassTeacherIds(class_));
+      return teacherIds.includes(staff.id);
+    }
+    const assistantIds = getSlotEffectiveAssistantIds(slot);
+    if (slot.assistant_ids !== undefined) {
+      return assistantIds.includes(staff.id);
+    }
+    return getClassAssistantIds(class_).includes(staff.id);
+  });
+
+  const targetSlots = staffSlots.length > 0 ? staffSlots : allSlots;
+  return targetSlots
+    .map((slot) => `${slot.day} (${slot.start}–${slot.end})`)
+    .join(", ");
+}
+
+function ClassAssignments({
+  record,
+  classesById,
+}: {
+  record: PreparedStaffRecord;
+  classesById?: Map<string, ClassResponse>;
+}) {
   if (record.activeClasses.length === 0) return <EmptyValue />;
+
   return (
-    <span className="block break-words">
-      {record.activeClasses.map((class_) => class_.name).join(", ")}
-    </span>
+    <div className="space-y-1 py-0.5">
+      {record.activeClasses.map((classItem) => {
+        const fullClass = classesById?.get(classItem.id);
+        const scheduleLabel = fullClass
+          ? formatStaffAssignedClassSchedule(fullClass, record.staff)
+          : null;
+
+        return (
+          <div key={classItem.id} className="text-[13px] leading-snug break-words">
+            <span className="font-semibold text-gray-950">{classItem.name}</span>
+            {scheduleLabel ? (
+              <span className="font-normal text-gray-600">: {scheduleLabel}</span>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -198,20 +294,48 @@ function ContactSummary({ record }: { record: PreparedStaffRecord }) {
   );
 }
 
-function ActivityStatus({ isActive }: { isActive: boolean }) {
-  if (isActive) {
+const ATTENDANCE_ACCOUNT_LABELS: Record<
+  StaffAttendanceAccountStatus,
+  { dotClass: string; label: string }
+> = {
+  connected: { dotClass: "bg-emerald-500", label: "Đã kết nối" },
+  disabled: { dotClass: "bg-red-500", label: "Tài khoản bị vô hiệu hóa" },
+  invited: { dotClass: "bg-amber-500", label: "Đã gửi lời mời" },
+  expired: { dotClass: "bg-orange-500", label: "Lời mời hết hạn" },
+  not_connected: { dotClass: "bg-gray-300", label: "Chưa kết nối" },
+};
+
+function AttendanceEmailConnection({ staff }: { staff: StaffResponse }) {
+  const status = ATTENDANCE_ACCOUNT_LABELS[staff.attendance_account_status];
+  return (
+    <div className="min-w-0">
+      <p className="flex items-center gap-1.5 text-[13px] font-semibold leading-5 text-gray-800">
+        <span aria-hidden="true" className={`h-2 w-2 shrink-0 rounded-full ${status.dotClass}`} />
+        {status.label}
+      </p>
+      {staff.email ? (
+        <p className="break-all text-[13px] font-normal leading-5 text-gray-600">{staff.email}</p>
+      ) : (
+        <p className="text-[13px] font-normal leading-5 text-gray-400">Chưa có email</p>
+      )}
+    </div>
+  );
+}
+
+function RateCell({
+  currentRate,
+}: {
+  currentRate: number | null;
+}) {
+  if (currentRate !== null) {
     return (
-      <span className="inline-flex select-none items-center whitespace-nowrap rounded-md bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-800">
-        Đang hoạt động
+      <span className="text-[13px] font-semibold tabular-nums text-gray-800">
+        {formatCurrency(currentRate)}
+        <span className="ml-0.5 font-normal text-gray-500">/buổi</span>
       </span>
     );
   }
-
-  return (
-    <span className="inline-flex select-none items-center whitespace-nowrap rounded-md bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-600">
-      Đã ngừng
-    </span>
-  );
+  return <span className="select-none text-gray-400">—</span>;
 }
 
 function ColumnHeader({ children }: { children: React.ReactNode }) {

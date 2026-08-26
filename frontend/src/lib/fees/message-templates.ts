@@ -4,19 +4,6 @@ export const MAX_FEE_MESSAGE_TEMPLATE_LENGTH = 1_400;
 export const MAX_RENDERED_FEE_MESSAGE_LENGTH = 2_000;
 export const MAX_FEE_MESSAGE_TEMPLATE_VERSION = 2_147_483_647;
 
-export const DEFAULT_FEE_MESSAGE_TEMPLATES = {
-  payment_reminder_template: `TPRO English xin thông báo học phí {{ky_hoc_phi}} của em {{ten_hoc_vien}}:
-{{chi_tiet_hoc_phi}}
-Ngày đến hạn: {{ngay_den_han}}.
-Tổng học phí cần thanh toán: {{tong_tien}}.
-Phụ huynh vui lòng thanh toán giúp trung tâm. Cảm ơn phụ huynh.`,
-  payment_received_template: `TPRO English xác nhận đã nhận học phí {{ky_hoc_phi}} của em {{ten_hoc_vien}}:
-{{chi_tiet_hoc_phi}}
-Ngày đến hạn: {{ngay_den_han}}.
-Tổng học phí đã nhận: {{tong_tien}}.
-Cảm ơn phụ huynh.`,
-} as const;
-
 export const FEE_MESSAGE_TOKENS = [
   { token: "{{ten_hoc_vien}}", label: "Tên học viên" },
   { token: "{{ky_hoc_phi}}", label: "Kỳ học phí" },
@@ -28,6 +15,14 @@ export const FEE_MESSAGE_TOKENS = [
 export type FeeMessageTemplateSegment =
   | { type: "text"; value: string }
   | { type: "token"; label: string; value: string };
+
+export function normalizeFeeMessageTemplateLineEndings(value: string): string {
+  return value.replace(/\r\n?/g, "\n");
+}
+
+export function splitFeeMessageTemplateLines(value: string): string[] {
+  return normalizeFeeMessageTemplateLineEndings(value).split("\n");
+}
 
 const FEE_MESSAGE_TOKEN_LABELS = new Map<string, string>(
   FEE_MESSAGE_TOKENS.map(({ token, label }) => [token, label]),
@@ -119,28 +114,16 @@ export const feeMessageTemplateValuesSchema =
   });
 
 export const feeMessageTemplatesResponseSchema =
-  feeMessageTemplateValuesObjectSchema
-    .extend({
+  z.object({
+      active: feeMessageTemplateValuesObjectSchema,
+      defaults: feeMessageTemplateValuesObjectSchema,
+      is_customized: z.boolean(),
       version: z
         .number()
         .int()
         .nonnegative()
         .max(MAX_FEE_MESSAGE_TEMPLATE_VERSION),
       updated_at: z.string().nullable(),
-    })
-    .superRefine((templates, context) => {
-      validateTokens(
-        templates.payment_reminder_template,
-        COMMON_TOKENS,
-        "payment_reminder_template",
-        context,
-      );
-      validateTokens(
-        templates.payment_received_template,
-        COMMON_TOKENS,
-        "payment_received_template",
-        context,
-      );
     });
 
 export type FeeMessageTemplateValues = z.infer<typeof feeMessageTemplateValuesSchema>;
@@ -162,7 +145,10 @@ export function upgradeLegacyFeeMessageTemplate(
 }
 
 function normalizeTemplate(value: string) {
-  return value.replace(/\r\n?/g, "\n").trim();
+  // Preserve the message exactly as the admin authored it. Only line-ending
+  // bytes differ across platforms; hard breaks, including intentional blank
+  // and trailing lines, are part of the persisted Zalo content.
+  return normalizeFeeMessageTemplateLineEndings(value);
 }
 
 function validateTokens(

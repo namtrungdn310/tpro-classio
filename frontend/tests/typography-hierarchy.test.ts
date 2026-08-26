@@ -17,6 +17,27 @@ const templateDialog = source(
 const feesTable = source("../src/components/fees/fees-table.tsx");
 const feeReportPanel = source("../src/components/fees/fee-report-panel.tsx");
 const reportPage = source("../src/app/(dashboard)/report/page.tsx");
+const paidReceiptTable = source(
+  "../src/components/reports/paid-receipt-table.tsx",
+);
+const paidReceiptDetail = source(
+  "../src/components/reports/paid-receipt-detail.tsx",
+);
+const paidReportSummary = source(
+  "../src/components/reports/paid-report-summary.tsx",
+);
+const dashboardSidebar = source(
+  "../src/components/layout/dashboard-sidebar.tsx",
+);
+const headerFilters = source(
+  "../src/components/layout/header-filter-controls.tsx",
+);
+const classHistory = source(
+  "../src/components/classes/class-history-slide.tsx",
+);
+const earlyPaymentPanel = source(
+  "../src/components/fees/early-payment-panel.tsx",
+);
 
 test("field labels stay subordinate to entered values while group labels remain prominent", () => {
   assert.match(
@@ -59,7 +80,26 @@ test("dense financial and audit views keep meaningful metadata readable", () => 
   assert.doesNotMatch(feeReportPanel, /text-\[10px\]/);
   assert.match(
     feeReportPanel,
-    /pl-3\.5 text-xs text-gray-500/,
+    /text-\[13px\] font-medium leading-5 text-gray-500/,
   );
   assert.doesNotMatch(reportPage, /text-\[11px\]/);
+
+  for (const readableContent of [
+    paidReceiptTable,
+    paidReceiptDetail,
+    paidReportSummary,
+    dashboardSidebar,
+    classHistory,
+    earlyPaymentPanel,
+  ]) {
+    assert.doesNotMatch(readableContent, /text-\[(?:10|11)px\]/);
+  }
+});
+
+test("filter labels use the shared table heading scale", () => {
+  assert.match(headerFilters, /table-heading-text text-gray-500/);
+  assert.doesNotMatch(
+    headerFilters,
+    /<p className="text-\[11px\] font-semibold uppercase text-gray-500"/,
+  );
 });

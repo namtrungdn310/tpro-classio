@@ -31,8 +31,9 @@ test("workspace initial mode depends on permissions and scope", () => {
   assert.match(pageSource, /mode: canEdit \? "edit" : "history"/);
   assert.match(
     pageSource,
-    /showModeRail=\{Boolean\(isAdmin && isOperationalScope && workspace\.class\.can_edit\)\}/,
+    /showModeRail=\{Boolean\(isAdmin && workspace\.class\.effective_status !== "CANCELLED"\)\}/,
   );
+  assert.match(pageSource, /canContinue=\{Boolean\(isAdmin && \["ACTIVE", "COMPLETED"\]/);
 });
 
 test("workspace rail renders only permitted actions", () => {
@@ -51,7 +52,7 @@ test("workspace action rail is compact and anchored to the centered frame", () =
   );
   assert.match(
     workspaceSource,
-    /flex w-\[144px\].*rounded-xl.*p-2/,
+    /flex w-\[176px\].*rounded-xl.*p-2/,
   );
   assert.doesNotMatch(workspaceSource, /function workspaceStatusLabel/);
   assert.doesNotMatch(workspaceSource, /class_\.student_count\} học viên<\/p>/);
@@ -93,7 +94,7 @@ test("modal focus scope includes fixed rail controls and excludes hidden panels"
 test("workspace guards close with an unsaved-changes confirmation", () => {
   assert.match(
     workspaceSource,
-    /if \(dirty && !isSaving && !isDeleting\) \{\s*setConfirmDiscardOpen\(true\);/,
+    /if \(dirty && !isSaving && !isDeleting && !isContinuing\) \{\s*setConfirmDiscardOpen\(true\);/,
   );
   assert.match(workspaceSource, /<ConfirmationDialog/);
   assert.match(workspaceSource, /confirmLabel="Rời khỏi"/);
@@ -120,4 +121,10 @@ test("workspace cancel panel warns about unsaved changes before confirming", () 
   assert.match(workspaceSource, /Bạn đang có thay đổi chưa lưu\. Các thay đổi này sẽ không được áp dụng nếu hủy lớp\./);
   assert.match(workspaceSource, /onCancelClass/);
   assert.doesNotMatch(workspaceSource, /optimistic/);
+});
+
+test("classes queries avoid aggressive refetch overrides", () => {
+  assert.doesNotMatch(pageSource, /refetchOnMount: "always"/);
+  assert.doesNotMatch(pageSource, /refetchOnWindowFocus/);
+  assert.match(pageSource, /refetchOnMount: true/);
 });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useDeferredValue, useMemo } from "react";
+import { useDeferredValue, useMemo, useRef } from "react";
 import {
   RiArrowRightSLine as ChevronRight,
   RiGraduationCapLine as GraduationCap,
@@ -134,8 +134,8 @@ export function ClassSelectionView({
           <ActiveClassStatus label={resultLabel} hasActiveClasses={classes.length > 0} />
           {isRefreshing ? (
             <span className="caption-text hidden items-center gap-1.5 text-gray-500 2xl:inline-flex">
-              <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-              Đang cập nhật
+              <LoaderCircle className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+              <span role="status">Đang cập nhật</span>
             </span>
           ) : null}
         </div>
@@ -226,6 +226,7 @@ function ClassSelectionCard({
   onPrefetch: () => void;
   onSelect: () => void;
 }) {
+  const hoverPrefetchTimerRef = useRef<number | null>(null);
   const group = getClassGroupInfoForRecord(class_);
   const teacherNames = class_.teacher_names?.length
     ? class_.teacher_names
@@ -236,16 +237,34 @@ function ClassSelectionCard({
     ? `${getCourseWeeks(class_.billing_cycle_months, class_.billing_cycle_weeks)} tuần`
     : "tháng";
 
+  function scheduleHoverPrefetch() {
+    if (hoverPrefetchTimerRef.current !== null) return;
+    hoverPrefetchTimerRef.current = window.setTimeout(() => {
+      hoverPrefetchTimerRef.current = null;
+      onPrefetch();
+    }, 120);
+  }
+
+  function cancelHoverPrefetch() {
+    if (hoverPrefetchTimerRef.current === null) return;
+    window.clearTimeout(hoverPrefetchTimerRef.current);
+    hoverPrefetchTimerRef.current = null;
+  }
+
   return (
     <button
       type="button"
       title={class_.display_name}
       aria-label={`Mở lớp ${class_.display_name}, ${class_.student_count} học viên`}
       onFocus={onPrefetch}
-      onMouseEnter={onPrefetch}
+      onMouseEnter={scheduleHoverPrefetch}
+      onMouseLeave={cancelHoverPrefetch}
       onTouchStart={onPrefetch}
-      onClick={onSelect}
-      className="group relative flex min-h-[128px] flex-col overflow-hidden rounded-lg border px-4 py-3.5 text-left shadow-[0_1px_2px_rgba(15,23,42,0.035)] transition-shadow duration-150 hover:shadow-[0_3px_10px_rgba(15,23,42,0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/30"
+      disabled={Boolean(class_.active_suspension)}
+      onClick={() => {
+        if (!class_.active_suspension) onSelect();
+      }}
+      className="group relative flex min-h-[128px] flex-col overflow-hidden rounded-lg border px-4 py-3.5 text-left shadow-[0_1px_2px_rgba(15,23,42,0.035)] transition-shadow duration-150 hover:shadow-[0_3px_10px_rgba(15,23,42,0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:shadow-[0_1px_2px_rgba(15,23,42,0.035)]"
       style={{
         backgroundColor: group.color.background,
         borderColor: group.color.border,
@@ -283,6 +302,11 @@ function ClassSelectionCard({
           aria-hidden="true"
         />
       </div>
+      {class_.active_suspension ? (
+        <span className="mt-1 text-[12px] font-semibold text-amber-800">
+          Đang hoãn · học lại {new Intl.DateTimeFormat("vi-VN").format(new Date(`${class_.active_suspension.resume_on}T00:00:00`))}
+        </span>
+      ) : null}
     </button>
   );
 }

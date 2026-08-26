@@ -20,6 +20,7 @@ import {
 } from "@/components/layout/weekly-schedule-board";
 import { Button } from "@/components/ui/button";
 import { DataSectionError } from "@/components/ui/data-section-state";
+import { LoadingLabel } from "@/components/ui/loading-label";
 import {
   getClasses,
   getEffectiveOccurrences,
@@ -120,7 +121,7 @@ export default function DashboardPage() {
       </HeaderControlsPortal>
 
       <div className="dashboard-overview-no-selection mb-3 flex min-h-8 items-center justify-between gap-3 md:hidden">
-        <p className="caption-text rounded-md bg-gray-100 px-2 py-1 text-gray-600">
+        <p className="caption-text rounded-md border border-slate-200 bg-slate-100 px-2 py-1 text-slate-700">
           {overview ? formatPeriod(overview.summary.period) : "Dữ liệu hiện tại"}
         </p>
         <Button
@@ -193,23 +194,25 @@ function DashboardHeaderStatus({
   return (
     <div className="dashboard-overview-no-selection flex min-w-0 items-center gap-2">
       {period ? (
-        <span className="caption-text inline-flex shrink-0 rounded-md bg-gray-100 px-2 py-1 text-gray-600">
+        <span className="caption-text inline-flex shrink-0 rounded-md border border-slate-200 bg-slate-100 px-2 py-1 text-slate-700">
           {formatPeriod(period)}
         </span>
       ) : null}
       <span
         aria-live="polite"
         className={`caption-text hidden truncate xl:inline ${
-          hasRefreshError ? "text-amber-700" : "text-gray-500"
+          hasRefreshError ? "text-amber-700" : "text-slate-600"
         }`}
       >
-        {hasRefreshError
-          ? "Chưa cập nhật được dữ liệu mới"
-          : isRefreshing
-            ? "Đang cập nhật..."
-            : lastUpdatedAt
-              ? `Cập nhật ${formatCompactDateTime(lastUpdatedAt)}`
-              : "Đang chuẩn bị dữ liệu"}
+        {hasRefreshError ? (
+          "Chưa cập nhật được dữ liệu mới"
+        ) : isRefreshing ? (
+          <LoadingLabel label="Đang cập nhật" />
+        ) : lastUpdatedAt ? (
+          `Cập nhật ${formatCompactDateTime(lastUpdatedAt)}`
+        ) : (
+          <LoadingLabel label="Đang chuẩn bị dữ liệu" />
+        )}
       </span>
       <Button
         type="button"
@@ -303,9 +306,9 @@ function ScheduleToolbar({
 }) {
   return (
     <div className="flex shrink-0 items-center justify-between gap-3 px-0.5">
-      <h2 className="section-title-text text-gray-900">Lịch học tuần</h2>
+      <h2 className="section-title-text text-slate-900">Lịch học tuần</h2>
       {typeof weeklySessionCount === "number" ? (
-        <span className="caption-text rounded-md bg-gray-100 px-2 py-1 text-gray-600">
+        <span className="caption-text rounded-md border border-slate-200 bg-slate-100 px-2 py-1 text-slate-700">
           {weeklySessionCount} ca / tuần
         </span>
       ) : null}

@@ -28,6 +28,7 @@ export type ClassAvailabilityInput = {
   endDate: string;
   teacherIds: string[];
   assistantIds: string[];
+  scope?: "selected_staff" | "all_classes";
 };
 
 /** Canonical class query keys — mọi literal ["classes", ...] phải đến từ đây. */
@@ -39,10 +40,14 @@ export const classQueryKeys = {
     ["classes", { scope, dateKey }] as const,
   detail: (classId: string) => ["classes", "detail", classId] as const,
   history: (classId: string) => ["classes", "history", classId] as const,
+  continuationPreview: (classId: string) =>
+    ["classes", "continuation-preview", classId] as const,
   occurrences: (classId: string, range: ClassOccurrenceRange) =>
     ["classes", "occurrences", classId, range] as const,
   adjustments: (classId: string, filters: { status?: string }) =>
     ["classes", "adjustments", classId, filters] as const,
+  suspensionPreview: (classId: string, from: string, to: string) =>
+    ["classes", "suspension-preview", classId, from, to] as const,
   effectiveOccurrences: (from: string, to: string) =>
     ["classes", "effective-occurrences", from, to] as const,
   exception: (exceptionId: string) =>
@@ -58,6 +63,7 @@ export const classQueryKeys = {
       input.endDate,
       [...input.teacherIds].sort().join(","),
       [...input.assistantIds].sort().join(","),
+      input.scope ?? "selected_staff",
     ] as const,
   endDatePreview: (classId: string, endDate: string, version: number) =>
     ["classes", classId, "end-date-preview", endDate, version] as const,

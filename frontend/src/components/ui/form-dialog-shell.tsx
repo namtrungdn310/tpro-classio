@@ -22,6 +22,13 @@ const DIALOG_WIDTH_CLASS: Record<FormDialogWidth, string> = {
 export const createEntityDialogFrameClassName =
   "sm:h-[min(680px,calc(100dvh-2rem))]";
 
+/**
+ * Desktop envelope shared by substantial edit/help dialogs. It remains compact
+ * on large screens and leaves long content to the dialog's single scroll body.
+ */
+export const editEntityDialogFrameClassName =
+  "sm:h-[min(680px,calc(100dvh-2rem))]";
+
 type FormDialogShellProps = {
   title: ReactNode;
   subtitle?: ReactNode;
@@ -140,15 +147,19 @@ export function FormDialogShell({
 }
 
 /** The single scroll owner between the fixed header and fixed footer. */
+type FormDialogBodyProps = {
+  children: ReactNode;
+  className?: string;
+} & Omit<ComponentPropsWithoutRef<"div">, "children" | "className">;
+
 export function FormDialogBody({
   children,
   className,
-}: {
-  children: ReactNode;
-  className?: string;
-}) {
+  ...props
+}: FormDialogBodyProps) {
   return (
     <div
+      {...props}
       className={cn(
         "scrollbar-hidden min-h-0 flex-1 space-y-3 overflow-x-hidden overflow-y-auto overscroll-contain px-4 py-4 sm:px-5",
         className,

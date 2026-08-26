@@ -18,10 +18,6 @@ export function getStaffTypeLabel(type: StaffType) {
   return type === "TEACHER" ? "Giáo viên" : "Trợ giảng";
 }
 
-export function countActiveStaff(staff: StaffResponse[]) {
-  return staff.reduce((total, item) => total + Number(item.is_active), 0);
-}
-
 export function prepareStaffRecords(
   staff: StaffResponse[],
   includePrivateSearchValues: boolean,
@@ -39,7 +35,7 @@ export function prepareStaffRecords(
         getStaffTypeLabel(item.staff_type),
         ...activeClasses.map((class_) => class_.name),
         ...(includePrivateSearchValues
-          ? [item.zalo_name ?? "", item.phone ?? ""]
+          ? [item.zalo_name ?? "", item.phone ?? "", item.email ?? ""]
           : []),
       ]),
       staff: item,

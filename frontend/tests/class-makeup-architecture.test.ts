@@ -23,11 +23,10 @@ const pageSource = readFileSync(
   "utf8",
 );
 
-test("make-up workspace shows original time, read-only duration/staff and eligible count", () => {
-  assert.match(workspaceSource, /formatDateTime\(scheduleTarget\.original_start_at\)/);
-  assert.match(workspaceSource, /cố định bằng buổi gốc/);
-  assert.match(workspaceSource, /scheduleTarget\.staff/);
-  assert.match(workspaceSource, /scheduleTarget\.eligible_student_count/);
+test("postpone workspace does not expose make-up scheduling controls", () => {
+  assert.doesNotMatch(workspaceSource, /scheduleTarget|schedulePreviewQuery|formatDateTime/);
+  assert.doesNotMatch(workspaceSource, /Xếp lịch bù|Bỏ xếp lịch|Khôi phục buổi gốc/);
+  assert.match(workspaceSource, /createClassSuspension/);
 });
 
 test("make-up workspace never offers a substitute staff selector", () => {
@@ -35,36 +34,41 @@ test("make-up workspace never offers a substitute staff selector", () => {
   assert.doesNotMatch(workspaceSource, /getActiveTeacherOptions/);
 });
 
-test("make-up workspace explains billing impact is none", () => {
-  assert.match(workspaceSource, /không ảnh hưởng tài chính/);
-  assert.match(workspaceSource, /học phí, kỳ thu và lịch tuần\s*giữ nguyên/);
+test("postpone workspace keeps the intended notes and aligned controls", () => {
+  assert.match(workspaceSource, /aria-label="Hoãn buổi học"/);
+  assert.match(workspaceSource, /Ngày thu sẽ dời theo số ngày hoãn thực tế của/);
+  assert.match(workspaceSource, /Chọn khoảng ngày để xem các buổi học trong phạm vi thời gian lớp có thể hoãn/);
+  assert.doesNotMatch(workspaceSource, /Tổng .*buổi chưa hoàn tất/);
+  assert.doesNotMatch(workspaceSource, />Hoãn buổi học<\/h3>/);
+  assert.doesNotMatch(workspaceSource, /không ảnh hưởng tài chính/);
+  assert.doesNotMatch(workspaceSource, /Giáo viên\/trợ giảng buổi bù được kế thừa từ buổi gốc/);
+  assert.doesNotMatch(workspaceSource, /scheduleNow|schedule_now/);
+  assert.doesNotMatch(workspaceSource, /Xếp bù ngay|Xếp sau/);
+  assert.match(workspaceSource, />Ghi chú<\/span>/);
+  assert.doesNotMatch(workspaceSource, /Ghi chú \(tùy chọn\)/);
+  assert.match(workspaceSource, /formTextControlClassName/);
+  assert.match(workspaceSource, /<Button/);
   assert.doesNotMatch(workspaceSource, /hoàn tiền|refund/i);
 });
 
-test("make-up conflicts appear inline and block save", () => {
-  assert.match(workspaceSource, /Đang kiểm tra xung đột/);
-  assert.match(workspaceSource, /conflicts\[0\]\.message/);
-  assert.match(workspaceSource, /disabled=\{isSaving \|\| conflicts\.length > 0/);
+test("postpone reason and note use full-width controls matching the student note field", () => {
+  assert.match(workspaceSource, /className="mt-3 grid gap-3"/);
+  assert.match(workspaceSource, /<select[\s\S]*?"mt-1 w-full"/);
+  assert.match(workspaceSource, /<textarea[\s\S]*?rows=\{2\}[\s\S]*?h-16 min-h-16 w-full resize-none py-2 leading-5/);
 });
 
-test("make-up groups pending, scheduled, awaiting-confirmation and completed distinctly", () => {
-  assert.match(workspaceSource, /Chờ xếp lịch bù/);
-  assert.match(workspaceSource, /Đã xếp lịch bù/);
-  assert.match(workspaceSource, /Chờ xác nhận/);
-  assert.match(workspaceSource, /Đã học bù/);
-  assert.match(workspaceSource, /AWAITING_CONFIRMATION/);
+test("postpone preview uses per-enrollment credit semantics", () => {
+  assert.match(workspaceSource, /member_summary/);
+  assert.match(workspaceSource, /Ngày thu sẽ dời theo số ngày hoãn thực tế/);
+  assert.match(workspaceSource, /suspensionPreviewQuery/);
+  assert.doesNotMatch(workspaceSource, /schedule_now|billing_impact/);
 });
 
-test("postpone flow supports schedule-now and schedule-later", () => {
-  assert.match(workspaceSource, /Xếp bù ngay/);
-  assert.match(workspaceSource, /Xếp sau/);
-});
-
-test("class table never renders FINALIZING and keeps the pending make-up badge", () => {
+test("class table never renders FINALIZING and labels postponed sessions without a make-up action", () => {
   assert.doesNotMatch(tableSource, /FINALIZING/);
   assert.match(tableSource, /COMPLETED: \{ label: "Đã kết thúc"/);
   assert.match(tableSource, /MakeupPendingBadge/);
-  assert.match(tableSource, /buổi chờ bù/);
+  assert.match(tableSource, /buổi đã hoãn/);
 });
 
 test("history slide contains the class adjustment timeline", () => {
@@ -78,8 +82,7 @@ test("dashboard board marks postponed and make-up occurrences", () => {
   assert.match(boardSource, /buildMakeupMarkers/);
 });
 
-test("classes page wires make-up actions to the workspace", () => {
-  assert.match(pageSource, /makeupMutation/);
-  assert.match(pageSource, /"postpone" \| "schedule" \| "unschedule" \| "complete" \| "restore"/);
-  assert.match(pageSource, /onMakeupAction/);
+test("classes page wires suspension mode without legacy scheduling mutation", () => {
+  assert.doesNotMatch(pageSource, /makeupMutation|onMakeupAction/);
+  assert.match(pageSource, /onPostponed/);
 });

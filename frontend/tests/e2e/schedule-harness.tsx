@@ -8,6 +8,7 @@ type Occ = ScheduleSlot & {
   className: string;
   classCategory?: "GENERAL" | "SPECIALIZED" | "IELTS" | "CUSTOM" | null;
   gradeLevel?: number | null;
+  /** Thiếu (undefined) = conflict legacy không xác định được giáo viên. */
   busyTeacherIds?: string[];
   busyAssistantIds?: string[];
 };
@@ -33,6 +34,8 @@ declare global {
       setSelected: (teachers: string[], assistants: string[]) => void;
       /** Inject lỗi tải availability thật qua prop occupiedError; retry xóa lỗi. */
       setAvailabilityError: (message: string | null) => void;
+      /** Chọn một giáo viên trong thanh phạm vi (tab). */
+      selectTeacher: (name: string) => void;
       getState: () => {
         pressed: string[];
         detail: string;
@@ -41,6 +44,8 @@ declare global {
         confirmDisabled: string | null;
         availabilityError: string;
         retryCount: number;
+        panelMode: string;
+        activeTeacher: string | null;
       };
     };
   }
@@ -74,10 +79,33 @@ function Harness() {
       .filter((el) => el.dataset.dayIndex !== undefined)
       .map((el) => `${el.dataset.dayIndex}:${el.dataset.timeIndex}`)
       .sort();
-    const aside = document.querySelector("aside");
+    const detail = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        "button[data-schedule-session-key] .font-body-ui",
+      ),
+    )
+      .map(
+        (el) =>
+          (el.textContent ?? "")
+            .replace(/(\d{2}:\d{2})/, " $1")
+            .replace(/\s+/g, " ")
+            .trim(),
+      )
+      .join(" | ");
+    const emptyHint = detail
+      ? ""
+      : (document.querySelector("aside")?.textContent ?? "").includes(
+            "Chưa chọn khung giờ nào",
+          )
+        ? "Chưa chọn khung giờ nào"
+        : "";
+    const activeTab = document.querySelector<HTMLElement>(
+      "button[role='tab'][aria-selected='true']",
+    );
+    const panel = document.querySelector<HTMLElement>("[data-schedule-panel-mode]");
     return {
       pressed,
-      detail: aside?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+      detail: `${detail}${emptyHint}`.trim(),
       saved,
       alertText: Array.from(document.querySelectorAll<HTMLElement>("[role='alert']"))
         .map((el) => el.textContent?.trim() ?? "")
@@ -85,11 +113,13 @@ function Harness() {
       confirmDisabled: (() => {
         const btn = Array.from(
           document.querySelectorAll<HTMLButtonElement>("button"),
-        ).find((b) => /xác nhận/i.test(b.textContent ?? ""));
+        ).find((b) => /áp dụng lịch|xác nhận/i.test(b.textContent ?? ""));
         return btn ? btn.getAttribute("disabled") : "missing";
       })(),
       availabilityError: availabilityError ?? "",
       retryCount,
+      panelMode: panel?.getAttribute("data-schedule-panel-mode") ?? "",
+      activeTeacher: activeTab?.getAttribute("data-teacher-scope") ?? null,
     };
   }, [saved, availabilityError, retryCount]);
 
@@ -105,6 +135,12 @@ function Harness() {
         if (message === null) {
           setRetryCount((count) => count + 1);
         }
+      },
+      selectTeacher: (name) => {
+        const tab = Array.from(
+          document.querySelectorAll<HTMLButtonElement>("button[role='tab']"),
+        ).find((candidate) => candidate.textContent?.trim() === name);
+        tab?.click();
       },
       getState,
     };

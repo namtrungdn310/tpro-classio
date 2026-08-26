@@ -10,7 +10,7 @@ const dialogSource = readFileSync(
   "utf8",
 );
 const editorSource = readFileSync(
-  new URL("../src/components/fees/fee-template-editor.tsx", import.meta.url),
+  new URL("../src/components/fees/fee-message-code-editor.tsx", import.meta.url),
   "utf8",
 );
 
@@ -33,7 +33,14 @@ test("Zalo template errors follow the shared edit, blur, and submit lifecycle", 
     dialogSource,
     /shouldShowError\(config\.field, isSubmitted\)/,
   );
-  assert.match(editorSource, /onBlur\?\.\(\)/);
+  assert.match(editorSource, /onBlurRef\.current\?\.\(\)/);
+});
+
+test("Zalo editor numbers logical lines and keeps visual wrapping separate", () => {
+  assert.match(editorSource, /lineNumbers\(\)/);
+  assert.match(editorSource, /EditorView\.lineWrapping/);
+  assert.match(editorSource, /key: "Enter", run: insertNewline/);
+  assert.doesNotMatch(editorSource, /contentEditable/);
 });
 
 test("Zalo unsaved notice is gated by current schema validity and save state", () => {
@@ -41,14 +48,14 @@ test("Zalo unsaved notice is gated by current schema validity and save state", (
     dialogSource,
     /const hasErrors = validation\.data === null/,
   );
-  assert.match(dialogSource, /hasChanges=\{hasPersistableChanges\}/);
-  assert.match(dialogSource, /validation\.data\.payment_reminder_template/);
+  assert.match(dialogSource, /hasChanges=\{hasDraftChanges\}/);
+  assert.match(dialogSource, /onSave\(\{ \.\.\.validation\.data, version: baseVersion \}\)/);
   assert.match(dialogSource, /hasErrors=\{hasErrors\}/);
   assert.match(dialogSource, /isSaving=\{isSaving\}/);
 });
 
-test("Zalo template retry rebases the optimistic version after a refetch", () => {
-  assert.match(dialogSource, /const \[baseVersion, setBaseVersion\]/);
-  assert.match(dialogSource, /setBaseVersion\(templates\.version\)/);
+test("Zalo template conflicts never silently rebase a dirty editor", () => {
+  assert.match(dialogSource, /const \[baseVersion\] = useState\(templates\.version\)/);
+  assert.doesNotMatch(dialogSource, /setBaseVersion\(templates\.version\)/);
   assert.match(dialogSource, /version: baseVersion/);
 });

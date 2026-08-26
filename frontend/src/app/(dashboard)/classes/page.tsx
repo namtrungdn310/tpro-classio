@@ -14,23 +14,22 @@ import { HeaderControlsPortal } from "@/components/layout/header-controls-portal
 import { HeaderFilterControls } from "@/components/layout/header-filter-controls";
 import { useToast } from "@/components/providers/toast-provider";
 import { DataSectionEmpty, DataSectionError } from "@/components/ui/data-section-state";
+import { ExcelExportButton } from "@/components/ui/excel-export-button";
 import { LoadingLabel } from "@/components/ui/loading-label";
 import { QuickActionFab } from "@/components/ui/quick-action-fab";
 import {
-  completeMakeup,
   createClass,
-  createPostponement,
+  createClassContinuation,
   deleteClass,
   getClassScopeSummary,
   getClasses,
-  restoreOriginalSession,
-  scheduleMakeup,
-  unscheduleMakeup,
   updateClass,
 } from "@/lib/api/classes";
 import { getApiErrorMessage } from "@/lib/api/errors";
 import { getActiveTeacherOptions } from "@/lib/api/staff";
 import { classQueryKeys } from "@/lib/classes/query-keys";
+import { exportClasses } from "@/lib/classes/export";
+import { invalidateDomainQueries } from "@/lib/query/invalidation";
 import { CLASS_DAYS, filterAndSortPreparedClasses, prepareClassRecords } from "@/lib/classes/presentation";
 import { useAuth } from "@/lib/hooks/useAuth";
 import { isManagementUser } from "@/lib/auth/permissions";
@@ -38,17 +37,13 @@ import { usePersistentState } from "@/lib/hooks/usePersistentState";
 import { getCourseWeeks } from "@/lib/utils/format";
 import type {
   ClassCategory,
+  ClassContinuationCreate,
   ClassCreate,
   ClassResponse,
   ClassScope,
   ClassScopeSummary,
   ClassType,
   ClassUpdate,
-  ExceptionCommandResponse,
-  MakeupCommandRequest,
-  MakeupScheduleRequest,
-  PostponementCreateRequest,
-  PostponementCreateResponse,
 } from "@/lib/types";
 import { staffQueryKeys } from "@/lib/staff/query-keys";
 
@@ -80,6 +75,7 @@ export default function ClassesPage() {
   const [selectedDay, setSelectedDay] = useState("");
   const [courseDuration, setCourseDuration] = useState("");
   const [isCreateFormOpen, setIsCreateFormOpen] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const [workspace, setWorkspace] = useState<ClassWorkspaceState | null>(null);
   const scope = SCOPE_TABS.some((tab) => tab.scope === storedScope) ? storedScope : "operational";
   const isOperationalScope = scope === "operational" || scope === "scheduled";
@@ -94,15 +90,14 @@ export default function ClassesPage() {
     queryFn: () => getClasses({ scope }),
     enabled: Boolean(user),
     staleTime: 45_000,
-    refetchOnMount: "always",
-    refetchOnWindowFocus: true,
+    refetchOnMount: true,
   });
   const classSummaryQuery = useQuery({
     queryKey: classQueryKeys.summary(),
     queryFn: getClassScopeSummary,
     enabled: Boolean(user),
     staleTime: 30_000,
-    refetchOnWindowFocus: true,
+    refetchOnMount: true,
   });
   const teachersQuery = useQuery({
     queryKey: ACTIVE_TEACHERS_QUERY_KEY,
@@ -110,16 +105,12 @@ export default function ClassesPage() {
     enabled: Boolean(isAdmin),
     placeholderData: keepPreviousData,
     staleTime: 10 * 60_000,
-    refetchOnWindowFocus: true,
   });
 
   /** Targeted invalidation matrix — không bao giờ invalidate toàn bộ fees
    * khi mutation chỉ ảnh hưởng lịch/lifecycle. */
   function invalidateClassScopeData() {
-    void Promise.all([
-      queryClient.invalidateQueries({ queryKey: classQueryKeys.all }),
-      queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
-    ]);
+    void invalidateDomainQueries(queryClient, { classes: true, dashboard: true });
   }
 
   const createMutation = useMutation({
@@ -151,36 +142,22 @@ export default function ClassesPage() {
     },
     onError: (error) => notify.error(getApiErrorMessage(error, "Không thể hủy lớp học.")),
   });
-  const makeupMutation = useMutation({
-    mutationFn: ({
-      action,
-      exceptionId,
-      payload,
-    }: {
-      action: "postpone" | "schedule" | "unschedule" | "complete" | "restore";
-      exceptionId: string;
-      payload: object;
-    }): Promise<PostponementCreateResponse | ExceptionCommandResponse> => {
-      switch (action) {
-        case "postpone":
-          return createPostponement(workspace?.class.id ?? "", payload as PostponementCreateRequest);
-        case "schedule":
-          return scheduleMakeup(exceptionId, payload as MakeupScheduleRequest);
-        case "unschedule":
-          return unscheduleMakeup(exceptionId, payload as MakeupCommandRequest);
-        case "complete":
-          return completeMakeup(exceptionId, payload as MakeupCommandRequest);
-        case "restore":
-          return restoreOriginalSession(exceptionId, payload as MakeupCommandRequest);
-      }
+  const continuationMutation = useMutation({
+    mutationFn: ({ id, values }: { id: string; values: ClassContinuationCreate }) =>
+      createClassContinuation(id, values),
+    onSuccess: (result) => {
+      notify.success(`Đã tạo lớp kế tiếp với ${result.enrolled_student_count} học viên.`);
+      void invalidateDomainQueries(queryClient, {
+        classes: true,
+        students: true,
+        fees: true,
+        dashboard: true,
+      });
+      setScope(result.created_class.effective_status === "SCHEDULED" ? "scheduled" : "operational");
+      setWorkspace({ class: result.created_class, mode: "edit" });
     },
-    onSuccess: () => {
-      notify.success("Đã cập nhật buổi học bù.");
-      invalidateClassScopeData();
-    },
-    onError: (error) => notify.error(getApiErrorMessage(error, "Không thể cập nhật buổi học bù.")),
+    onError: (error) => notify.error(getApiErrorMessage(error, "Không thể tạo lớp kế tiếp.")),
   });
-
   function openCreateForm() {
     if (isAdmin && teachersQuery.isPending && teachersQuery.data === undefined) return;
     setIsCreateFormOpen(true);
@@ -209,6 +186,19 @@ export default function ClassesPage() {
   const hasFilters = Boolean(search.trim() || type || category || selectedDay || courseDuration);
   const currentScope = SCOPE_TABS.find((tab) => tab.scope === scope) ?? SCOPE_TABS[0];
 
+  async function handleExport() {
+    if (filteredClasses.length === 0 || isExporting) return;
+    setIsExporting(true);
+    try {
+      await exportClasses(filteredClasses, currentScope.label);
+      notify.success(`Đã xuất danh sách ${filteredClasses.length} lớp ra file Excel.`);
+    } catch {
+      notify.error("Không thể xuất danh sách lớp. Vui lòng thử lại.");
+    } finally {
+      setIsExporting(false);
+    }
+  }
+
   const filters = <HeaderFilterControls searchPlaceholder="Tìm lớp, giáo viên, lịch học..." searchValue={search} onSearchChange={setSearch} onClear={clearFilters} filters={[
     { label: "Loại lớp", value: category, onChange: (value) => setCategory(value as ClassCategory | ""), options: [{ label: "Phổ thông", value: "GENERAL" }, { label: "Thi Chuyên", value: "SPECIALIZED" }, { label: "IELTS", value: "IELTS" }, { label: "Custom", value: "CUSTOM" }] },
     { label: "Hình thức đóng học phí", value: type, onChange: (value) => { const next = value as ClassType | ""; setType(next); if (next === "MONTHLY") setCourseDuration(""); }, options: [{ label: "Theo tháng", value: "MONTHLY" }, { label: "Theo gói", value: "COURSE" }] },
@@ -216,10 +206,11 @@ export default function ClassesPage() {
     { label: "Ngày học", value: selectedDay, onChange: setSelectedDay, options: CLASS_DAYS.map((day) => ({ label: day, value: day })) },
   ]} />;
   const addButton = isAdmin ? <button type="button" onClick={openCreateForm} disabled={isTeacherOptionsInitialLoading} className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-wait disabled:opacity-60"><Plus className="h-3.5 w-3.5" aria-hidden="true" />Thêm lớp</button> : null;
+  const exportButton = isAdmin ? <ExcelExportButton disabled={filteredClasses.length === 0 || isInitialLoading} isExporting={isExporting} onClick={() => void handleExport()} /> : null;
 
   return <div className="font-body-ui flex min-h-0 flex-col gap-3 md:h-full md:overflow-hidden">
-    <HeaderControlsPortal><div className="flex min-w-0 items-center gap-3">{filters}{addButton}</div></HeaderControlsPortal>
-    <div className="flex min-w-0 flex-wrap items-center gap-2 md:hidden">{filters}{addButton}</div>
+    <HeaderControlsPortal><div className="flex min-w-0 items-center gap-3">{filters}{exportButton}{addButton}</div></HeaderControlsPortal>
+    <div className="flex min-w-0 flex-wrap items-center gap-2 md:hidden">{filters}{exportButton}{addButton}</div>
     <nav aria-label="Phạm vi danh sách lớp" className="flex shrink-0 gap-1 overflow-x-auto rounded-xl border border-gray-200 bg-white p-1.5 scrollbar-hidden">
       {SCOPE_TABS.map((tab) => <button key={tab.scope} type="button" aria-pressed={scope === tab.scope} onPointerDown={(event) => event.preventDefault()} onClick={() => selectScope(tab.scope)} className={`font-ui inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 ${scope === tab.scope ? "bg-primary-soft font-semibold text-primary ring-1 ring-inset ring-primary/20" : "font-medium text-gray-600 hover:bg-primary-soft/60 hover:text-primary"}`}><span className={`h-1.5 w-1.5 rounded-full ${tab.scope === "operational" ? "bg-emerald-500" : tab.scope === "scheduled" ? "bg-primary" : tab.scope === "completed" ? "bg-gray-400" : "bg-destructive"}`} aria-hidden="true" />{tab.label}<span className={`min-w-4 text-right text-[12px] font-semibold tabular-nums ${scope === tab.scope ? "text-primary" : "text-gray-500"}`}>{classSummaryQuery.data?.[tab.summaryKey] ?? "–"}</span></button>)}
     </nav>
@@ -240,8 +231,11 @@ export default function ClassesPage() {
       <ClassWorkspaceDialog
         class_={workspace.class}
         initialMode={workspace.mode}
-        showModeRail={Boolean(isAdmin && isOperationalScope && workspace.class.can_edit)}
-        isSaving={updateMutation.isPending || makeupMutation.isPending}
+        showModeRail={Boolean(isAdmin && workspace.class.effective_status !== "CANCELLED")}
+        canEdit={Boolean(isAdmin && isOperationalScope && workspace.class.can_edit)}
+        canContinue={Boolean(isAdmin && ["ACTIVE", "COMPLETED"].includes(workspace.class.effective_status) && workspace.class.identity_scheme !== "LEGACY")}
+        isSaving={updateMutation.isPending}
+        isContinuing={continuationMutation.isPending}
         isDeleting={deleteMutation.isPending}
         isTeachersError={teachersQuery.isError}
         isTeachersLoading={teachersQuery.isPending && teachersQuery.data === undefined}
@@ -249,12 +243,9 @@ export default function ClassesPage() {
         onClose={() => setWorkspace(null)}
         onRetryTeachers={() => void teachersQuery.refetch()}
         onSubmit={(payload) => updateMutation.mutate({ id: workspace.class.id, values: payload })}
+        onCreateContinuation={(payload) => continuationMutation.mutate({ id: workspace.class.id, values: payload })}
         onCancelClass={() => deleteMutation.mutate(workspace.class.id)}
-        onMakeupAction={(action, exceptionId, payload) =>
-          makeupMutation.mutate({ action, exceptionId, payload })
-        }
         onPostponed={() => notify.success("Đã hoãn buổi học.")}
-        isMakeupSaving={makeupMutation.isPending}
       />
     ) : null}
     {isAdmin ? <QuickActionFab label="Thêm lớp" onClick={openCreateForm} /> : null}

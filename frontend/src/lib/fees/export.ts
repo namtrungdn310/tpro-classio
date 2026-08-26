@@ -3,14 +3,14 @@ import type { StudentFeeGroup } from "@/lib/fees/view-model";
 import type { FeeRecordResponse } from "@/lib/types";
 import type { FeeTransactionListResponse } from "@/lib/types";
 import { formatFeeBillingLabel } from "@/lib/fees/billing-label";
+import { formatStudentCode } from "@/lib/students/student-code";
+import { exportExcelWorkbook, type ExcelSheetDefinition } from "@/lib/excel/workbook";
 import {
   formatCurrency,
   formatDate,
   formatDateTime,
   formatPeriod,
 } from "@/lib/utils/format";
-
-type ExcelCell = string | number | null;
 
 export type FeeExportContext = {
   activeTab: FeeTab;
@@ -24,7 +24,6 @@ export async function exportFeeGroups(
   context: FeeExportContext,
   transactionHistories: FeeTransactionListResponse[] = [],
 ) {
-  const { default: writeExcelFile } = await import("write-excel-file/browser");
   const summaryRows = buildFeeSummaryRows(groups, context);
   const detailRows = buildFeeDetailRows(groups, context);
   const transactionRows = buildFeeTransactionRows(
@@ -32,38 +31,29 @@ export async function exportFeeGroups(
     transactionHistories,
     context,
   );
-  const toSheetData = (rows: Array<Record<string, ExcelCell>>) => {
-    const headers = Object.keys(rows[0] ?? {});
-    return [
-      headers.map((header) => ({ value: header, fontWeight: "bold" as const })),
-      ...rows.map((row) => headers.map((header) => row[header] ?? "")),
-    ];
-  };
-
-  const sheets = [
+  const sheets: ExcelSheetDefinition[] = [
     {
-      columns: getAutoFitColumns(summaryRows),
-      data: toSheetData(summaryRows),
-      sheet: "Tong hop",
-      stickyRowsCount: 1,
+      name: "Tong hop",
+      title: "TPRO English · Tổng hợp học phí",
+      description: getFeeExportDescription(context, summaryRows.length),
+      rows: summaryRows,
     },
     {
-      columns: getAutoFitColumns(detailRows),
-      data: toSheetData(detailRows),
-      sheet: "Chi tiet",
-      stickyRowsCount: 1,
+      name: "Chi tiet",
+      title: "TPRO English · Chi tiết khoản học phí",
+      description: getFeeExportDescription(context, detailRows.length),
+      rows: detailRows,
     },
   ];
   if (transactionRows.length > 0) {
     sheets.push({
-      columns: getAutoFitColumns(transactionRows),
-      data: toSheetData(transactionRows),
-      sheet: "Giao dich",
-      stickyRowsCount: 1,
+      name: "Giao dich",
+      title: "TPRO English · Lịch sử giao dịch học phí",
+      description: `${transactionRows.length} giao dịch thuộc danh sách đang xem`,
+      rows: transactionRows,
     });
   }
-
-  await writeExcelFile(sheets).toFile(getFeeExportFileName(context));
+  await exportExcelWorkbook(sheets, getFeeExportFileName(context));
 }
 
 export function buildFeeSummaryRows(
@@ -73,8 +63,14 @@ export function buildFeeSummaryRows(
   const status = getFeeExportStatus(context);
 
   return groups.map((group) => ({
+    "Mã học viên": group.student_code ? formatStudentCode(group.student_code) : "",
+    ...(context.period === "outstanding" ? { "Tình trạng học viên": getStudentLifecycleLabel(group.student_status) } : {}),
     "Trạng thái": status,
-    "Kỳ thu": formatPeriod(context.period),
+    "Kỳ thu": formatPeriod(
+      context.period === "outstanding"
+        ? group.records[0]?.period ?? ""
+        : context.period,
+    ),
     "Học viên": group.student_name,
     "Lớp học": group.classes.map((class_) => class_.name).join(", "),
     "Hình thức học phí": group.records
@@ -130,8 +126,12 @@ export function buildFeeDetailRows(
 ) {
   return groups.flatMap((group) =>
     group.records.map((record) => ({
+      "Mã học viên": group.student_code ? formatStudentCode(group.student_code) : "",
+      ...(context.period === "outstanding" ? { "Tình trạng học viên": getStudentLifecycleLabel(record.student_status) } : {}),
       "Trạng thái": getRecordExportStatus(record),
-      "Kỳ thu": formatPeriod(context.period),
+      "Kỳ thu": formatPeriod(
+        context.period === "outstanding" ? record.period : context.period,
+      ),
       "Học viên": group.student_name,
       "Lớp học": record.class_name,
       "Hình thức học phí": formatFeeBillingLabel(
@@ -169,7 +169,9 @@ export function buildFeeTransactionRows(
         record.id,
         {
           className: record.class_name,
+          studentCode: group.student_code,
           studentName: group.student_name,
+          period: record.period,
         },
       ] as const),
     ),
@@ -179,7 +181,10 @@ export function buildFeeTransactionRows(
     const record = recordContext.get(history.fee_record_id);
     if (!record) return [];
     return history.transactions.map((transaction) => ({
-      "Kỳ thu": formatPeriod(context.period),
+      "Mã học viên": record.studentCode ? formatStudentCode(record.studentCode) : "",
+      "Kỳ thu": formatPeriod(
+        context.period === "outstanding" ? record.period : context.period,
+      ),
       "Học viên": record.studentName,
       "Lớp học": record.className,
       "Loại giao dịch": getTransactionExportLabel(transaction.entry_type),
@@ -203,6 +208,12 @@ function getTransactionExportLabel(
   if (type === "payment_reversal") return "Hoàn tác ghi nhận đã nộp";
   if (type === "refund") return "Hoàn phí";
   return "Hoàn tác hoàn phí";
+}
+
+function getStudentLifecycleLabel(status: FeeRecordResponse["student_status"]) {
+  if (status === "archived") return "Ngừng học";
+  if (status === "inactive") return "Tạm ngừng";
+  return "Đang học tại trung tâm";
 }
 
 function getRefundExportStatus(state: FeeRecordResponse["refund_state"]) {
@@ -231,19 +242,6 @@ function getRecordExportStatus(record: FeeRecordResponse) {
   return "Chưa báo phụ huynh";
 }
 
-function getAutoFitColumns(rows: Array<Record<string, ExcelCell>>) {
-  const headers = Object.keys(rows[0] ?? {});
-
-  return headers.map((header) => {
-    const maxContentLength = rows.reduce((max, row) => {
-      const content = row[header] == null ? "" : String(row[header]);
-      return Math.max(max, content.length);
-    }, header.length);
-
-    return { width: Math.min(Math.max(maxContentLength + 3, 12), 48) };
-  });
-}
-
 function getFeeExportFileName(context: FeeExportContext) {
   const statusName =
     context.activeTab === "paid"
@@ -251,11 +249,23 @@ function getFeeExportFileName(context: FeeExportContext) {
       : context.unpaidStage === "unnotified"
         ? "ChuaBao"
         : "DaBaoChuaNop";
-  const parts = ["HocPhi", context.period, statusName, context.className]
+  const parts = [
+    context.period === "outstanding" ? "CongNoHocPhi" : "HocPhi",
+    context.period === "outstanding" ? undefined : context.period,
+    statusName,
+    context.className,
+  ]
     .filter(Boolean)
     .map((part) => sanitizeFileName(String(part)));
 
   return `${parts.join("_")}.xlsx`;
+}
+
+function getFeeExportDescription(context: FeeExportContext, count: number) {
+  const scope = context.period === "outstanding"
+    ? "Tất cả khoản còn phải thu"
+    : `Kỳ ${formatPeriod(context.period)}`;
+  return `${scope}${context.className ? ` · Lớp ${context.className}` : ""} · ${count} dòng`;
 }
 
 function sanitizeFileName(value: string) {

@@ -131,13 +131,13 @@ export function HeaderFilterControls({
               type="button"
               aria-label="Bộ lọc"
               onClick={() => setIsOpen((current) => !current)}
-              className={`relative inline-flex h-6 w-8 items-center justify-center rounded-[5px] transition ${
+              className={`relative inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition ${
                 activeFilters.length > 0 || isOpen
                   ? "bg-primary-soft text-primary"
                   : "text-gray-600 hover:bg-primary-soft/70 hover:text-primary"
               }`}
             >
-              <SlidersHorizontal className="h-3.5 w-3.5" />
+              <SlidersHorizontal className="h-3 w-3" />
               {activeFilters.length > 0 ? (
                 <span className="absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground">
                   {activeFilters.length}
@@ -156,7 +156,7 @@ export function HeaderFilterControls({
           <div className="space-y-2.5">
             {visibleFilters.map((filter, index) => (
               <div key={filter.label} className="space-y-1.5">
-                <p className="text-[11px] font-semibold uppercase text-gray-500">{filter.label}</p>
+                <p className="table-heading-text text-gray-500">{filter.label}</p>
                 <div
                   ref={(element) => {
                     rowRefs.current[index] = element;
@@ -175,10 +175,10 @@ export function HeaderFilterControls({
                           }
                           filter.onChange(selected ? "" : option.value);
                         }}
-                        className={`inline-flex h-8 shrink-0 items-center rounded-full px-2.5 text-[12px] transition ${
+                        className={`inline-flex h-7 shrink-0 items-center rounded-full border px-2.5 text-[12px] transition ${
                           selected
-                            ? "bg-primary-soft font-medium text-primary"
-                            : "bg-gray-50 text-gray-700 hover:bg-primary-soft/60"
+                            ? "border-primary/20 bg-primary-soft font-medium text-primary"
+                            : "border-gray-200 bg-gray-100 text-gray-700 hover:border-primary/20 hover:bg-primary-soft/60"
                         }`}
                       >
                         {option.label}

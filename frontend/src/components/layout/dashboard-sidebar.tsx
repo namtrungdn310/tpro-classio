@@ -16,7 +16,7 @@ export function DashboardSidebar({ onLogout }: DashboardSidebarProps) {
   return (
     <aside
       id="dashboard-sidebar"
-      className="dashboard-sidebar hidden select-none md:fixed md:bottom-0 md:left-0 md:top-0 md:z-50 md:flex md:shrink-0 md:flex-col md:overflow-hidden md:border-r md:border-primary/10 md:bg-[#FBFBFF]"
+      className="dashboard-sidebar hidden select-none md:fixed md:bottom-0 md:left-0 md:top-0 md:z-50 md:flex md:shrink-0 md:flex-col md:overflow-hidden md:border-r md:border-slate-200 md:bg-slate-50"
     >
       <div className="flex shrink-0 items-center px-3 pb-2 pt-3">
         <Link
@@ -39,7 +39,7 @@ export function DashboardSidebar({ onLogout }: DashboardSidebarProps) {
             <span className="font-ui block truncate text-sm font-semibold leading-4 text-gray-900">
               TPRO English
             </span>
-            <span className="font-body-ui block truncate text-[11px] font-medium leading-4 text-muted-foreground">
+            <span className="font-body-ui block truncate text-xs font-medium leading-4 text-slate-600">
               Classio
             </span>
           </span>
@@ -53,7 +53,7 @@ export function DashboardSidebar({ onLogout }: DashboardSidebarProps) {
           type="button"
           onClick={onLogout}
           aria-label="Đăng xuất"
-          className="font-ui inline-flex h-10 w-full items-center justify-start gap-3 overflow-hidden rounded-xl px-3 text-sm font-medium text-[#5F6368] outline-none transition-[background-color,color] duration-200 ease-out hover:bg-primary-soft/70 hover:text-primary focus-visible:ring-2 focus-visible:ring-primary/30"
+          className="font-ui inline-flex h-10 w-full items-center justify-start gap-3 overflow-hidden rounded-xl px-3 text-sm font-medium text-slate-600 outline-none transition-[background-color,color] duration-200 ease-out hover:bg-primary-soft/70 hover:text-primary focus-visible:ring-2 focus-visible:ring-primary/30"
         >
           <NavigationIcon icon={LOGOUT_NAVIGATION_ICON} />
           <span className="whitespace-nowrap">Đăng xuất</span>

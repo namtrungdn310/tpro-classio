@@ -169,6 +169,47 @@ export function ClassHistoryContent({ data }: { data: ClassHistory }) {
         <Info className="col-span-2" label="Lịch học" value={scheduleLabel(data)} />
       </div>
     </section>
+    <HistorySection icon={CalendarCheck} title="Lịch học và giáo viên theo buổi">
+      {data.schedule_slots?.length ? (
+        <ul className="divide-y divide-gray-200">
+          {data.schedule_slots.map((slot) => (
+            <li key={slot.slot_id} className="py-2.5 first:pt-0 last:pb-0">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[15px] font-semibold leading-5 text-gray-800">
+                    {slot.day} · {slot.start}–{slot.end}
+                  </p>
+                  <p className="mt-0.5 text-[13px] font-medium leading-5 text-gray-500">
+                    Áp dụng từ {formatDate(slot.effective_from)}
+                    {slot.effective_until
+                      ? ` · kết thúc ${formatDate(slot.effective_until)}`
+                      : ""}
+                  </p>
+                </div>
+                <div className="flex max-w-[58%] flex-wrap justify-end gap-1.5">
+                  {slot.teachers.length ? (
+                    slot.teachers.map((teacher) => (
+                      <span
+                        key={`${slot.slot_id}-${teacher.staff_id}`}
+                        className="rounded-full bg-slate-100 px-2 py-1 text-[12px] font-medium leading-4 text-slate-700"
+                      >
+                        {teacher.staff_name}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-[13px] font-medium text-destructive">
+                      Chưa phân công giáo viên
+                    </span>
+                  )}
+                </div>
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <EmptyHistory text="Chưa có phân công giáo viên theo buổi." />
+      )}
+    </HistorySection>
     <section className="grid grid-cols-3 gap-2" aria-label="Tóm tắt hồ sơ lớp">
       <HistoryMetric label="Nhân sự" value={staffCount} detail={`${teacherCount} giáo viên · ${assistantCount} trợ giảng`} />
       <HistoryMetric label="Từng học" value={data.enrollments.length} detail="học viên" />
@@ -203,7 +244,7 @@ export function ClassHistoryContent({ data }: { data: ClassHistory }) {
                 {formatDate(adjustment.original_start_at)} →{" "}
                 {adjustment.replacement_start_at
                   ? formatDateTime(adjustment.replacement_start_at)
-                  : "chưa xếp lịch bù"}
+                  : "Đã hoãn"}
               </p>
               {adjustment.reason_note ? (
                 <p className="mt-0.5 text-[13px] font-normal leading-5 text-gray-600">
@@ -224,7 +265,7 @@ function HistorySection({ children, icon: Icon, title }: { children: React.React
   return <section className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm shadow-gray-200/30"><h3 className="font-ui mb-3 flex items-center gap-2 text-[15px] font-semibold leading-5 text-gray-900"><Icon aria-hidden="true" className="icon-system h-[18px] w-[18px] text-gray-600" />{title}</h3>{children}</section>;
 }
 function HistoryMetric({ detail, label, value }: { detail: string; label: string; value: number }) {
-  return <div className="min-w-0 rounded-lg border border-gray-200 bg-white px-3 py-2.5"><p className="table-heading-text text-gray-500">{label}</p><p className="metric-value mt-1 text-lg font-semibold leading-6 text-gray-950">{value}</p><p className="truncate text-[11px] font-medium leading-4 text-gray-500" title={detail}>{detail}</p></div>;
+  return <div className="min-w-0 rounded-lg border border-gray-200 bg-white px-3 py-2.5"><p className="table-heading-text text-gray-500">{label}</p><p className="metric-value mt-1 text-lg font-semibold leading-6 text-gray-950">{value}</p><p className="truncate text-xs font-medium leading-4 text-gray-500" title={detail}>{detail}</p></div>;
 }
 function Info({ className = "", label, value }: { className?: string; label: string; value: string }) { return <div className={className}><p className="table-heading-text text-gray-500">{label}</p><p className="mt-1 text-[15px] font-medium leading-5 text-gray-800">{value}</p></div>; }
 function EmptyHistory({ text }: { text: string }) { return <p className="rounded-lg bg-gray-100/70 px-3 py-2.5 text-sm font-medium text-gray-500">{text}</p>; }
@@ -241,10 +282,9 @@ function historyStatusLabel(status: ClassResponse["effective_status"]) {
 
 function adjustmentLabel(adjustment: ClassHistoryAdjustment) {
   const statusLabels: Record<ClassHistoryAdjustment["display_status"], string> = {
-    MAKEUP_PENDING: "Hoãn buổi học — chờ xếp lịch bù",
-    MAKEUP_SCHEDULED: "Hoãn buổi học — đã xếp lịch bù",
-    AWAITING_CONFIRMATION: "Buổi bù đã kết thúc — chờ xác nhận",
-    MAKEUP_COMPLETED: "Buổi bù đã hoàn tất",
+    MAKEUP_PENDING: "Đã hoãn buổi học",
+    MAKEUP_SCHEDULED: "Đã hoãn — có lịch thay thế (lịch sử)",
+    MAKEUP_COMPLETED: "Lịch thay thế đã hoàn tất (lịch sử)",
     RESTORED: "Khôi phục buổi gốc",
     CANCELLED: "Buổi hoãn đã hủy",
   };

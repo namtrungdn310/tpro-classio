@@ -4,7 +4,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { FeeReportPanel } from "../src/components/fees/fee-report-panel";
 
-test("fee class filter keeps three full-width rows and uses explicit page controls", () => {
+test("fee summary keeps status filters and class filtering in one compact toolbar", () => {
   const html = renderToStaticMarkup(
     createElement(FeeReportPanel, {
       activeClassId: "",
@@ -19,6 +19,7 @@ test("fee class filter keeps three full-width rows and uses explicit page contro
       onChangeClass: () => undefined,
       onChangeTab: () => undefined,
       onChangeUnpaidStage: () => undefined,
+      scopeLabel: "Tháng 7/2026",
       summary: {
         grossCollected: 16_000_000,
         netCollected: 15_000_000,
@@ -34,25 +35,26 @@ test("fee class filter keeps three full-width rows and uses explicit page contro
     }),
   );
 
-  assert.match(html, /h-\[172px\]/);
-  assert.match(html, /grid-flow-col/);
-  assert.match(html, /grid-template-rows:repeat\(3, minmax\(0, 1fr\)\)/);
-  assert.match(html, /aria-label="Xem các lớp ở trang trước"[^>]*disabled/);
-  assert.match(html, /aria-label="Xem các lớp ở trang sau"/);
-  assert.match(
-    html,
-    /aria-label="Xem các lớp ở trang sau"\s+aria-controls="[^"]+"\s+class=/,
-  );
-  assert.doesNotMatch(html, /overflow-x-auto|overscroll-x-contain|touch-pan-x|snap-proximity/);
-  assert.match(html, /whitespace-nowrap/);
-  assert.match(html, />IELTS Chuyên sâu</);
-  assert.doesNotMatch(html, />IELTS CS</);
-  assert.match(html, /title="IELTS Chuyên sâu"/);
-  assert.match(html, /aria-label="IELTS Chuyên sâu:/);
-  assert.match(html, /15\.000\.000đ \/ 27\.000\.000đ/);
-  assert.match(
-    html,
-    /Đã nhận 16\.000\.000đ · Đã hoàn\s*1\.000\.000đ<\/span><span class="block">Còn phải thu 12\.000\.000đ<\/span>/,
-  );
-  assert.doesNotMatch(html, /· Còn phải thu/);
+  assert.match(html, /Khoản thu kỳ hiện tại/);
+  assert.match(html, /Tháng 7\/2026/);
+  assert.match(html, /15\.000\.000đ/);
+  assert.match(html, /27\.000\.000đ/);
+  assert.match(html, /Chưa thu 12\.000\.000đ/);
+  assert.match(html, /Đã hoàn 1\.000\.000đ/);
+  assert.match(html, /Chưa báo/);
+  assert.match(html, /Đã báo/);
+  assert.match(html, /Đã nộp/);
+  assert.match(html, /Lọc khoản thu theo lớp/);
+  assert.match(html, /role="progressbar"/);
+  assert.match(html, /aria-valuenow="56"/);
+  assert.match(html, /aria-label="Lọc theo trạng thái khoản thu"/);
+  assert.match(html, /aria-label="Chưa báo: 5 khoản"/);
+  assert.doesNotMatch(html, />01</);
+  assert.doesNotMatch(html, />02</);
+  assert.doesNotMatch(html, />03</);
+  assert.match(html, /Tất cả lớp \(19\)/);
+  assert.match(html, />IELTS Chuyên sâu · 3 chưa nộp</);
+  assert.doesNotMatch(html, /h-\[172px\]|grid-flow-col|Xem các lớp ở trang sau/);
+  assert.doesNotMatch(html, /bg-(?:rose|amber|emerald)-50\b/);
+  assert.doesNotMatch(html, /rounded-full text-\[11px\].*>01</);
 });

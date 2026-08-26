@@ -42,6 +42,7 @@ import {
   shouldShowFieldError,
 } from "@/lib/auth/field-feedback";
 import { authQueryKeys } from "@/lib/auth/query-keys";
+import { staffQueryKeys } from "@/lib/staff/query-keys";
 import { useAuth } from "@/lib/hooks/useAuth";
 import { noSavedInfoFormProps } from "@/lib/forms/saved-info-policy";
 import { validationMessages } from "@/lib/forms/validation-messages";
@@ -85,10 +86,7 @@ export function UserAccessPanel() {
     queryKey: authQueryKeys.users,
     queryFn: getUsers,
     staleTime: 2 * 60 * 1000,
-    refetchOnMount: "always",
-    refetchOnWindowFocus: "always",
-    refetchInterval: 30_000,
-    refetchIntervalInBackground: false,
+    refetchOnMount: true,
   });
   const inviteTeacherOptionsQuery = useQuery({
     queryKey: ["staff", "teacher-options", "invitations"],
@@ -161,6 +159,7 @@ export function UserAccessPanel() {
             : `Đã chuyển ${getAccountName(account)} sang quyền Giáo viên.`,
       );
       void queryClient.invalidateQueries({ queryKey: authQueryKeys.users });
+      void queryClient.invalidateQueries({ queryKey: staffQueryKeys.root });
       return true;
     } catch (error) {
       notify.error(getApiErrorMessage(error, "Không thể thay đổi quyền người dùng."), {
@@ -184,6 +183,7 @@ export function UserAccessPanel() {
           : `Đã kích hoạt lại ${getAccountName(account)}.`,
       );
       void queryClient.invalidateQueries({ queryKey: authQueryKeys.users });
+      void queryClient.invalidateQueries({ queryKey: staffQueryKeys.root });
       return true;
     } catch (error) {
       notify.error(getApiErrorMessage(error, "Không thể thay đổi trạng thái tài khoản."), {
@@ -227,6 +227,9 @@ export function UserAccessPanel() {
         inviteRole === "teacher" ? inviteStaffId : null,
       );
       setInviteResult(result);
+      if (result.role === "teacher") {
+        void queryClient.invalidateQueries({ queryKey: staffQueryKeys.root });
+      }
     } catch (err) {
       setInviteServerError(
         getApiErrorMessage(err, "Không tạo được lời mời. Vui lòng thử lại."),
@@ -393,7 +396,6 @@ export function UserAccessPanel() {
                     );
                   }}
                   onBlur={() => setInviteEmailFeedback(fieldFeedbackAfterBlur)}
-                  placeholder="nguoi-dung@example.com"
                   autoComplete="off"
                   disabled={isInviting}
                   aria-invalid={Boolean(inviteError)}
@@ -409,9 +411,9 @@ export function UserAccessPanel() {
                     {inviteError}
                   </p>
                 ) : null}
-                <fieldset className="mb-3">
+                <fieldset className="mb-4">
                   <legend className="form-label-text mb-1.5 text-gray-700">Vai trò</legend>
-                  <div className="grid grid-cols-2 rounded-md border border-gray-200 bg-gray-50 p-0.5">
+                  <div className="grid h-8 grid-cols-2 overflow-hidden rounded-md border border-gray-200 bg-gray-100 p-0.5">
                     {(["teacher", "admin"] as const).map((role) => (
                       <button
                         key={role}
@@ -424,10 +426,11 @@ export function UserAccessPanel() {
                           setInviteServerError("");
                         }}
                         className={cn(
-                          "h-8 rounded text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
+                          "select-none rounded-[5px] text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40",
                           inviteRole === role
                             ? "bg-primary text-primary-foreground shadow-sm"
-                            : "text-gray-600 hover:bg-white",
+                            : "text-gray-600 hover:bg-primary-soft hover:text-primary",
+                          "disabled:cursor-not-allowed disabled:opacity-60",
                         )}
                       >
                         {role === "teacher" ? "Giáo viên" : "Admin"}
@@ -436,27 +439,46 @@ export function UserAccessPanel() {
                   </div>
                 </fieldset>
                 {inviteRole === "teacher" ? (
-                  <div className="mb-3">
+                  <div className="mb-4">
                     <label htmlFor="invite-staff" className="form-label-text mb-1.5 block text-gray-700">
                       Hồ sơ giáo viên
                     </label>
-                    <select
-                      id="invite-staff"
-                      value={inviteStaffId}
-                      disabled={isInviting || inviteTeacherOptionsQuery.isPending}
-                      onChange={(event) => {
-                        setInviteStaffId(event.currentTarget.value);
-                        setInviteServerError("");
-                      }}
-                      className={cn(formTextControlClassName, "appearance-auto")}
-                    >
-                      <option value="">
-                        {inviteTeacherOptionsQuery.isPending ? "Đang tải giáo viên..." : "Chọn giáo viên"}
-                      </option>
-                      {inviteTeacherOptions.map((option) => (
-                        <option key={option.id} value={option.id}>{option.full_name}</option>
-                      ))}
-                    </select>
+                    <div className="relative">
+                      <select
+                        id="invite-staff"
+                        value={inviteStaffId}
+                        disabled={isInviting || inviteTeacherOptionsQuery.isPending}
+                        aria-busy={inviteTeacherOptionsQuery.isPending || undefined}
+                        onChange={(event) => {
+                          const selectedId = event.currentTarget.value;
+                          setInviteStaffId(selectedId);
+                          setInviteServerError("");
+                          // Prefill the invited account email from the staff
+                          // profile (admin already entered it) to avoid retyping.
+                          const selected = inviteTeacherOptions.find(
+                            (option) => option.id === selectedId,
+                          );
+                          if (selected?.email && !inviteEmail.trim()) {
+                            setInviteEmail(selected.email);
+                            setInviteEmailFeedback((current) =>
+                              fieldFeedbackAfterInput(current, selected.email),
+                            );
+                          }
+                        }}
+                        className={cn(formTextControlClassName, "appearance-auto pr-9")}
+                      >
+                        <option value="">Chọn giáo viên</option>
+                        {inviteTeacherOptions.map((option) => (
+                          <option key={option.id} value={option.id}>
+                            {option.full_name}
+                            {option.email ? ` · ${option.email}` : ""}
+                          </option>
+                        ))}
+                      </select>
+                      {inviteTeacherOptionsQuery.isPending ? (
+                        <LoaderCircle className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-gray-400 motion-reduce:animate-none" aria-hidden="true" />
+                      ) : null}
+                    </div>
                     {inviteTeacherOptionsQuery.isError ? (
                       <p role="alert" className="form-message-text mt-1 text-destructive">
                         Không tải được danh sách giáo viên. Vui lòng thử làm mới trang.
@@ -464,28 +486,30 @@ export function UserAccessPanel() {
                     ) : null}
                   </div>
                 ) : null}
-                <div className="flex justify-end gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={isInviting}
-                    onClick={handleCloseInviteDialog}
-                    className="h-8 rounded-md px-3 text-sm"
-                  >
-                    Huỷ
-                  </Button>
-                  <Button
-                    type="submit"
-                    disabled={isInviting}
-                    className="h-8 rounded-md bg-primary px-3 text-sm text-primary-foreground hover:bg-primary/90"
-                  >
-                    <LoadingLabel
-                      label="Đang tạo"
-                      isLoading={isInviting}
-                      idleLabel="Tạo lời mời"
-                    />
-                  </Button>
-                </div>
+                <footer className="-mx-5 -mb-5 mt-4 border-t border-gray-200 bg-white px-5 py-3">
+                  <div className="flex justify-end gap-3">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={isInviting}
+                      onClick={handleCloseInviteDialog}
+                      className="h-8 rounded-md px-3 text-sm"
+                    >
+                      Huỷ
+                    </Button>
+                    <Button
+                      type="submit"
+                      disabled={isInviting}
+                      className="h-8 rounded-md bg-primary px-3 text-sm text-primary-foreground hover:bg-primary/90"
+                    >
+                      {isInviting ? (
+                        <LoadingLabel label="Đang tạo" />
+                      ) : (
+                        "Tạo lời mời"
+                      )}
+                    </Button>
+                  </div>
+                </footer>
               </form>
             ) : (
               <>

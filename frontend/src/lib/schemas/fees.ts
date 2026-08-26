@@ -4,6 +4,11 @@ import { feeMessageTemplatesResponseSchema } from "@/lib/fees/message-templates"
 export { feeMessageTemplatesResponseSchema };
 
 const periodSchema = z.string().regex(/^\d{4}-(?:0[1-9]|1[0-2])$/);
+const feeListPeriodSchema = z.union([
+  periodSchema,
+  z.literal("upcoming"),
+  z.literal("outstanding"),
+]);
 
 const isoDateSchema = z
   .string()
@@ -16,12 +21,21 @@ const isoDateTimeSchema = z
     /^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/,
   )
   .refine(
-    (value) => isCalendarDate(value.slice(0, 10)) && Number.isFinite(Date.parse(value)),
+    (value) =>
+      isCalendarDate(value.slice(0, 10)) && Number.isFinite(Date.parse(value)),
     "Thời điểm không hợp lệ",
   );
 
-const amountSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
-const notificationStateSchema = z.enum(["UNNOTIFIED", "NOTIFIED_UNPAID", "PAID"]);
+const amountSchema = z
+  .number()
+  .int()
+  .nonnegative()
+  .max(Number.MAX_SAFE_INTEGER);
+const notificationStateSchema = z.enum([
+  "UNNOTIFIED",
+  "NOTIFIED_UNPAID",
+  "PAID",
+]);
 const feeStatusSchema = z.enum(["UNPAID", "PAID"]);
 const refundStateSchema = z.enum(["NONE", "PARTIAL", "FULL"]);
 const notificationChannelSchema = z.enum(["zalo_manual", "zalo_copy"]);
@@ -31,12 +45,20 @@ export const feeRecordResponseSchema = z
     id: z.string().uuid(),
     enrollment_id: z.string().uuid(),
     student_id: z.string().uuid(),
+    student_code: z.string().regex(/^TP\d{9}$/).nullable().default(null),
+    student_status: z.enum(["active", "inactive", "archived"]).nullable().default(null),
     student_name: z.string().min(1),
     class_id: z.string().uuid(),
     class_name: z.string().min(1),
     class_type: z.enum(["MONTHLY", "COURSE"]),
     billing_cycle_months: z.number().int().min(1).max(24),
-    billing_cycle_weeks: z.number().int().min(1).max(32_767).nullable().default(null),
+    billing_cycle_weeks: z
+      .number()
+      .int()
+      .min(1)
+      .max(32_767)
+      .nullable()
+      .default(null),
     student_phone: z.string().nullable(),
     student_zalo: z.string().nullable(),
     student_contact_hidden: z.boolean(),
@@ -46,6 +68,12 @@ export const feeRecordResponseSchema = z
     period: periodSchema,
     enrollment_date: isoDateSchema.nullable(),
     due_date: isoDateSchema.nullable(),
+    cycle_no: z.number().int().nonnegative().nullable().optional(),
+    base_due_date: isoDateSchema.nullable().optional(),
+    adjusted_due_date: isoDateSchema.nullable().optional(),
+    coverage_start: isoDateSchema.nullable().optional(),
+    coverage_end: isoDateSchema.nullable().optional(),
+    origin: z.string().max(80).nullable().optional(),
     base_amount: amountSchema,
     discount_amount: amountSchema,
     final_amount: amountSchema,
@@ -89,16 +117,25 @@ export const feeRecordResponseSchema = z
     }
 
     if (record.discount_amount > record.base_amount) {
-      addIssue(context, ["discount_amount"], "Mức giảm không được vượt học phí gốc");
+      addIssue(
+        context,
+        ["discount_amount"],
+        "Mức giảm không được vượt học phí gốc",
+      );
     }
 
     if (record.final_amount > record.base_amount) {
-      addIssue(context, ["final_amount"], "Học phí cuối cùng không được vượt học phí gốc");
+      addIssue(
+        context,
+        ["final_amount"],
+        "Học phí cuối cùng không được vượt học phí gốc",
+      );
     }
 
     const hasNotification = record.notified_at !== null;
     const hasAnyNotificationMetadata =
-      record.notification_channel !== null || record.notification_message !== null;
+      record.notification_channel !== null ||
+      record.notification_message !== null;
     const hasNotificationMetadata =
       record.notification_channel !== null &&
       record.notification_message !== null &&
@@ -124,12 +161,20 @@ export const feeRecordResponseSchema = z
         record.net_collected_amount !== 0 ||
         record.refund_state !== "NONE"
       ) {
-        addIssue(context, ["status"], "Khoản chưa nộp không được có dữ liệu thanh toán");
+        addIssue(
+          context,
+          ["status"],
+          "Khoản chưa nộp không được có dữ liệu thanh toán",
+        );
       }
 
       const expectedState = hasNotification ? "NOTIFIED_UNPAID" : "UNNOTIFIED";
       if (record.notification_state !== expectedState) {
-        addIssue(context, ["notification_state"], "Trạng thái khoản chưa nộp không hợp lệ");
+        addIssue(
+          context,
+          ["notification_state"],
+          "Trạng thái khoản chưa nộp không hợp lệ",
+        );
       }
       return;
     }
@@ -139,7 +184,11 @@ export const feeRecordResponseSchema = z
       record.paid_amount !== record.final_amount ||
       record.paid_date === null
     ) {
-      addIssue(context, ["status"], "Dữ liệu khoản đã nộp không đầy đủ hoặc không đồng nhất");
+      addIssue(
+        context,
+        ["status"],
+        "Dữ liệu khoản đã nộp không đầy đủ hoặc không đồng nhất",
+      );
       return;
     }
 
@@ -156,18 +205,33 @@ export const feeRecordResponseSchema = z
       record.refundable_amount !== expectedNet ||
       record.refund_state !== expectedRefundState
     ) {
-      addIssue(context, ["refunded_amount"], "Dữ liệu hoàn phí không đồng nhất");
+      addIssue(
+        context,
+        ["refunded_amount"],
+        "Dữ liệu hoàn phí không đồng nhất",
+      );
     }
   });
 
 export const feeRecordListResponseSchema = z
   .object({
-    period: periodSchema,
+    period: feeListPeriodSchema,
     records: z.array(feeRecordResponseSchema),
   })
   .superRefine((response, context) => {
     response.records.forEach((record, index) => {
-      if (record.period !== response.period) {
+      if (response.period === "outstanding" && record.status !== "UNPAID") {
+        addIssue(
+          context,
+          ["records", index, "status"],
+          "Danh sách còn phải thu chỉ được chứa khoản chưa nộp",
+        );
+      }
+      if (
+        response.period !== "upcoming" &&
+        response.period !== "outstanding" &&
+        record.period !== response.period
+      ) {
         addIssue(
           context,
           ["records", index, "period"],
@@ -181,6 +245,72 @@ export const feePeriodListResponseSchema = z.object({
   periods: z.array(periodSchema),
 });
 
+export const feePaymentCapabilitiesSchema = z.object({
+  early_payment_enabled: z.boolean(),
+  qr_creation_enabled: z.boolean(),
+  pay2s_qr_ready: z.boolean().default(false),
+  automatic_recording_ready: z.boolean().default(false),
+  pay2s_blocker: z.string().nullable().default(null),
+  early_window_days: z.number().int().min(1).max(180),
+});
+
+export const paymentRequestResponseSchema = z.object({
+  id: z.string().uuid(),
+  request_id: z.string().uuid(),
+  payment_reference: z.string().regex(/^TP\d{9}P[0-9A-HJKMNP-TV-Z]{8}$/),
+  status: z.enum(["OPEN", "EXPIRED", "REVOKED", "PAID", "FAILED", "REVIEW"]),
+  provider: z.string().min(1).max(100),
+  currency: z.literal("VND"),
+  expected_amount: amountSchema.positive(),
+  early_payment: z.boolean(),
+  expires_at: isoDateTimeSchema.nullable(),
+  sent_at: isoDateTimeSchema.nullable(),
+  sent_channel: z
+    .enum(["zalo_manual", "copy_message", "download_qr", "share_link", "other"])
+    .nullable()
+    .optional(),
+  send_count: z.number().int().nonnegative().optional().default(0),
+  created_at: isoDateTimeSchema,
+  settlement_account_id: z.string().uuid().nullable().default(null),
+  qr_payload: z
+    .object({
+      reference: z.string().min(1),
+      amount: amountSchema.positive(),
+      currency: z.literal("VND"),
+      payment_url: z.string().url().nullable().optional(),
+      manual_qr_url: z.string().url().nullable().optional(),
+      receiving_account: z
+        .object({
+          id: z.string().uuid(),
+          label: z.string().min(1),
+          bank_name: z.string().min(1),
+          account_number: z.string().min(4),
+          account_name: z.string().min(1),
+        })
+        .optional(),
+      qr_list: z.array(z.record(z.string(), z.unknown())).optional(),
+    })
+    .nullable(),
+  items: z
+    .array(
+      z.object({
+        fee_record_id: z.string().uuid(),
+        enrollment_id: z.string().uuid(),
+        student_code: z.string().regex(/^TP\d{9}$/),
+        class_name: z.string().min(1),
+        cycle_no: z.number().int().nonnegative(),
+        base_due_date: isoDateSchema.nullable(),
+        adjusted_due_date: isoDateSchema.nullable(),
+        expected_amount: amountSchema.positive(),
+      }),
+    )
+    .min(1),
+});
+
+export const paymentRequestListResponseSchema = z.object({
+  requests: z.array(paymentRequestResponseSchema),
+});
+
 export const feeBatchActionResponseSchema = z
   .object({
     records: z.array(feeRecordResponseSchema),
@@ -190,7 +320,11 @@ export const feeBatchActionResponseSchema = z
     const recordIds = new Set<string>();
     response.records.forEach((record, index) => {
       if (recordIds.has(record.id)) {
-        addIssue(context, ["records", index, "id"], "Kết quả chứa khoản học phí trùng lặp");
+        addIssue(
+          context,
+          ["records", index, "id"],
+          "Kết quả chứa khoản học phí trùng lặp",
+        );
       }
       recordIds.add(record.id);
     });
@@ -198,7 +332,11 @@ export const feeBatchActionResponseSchema = z
     const deletedIds = new Set<string>();
     response.deleted_ids.forEach((id, index) => {
       if (deletedIds.has(id) || recordIds.has(id)) {
-        addIssue(context, ["deleted_ids", index], "Kết quả xoá khoản học phí không hợp lệ");
+        addIssue(
+          context,
+          ["deleted_ids", index],
+          "Kết quả xoá khoản học phí không hợp lệ",
+        );
       }
       deletedIds.add(id);
     });
@@ -258,7 +396,9 @@ export const feeRefundBatchResponseSchema = feeBatchActionResponseSchema
   .extend({ receipt: feeRefundReceiptSchema })
   .superRefine((response, context) => {
     const recordIds = new Set(response.records.map((record) => record.id));
-    const receiptIds = new Set(response.receipt.items.map((item) => item.record_id));
+    const receiptIds = new Set(
+      response.receipt.items.map((item) => item.record_id),
+    );
     if (recordIds.size !== receiptIds.size) {
       addIssue(
         context,
@@ -286,9 +426,17 @@ const feeTransactionSchema = z
       "refund",
       "refund_reversal",
     ]),
-    amount: z.number().int().min(-Number.MAX_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER),
+    amount: z
+      .number()
+      .int()
+      .min(-Number.MAX_SAFE_INTEGER)
+      .max(Number.MAX_SAFE_INTEGER),
     transaction_date: isoDateSchema,
     payment_method: z.enum(["bank_transfer", "cash"]),
+    payment_origin: z.enum(["manual", "manual_early", "pay2s"]),
+    settlement_account_id: z.string().uuid().nullable().default(null),
+    settlement_bank_name: z.string().nullable().default(null),
+    settlement_account_number: z.string().nullable().default(null),
     note: z.string().max(500).nullable(),
     related_payment_id: z.string().uuid().nullable(),
     request_id: z.string().uuid().nullable(),
@@ -340,12 +488,13 @@ export const feeTransactionBatchResponseSchema = z.object({
   histories: z.array(feeTransactionListResponseSchema),
 });
 
-export const feeRefundReversalResponseSchema = feeBatchActionResponseSchema.extend({
-  transaction: feeTransactionSchema.refine(
-    (transaction) => transaction.entry_type === "refund_reversal",
-    "Giao dịch trả về không phải là hoàn tác hoàn phí",
-  ),
-});
+export const feeRefundReversalResponseSchema =
+  feeBatchActionResponseSchema.extend({
+    transaction: feeTransactionSchema.refine(
+      (transaction) => transaction.entry_type === "refund_reversal",
+      "Giao dịch trả về không phải là hoàn tác hoàn phí",
+    ),
+  });
 
 function isCalendarDate(value: string) {
   const [year, month, day] = value.split("-").map(Number);

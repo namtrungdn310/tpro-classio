@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useRef } from "react";
+import { createPortal } from "react-dom";
 import { RiCloseLine as X } from "react-icons/ri";
 import { Button } from "@/components/ui/button";
 import { FormNotice } from "@/components/ui/form-notice";
@@ -209,7 +210,10 @@ export function DatePickerSlide({
     }
   };
 
-  return (
+  // Render above the owning form/workspace instead of inside its stacking
+  // context. This keeps the date picker above action rails and other sibling
+  // controls when it is opened from an embedded student form.
+  return createPortal((
     <div
       role="dialog"
       aria-modal="true"
@@ -383,7 +387,7 @@ export function DatePickerSlide({
         </div>
       </div>
     </div>
-  );
+  ), document.body);
 }
 
 function parseIsoDatePart(value: string | undefined, index: number): number | null {

@@ -19,6 +19,7 @@ const PRE_AUTH_PAGES = new Set([
 ]);
 const PROTECTED_PREFIXES = [
   "/attendance",
+  "/banking",
   "/classes",
   "/fees",
   "/report",

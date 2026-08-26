@@ -12,6 +12,7 @@ import {
 import { useAuth } from "@/lib/hooks/useAuth";
 import { isManagementUser } from "@/lib/auth/permissions";
 import { prefetchRouteData } from "@/lib/query-prefetch";
+import { useOptimisticNavigation } from "@/lib/hooks/useOptimisticNavigation";
 import {
   buildStudentsHref,
   getSelectedStudentClassFromSearchParams,
@@ -32,6 +33,8 @@ export function TabNav() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { user } = useAuth();
+  const { optimisticPathname, showNavigationIntent } =
+    useOptimisticNavigation(pathname);
   const visibleTabs = [...MAIN_NAVIGATION_ITEMS, SETTINGS_NAVIGATION_ITEM];
 
   function handlePrefetch(href: string) {
@@ -71,6 +74,8 @@ export function TabNav() {
       return;
     }
 
+    showNavigationIntent(href);
+
     if (href !== "/students") {
       return;
     }
@@ -86,6 +91,7 @@ export function TabNav() {
     <nav className="hidden md:flex md:h-full md:flex-col md:items-stretch md:gap-2 md:px-3 md:py-3">
         {visibleTabs.map((tab) => {
           const active = isActive(pathname, tab.href);
+          const visuallyActive = isActive(optimisticPathname, tab.href);
           const Icon = tab.icon;
 
           return (
@@ -98,12 +104,12 @@ export function TabNav() {
               onTouchStart={() => handlePrefetch(tab.href)}
               onClick={(event) => handleTabClick(event, tab.href, active)}
               className={`font-ui relative inline-flex h-10 w-full items-center justify-start gap-3 overflow-hidden rounded-xl px-3 text-sm font-medium transition-[background-color,color,box-shadow,transform] duration-200 ease-out ${
-                active
+                visuallyActive
                   ? "bg-primary-soft text-primary shadow-sm"
-                  : "text-[#5F6368] hover:-translate-y-0.5 hover:bg-primary-soft/70 hover:text-primary hover:shadow-sm"
+                  : "text-slate-600 hover:-translate-y-0.5 hover:bg-primary-soft/70 hover:text-primary hover:shadow-sm"
               }`}
             >
-              {active ? (
+              {visuallyActive ? (
                 <span
                   aria-hidden="true"
                   className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-primary"

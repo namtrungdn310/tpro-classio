@@ -512,7 +512,7 @@ export function SecuritySettingsSection({ user }: { user: UserMe }) {
               <Button
                 type="submit"
                 disabled={!otpSent || otpExpired || isSubmitting}
-                className="h-8 rounded-md bg-primary px-4 text-sm text-primary-foreground hover:bg-primary/90"
+                className="h-8 rounded-md bg-primary px-3 text-sm text-primary-foreground hover:bg-primary/90"
               >
                 {isSubmitting ? <LoadingLabel label="Đang cập nhật" /> : "Cập nhật mật khẩu"}
               </Button>

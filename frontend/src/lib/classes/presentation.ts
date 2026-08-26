@@ -168,7 +168,21 @@ export function getClassScheduleSlots(
       return [];
     }
 
-    return [{ day: day as ClassScheduleSlot["day"], start, end }];
+    // Keep per-session staff assignments when the schedule is loaded for an
+    // edit.  Older records may omit these fields (which intentionally keeps
+    // the legacy class-level fallback), while an explicit empty array means
+    // "this session has no assignment" and must not be silently replaced.
+    const teacherIds = readOptionalStringList(slot?.teacher_ids);
+    const assistantIds = readOptionalStringList(slot?.assistant_ids);
+    return [
+      {
+        day: day as ClassScheduleSlot["day"],
+        start,
+        end,
+        ...(teacherIds === undefined ? {} : { teacher_ids: teacherIds }),
+        ...(assistantIds === undefined ? {} : { assistant_ids: assistantIds }),
+      },
+    ];
   });
 
   return normalizeClassScheduleSlots(slots);
@@ -192,17 +206,16 @@ export function normalizeClassScheduleSlots(
 }
 
 /**
- * Teacher effective của một slot — quy tắc fallback DUY NHẤT cho frontend:
- * slot khai rõ teacher_ids thì dùng đúng danh sách đó; thiếu/rỗng (dữ liệu
- * legacy) fallback sang pool giáo viên cấp lớp (sẽ được materialize bởi
- * migration 051 và normalize phía backend).
+ * Teacher effective của một slot.  Một mảng rỗng là assignment rõ ràng và
+ * phải được giữ nguyên để UI báo thiếu giáo viên; chỉ dữ liệu legacy thật sự
+ * không có trường teacher_ids mới fallback tạm sang pool cấp lớp.
  */
 export function getSlotEffectiveTeacherIds(
   slot: { teacher_ids?: readonly string[] },
   classTeacherPool: readonly string[],
 ): string[] {
   const explicit = slot.teacher_ids;
-  return explicit && explicit.length > 0 ? [...explicit] : [...classTeacherPool];
+  return explicit !== undefined ? [...explicit] : [...classTeacherPool];
 }
 
 /**
@@ -542,6 +555,18 @@ function getSafeStringList(
   });
   const fallback = getTrimmedString(record?.[fallbackKey]);
   return Array.from(new Set(normalized.length > 0 ? normalized : fallback ? [fallback] : []));
+}
+
+function readOptionalStringList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return Array.from(
+    new Set(
+      value.flatMap((candidate) => {
+        const text = getTrimmedString(candidate);
+        return text ? [text] : [];
+      }),
+    ),
+  );
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

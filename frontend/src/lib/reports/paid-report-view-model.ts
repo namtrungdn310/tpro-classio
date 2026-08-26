@@ -4,6 +4,7 @@ import type {
   FeePaidReceiptTimelineEvent,
   FeePaidReportSummary,
   FeePaymentMethod,
+  FeePaymentOrigin,
 } from "@/lib/types";
 
 export const EMPTY_PAID_REPORT_SUMMARY: FeePaidReportSummary = {
@@ -75,6 +76,12 @@ export function getPaymentMethodLabel(value: FeePaymentMethod | null) {
     return "Tiền mặt";
   }
   return "Không xác định";
+}
+
+export function getPaymentOriginLabel(value: FeePaymentOrigin) {
+  if (value === "pay2s") return "Pay2S tự động";
+  if (value === "manual_early") return "Thu sớm thủ công";
+  return "Ghi nhận thủ công";
 }
 
 export function getPaymentMethodDistribution(summary: FeePaidReportSummary) {

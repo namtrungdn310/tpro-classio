@@ -75,11 +75,19 @@ test("class list mutations use the targeted invalidation matrix, never a blanket
     new URL("../src/app/(dashboard)/classes/page.tsx", import.meta.url),
     "utf8",
   );
+  const invalidationSource = readFileSync(
+    new URL("../src/lib/query/invalidation.ts", import.meta.url),
+    "utf8",
+  );
   assert.match(pageSource, /invalidateClassScopeData/);
+  assert.match(
+    pageSource,
+    /invalidateDomainQueries\(queryClient, \{ classes: true, dashboard: true \}\)/,
+  );
   assert.doesNotMatch(pageSource, /invalidateQueries\(\{ queryKey: \["students"\] \}\)/);
   assert.doesNotMatch(pageSource, /invalidateQueries\(\{ queryKey: \["fees"\] \}\)/);
   assert.doesNotMatch(pageSource, /refreshDependencies/);
-  // Invalidation vẫn chạm dashboard + toàn bộ class scopes.
-  assert.match(pageSource, /classQueryKeys\.all/);
-  assert.match(pageSource, /\[\"dashboard\"\]/);
+  // Invalidation vẫn chạm dashboard + toàn bộ class scopes (qua helper).
+  assert.match(invalidationSource, /classQueryKeys\.all/);
+  assert.match(invalidationSource, /\[\"dashboard\"\]/);
 });

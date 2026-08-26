@@ -30,7 +30,7 @@ export function DashboardFeeSummaryCard({
     <article
       aria-labelledby="dashboard-fee-summary-title"
       className={cn(
-        "dashboard-fee-panel-enter relative flex min-h-[160px] flex-col overflow-hidden rounded-[22px] border border-primary/10 bg-white px-5 py-4 text-gray-950 shadow-[0_16px_50px_rgba(0,39,135,0.06)]",
+        "dashboard-fee-panel-enter relative flex min-h-[160px] flex-col overflow-hidden rounded-[22px] border border-slate-300 bg-white px-5 py-4 text-gray-950 shadow-[0_16px_50px_rgba(15,23,42,0.08)]",
         className,
       )}
       style={{ animationDelay: "110ms" }}
@@ -42,7 +42,7 @@ export function DashboardFeeSummaryCard({
         >
           Tài chính học phí
         </h2>
-        <p className="caption-text shrink-0 text-right text-gray-500">
+        <p className="caption-text shrink-0 text-right text-slate-600">
           {hasFees
             ? `${fees.paid_record_count} / ${fees.record_count} khoản đã nộp`
             : "Chưa phát sinh học phí"}
@@ -77,7 +77,7 @@ export function DashboardFeeSummaryCard({
                   <span
                     key={index}
                     aria-hidden="true"
-                    className="relative min-w-0 flex-1 aspect-square overflow-hidden bg-slate-200"
+                    className="relative min-w-0 flex-1 aspect-square overflow-hidden bg-slate-300"
                   >
                     <span
                       className="absolute inset-y-0 left-0 bg-primary"
@@ -90,13 +90,13 @@ export function DashboardFeeSummaryCard({
                 <span
                   key={index}
                   aria-hidden="true"
-                  className="min-w-0 flex-1 aspect-square bg-slate-200"
+                  className="min-w-0 flex-1 aspect-square bg-slate-300"
                 />
               );
             })}
           </div>
 
-          <div className="mt-1 h-[3px] w-full overflow-hidden rounded-full bg-slate-200">
+          <div className="mt-1 h-[3px] w-full overflow-hidden rounded-full bg-slate-300">
             <div
               className="h-full rounded-full bg-primary transition-transform duration-200 ease-linear"
               style={{
@@ -106,7 +106,7 @@ export function DashboardFeeSummaryCard({
             />
           </div>
 
-          <p className="caption-text mt-1.5 text-gray-500">
+          <p className="caption-text mt-1.5 text-slate-600">
             {hasFees ? "đã thu học phí" : "chưa phát sinh học phí"}
           </p>
         </div>
@@ -114,7 +114,7 @@ export function DashboardFeeSummaryCard({
 
       <div className="mt-3 grid min-w-0 grid-cols-2 gap-x-6">
         <div className="min-w-0">
-          <p className="caption-text font-semibold text-gray-500">
+          <p className="caption-text font-semibold text-slate-600">
             Thực thu ròng
           </p>
           <p
@@ -127,9 +127,9 @@ export function DashboardFeeSummaryCard({
           </p>
         </div>
         <div className="min-w-0">
-          <p className="caption-text font-semibold text-gray-500">Cần thu</p>
+          <p className="caption-text font-semibold text-slate-600">Cần thu</p>
           <p
-            className="metric-money mt-0.5 break-words text-[clamp(1rem,1.2vw,1.2rem)] leading-tight text-gray-500"
+            className="metric-money mt-0.5 break-words text-[clamp(1rem,1.2vw,1.2rem)] leading-tight text-slate-700"
             title={formatCurrency(fees.total_amount)}
           >
             <span className="inline-block translate-y-[0.07em]">
@@ -139,7 +139,7 @@ export function DashboardFeeSummaryCard({
         </div>
       </div>
 
-      <dl className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-gray-100 pt-2">
+      <dl className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-slate-200 pt-2">
         <FinancialValue
           accentClassName="bg-primary"
           label="Thực thu"
@@ -171,7 +171,7 @@ function FinancialValue({
 }) {
   return (
     <div className="min-w-0">
-      <dt className="caption-text flex items-center gap-1.5 text-gray-500">
+      <dt className="caption-text flex items-center gap-1.5 text-slate-600">
         <span
           aria-hidden="true"
           className={`h-1 w-3 shrink-0 rounded-full ${accentClassName}`}

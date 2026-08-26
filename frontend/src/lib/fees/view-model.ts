@@ -1,6 +1,5 @@
 import type { FeeRecordResponse } from "@/lib/types";
 import {
-  DEFAULT_FEE_MESSAGE_TEMPLATES,
   MAX_RENDERED_FEE_MESSAGE_LENGTH,
   upgradeLegacyFeeMessageTemplate,
   type FeeMessageTemplateValues,
@@ -9,7 +8,10 @@ import { getClassSortKey } from "@/lib/utils/class-groups";
 import { formatCurrency, formatDate } from "@/lib/utils/format";
 
 export type StudentFeeGroup = {
+  group_key: string;
   student_id: string;
+  student_code?: string | null;
+  student_status?: FeeRecordResponse["student_status"];
   student_name: string;
   student_zalo: string | null;
   student_phone: string | null;
@@ -38,13 +40,22 @@ export function formatFeeGroupSubject(group: StudentFeeGroup): string {
   return `em ${group.student_name}, ${classLabel} ${classNames || "chưa xác định"}`;
 }
 
-export function buildStudentFeeGroups(records: FeeRecordResponse[]) {
+export function buildStudentFeeGroups(
+  records: FeeRecordResponse[],
+  options: { separatePeriods?: boolean } = {},
+) {
   const groups = new Map<string, StudentFeeGroup>();
 
   for (const record of records) {
-    const current = groups.get(record.student_id);
+    const groupKey = options.separatePeriods
+      ? `${record.student_id}:${record.period}`
+      : record.student_id;
+    const current = groups.get(groupKey);
     const next: StudentFeeGroup = current ?? {
+      group_key: groupKey,
       student_id: record.student_id,
+      student_code: record.student_code,
+      student_status: record.student_status,
       student_name: record.student_name,
       student_zalo: record.student_zalo,
       student_phone: record.student_phone,
@@ -68,6 +79,7 @@ export function buildStudentFeeGroups(records: FeeRecordResponse[]) {
     };
 
     next.records.push(record);
+    next.student_status = record.student_status ?? next.student_status;
     next.student_contact_hidden ||= record.student_contact_hidden;
     next.student_zalo ??= record.student_zalo;
     next.student_phone ??= record.student_phone;
@@ -88,7 +100,7 @@ export function buildStudentFeeGroups(records: FeeRecordResponse[]) {
     if (!next.classes.some((class_) => class_.id === record.class_id)) {
       next.classes.push({ id: record.class_id, name: record.class_name });
     }
-    groups.set(record.student_id, next);
+    groups.set(groupKey, next);
   }
 
   const groupedRecords = Array.from(groups.values());
@@ -180,7 +192,7 @@ export function renderGroupFeeMessage(
 export function getGroupCopyMessage(
   group: StudentFeeGroup,
   isPaid: boolean,
-  templates: FeeMessageTemplateValues = DEFAULT_FEE_MESSAGE_TEMPLATES,
+  templates: FeeMessageTemplateValues,
 ) {
   if (!isPaid) {
     const storedMessages = group.records

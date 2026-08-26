@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { RiArrowGoBackLine as RotateCcw } from "react-icons/ri";
 import { Button } from "@/components/ui/button";
 import { FormDialogBody, FormDialogFooter, FormDialogShell } from "@/components/ui/form-dialog-shell";
@@ -10,11 +10,10 @@ import {
   UnsavedChangesNotice,
 } from "@/components/ui/unsaved-changes-notice";
 import {
-  FeeTemplateEditor,
-  type FeeTemplateEditorHandle,
-} from "@/components/fees/fee-template-editor";
+  FeeMessageCodeEditor,
+  type FeeMessageCodeEditorHandle,
+} from "@/components/fees/fee-message-code-editor";
 import {
-  DEFAULT_FEE_MESSAGE_TEMPLATES,
   FEE_MESSAGE_TOKENS,
   MAX_FEE_MESSAGE_TEMPLATE_LENGTH,
   feeMessageTemplateValuesSchema,
@@ -37,6 +36,7 @@ type FeeMessageTemplateDialogProps = {
   isSaving: boolean;
   onClose: () => void;
   onSave: (payload: FeeMessageTemplatesUpdate) => void;
+  onReset: (version: number) => void;
   open: boolean;
   templates: FeeMessageTemplatesResponse;
 };
@@ -45,6 +45,7 @@ export function FeeMessageTemplateDialog({
   isSaving,
   onClose,
   onSave,
+  onReset,
   open,
   templates,
 }: FeeMessageTemplateDialogProps) {
@@ -57,6 +58,7 @@ export function FeeMessageTemplateDialog({
       isSaving={isSaving}
       onClose={onClose}
       onSave={onSave}
+      onReset={onReset}
       templates={templates}
     />
   );
@@ -66,15 +68,16 @@ function FeeMessageTemplateDialogContent({
   isSaving,
   onClose,
   onSave,
+  onReset,
   templates,
 }: Omit<FeeMessageTemplateDialogProps, "open">) {
-  const reminderRef = useRef<FeeTemplateEditorHandle>(null);
-  const receivedRef = useRef<FeeTemplateEditorHandle>(null);
+  const reminderRef = useRef<FeeMessageCodeEditorHandle>(null);
+  const receivedRef = useRef<FeeMessageCodeEditorHandle>(null);
   const [values, setValues] = useState<FeeMessageTemplateValues>({
-    payment_reminder_template: templates.payment_reminder_template,
-    payment_received_template: templates.payment_received_template,
+    payment_reminder_template: templates.active.payment_reminder_template,
+    payment_received_template: templates.active.payment_received_template,
   });
-  const [baseVersion, setBaseVersion] = useState(templates.version);
+  const [baseVersion] = useState(templates.version);
   const [isSubmitted, setIsSubmitted] = useState(false);
   const {
     markBlur,
@@ -89,15 +92,9 @@ function FeeMessageTemplateDialogContent({
     }
   };
 
-  // A 409 refreshes the latest template metadata while this dialog remains
-  // mounted. Rebase the next explicit retry onto that version instead of
-  // repeatedly submitting the stale version captured when the dialog opened.
-  useEffect(() => {
-    setBaseVersion(templates.version);
-  }, [templates.version]);
   const hasDraftChanges =
-    values.payment_reminder_template !== templates.payment_reminder_template ||
-    values.payment_received_template !== templates.payment_received_template;
+    values.payment_reminder_template !== templates.active.payment_reminder_template ||
+    values.payment_received_template !== templates.active.payment_received_template;
   const validation = useMemo(() => {
     const result = feeMessageTemplateValuesSchema.safeParse(values);
     if (result.success) {
@@ -117,14 +114,11 @@ function FeeMessageTemplateDialogContent({
     };
   }, [values]);
   const hasErrors = validation.data === null;
-  const hasPersistableChanges = Boolean(
-    validation.data &&
-      (validation.data.payment_reminder_template !== templates.payment_reminder_template ||
-        validation.data.payment_received_template !== templates.payment_received_template),
-  );
-  const hasActionableDraft = validation.data ? hasPersistableChanges : hasDraftChanges;
+  // Compare the raw editor values so an explicit Enter is immediately visible
+  // as a draft change and remains an intentional part of the saved message.
+  const hasActionableDraft = hasDraftChanges;
   const shouldShowUnsavedNotice = shouldShowUnsavedChanges({
-    hasChanges: hasPersistableChanges,
+    hasChanges: hasDraftChanges,
     hasErrors,
     isSaving,
   });
@@ -154,7 +148,7 @@ function FeeMessageTemplateDialogContent({
 
   function insertToken(
     field: TemplateField,
-    editorRef: React.RefObject<FeeTemplateEditorHandle | null>,
+    editorRef: React.RefObject<FeeMessageCodeEditorHandle | null>,
     token: string,
     label: string,
   ) {
@@ -172,9 +166,13 @@ function FeeMessageTemplateDialogContent({
   }
 
   function resetToDefaults() {
-    setValues({ ...DEFAULT_FEE_MESSAGE_TEMPLATES });
-    setIsSubmitted(false);
-    resetFeedback();
+    if (templates.is_customized) {
+      onReset(baseVersion);
+    } else {
+      setValues({ ...templates.defaults });
+      setIsSubmitted(false);
+      resetFeedback();
+    }
   }
 
   return (
@@ -182,16 +180,11 @@ function FeeMessageTemplateDialogContent({
       title="Nội dung tin nhắn Zalo"
       width="xl"
       isBusy={isSaving}
-      dirty={hasPersistableChanges}
-      onClose={requestClose}
+      dirty={hasDraftChanges}
+        onClose={requestClose}
     >
         <FormDialogBody>
-          <UnsavedChangesNotice
-            hasChanges={hasPersistableChanges}
-            hasErrors={hasErrors}
-            isSaving={isSaving}
-          />
-          <div className={`${shouldShowUnsavedNotice ? "mt-4" : ""} grid gap-5 lg:grid-cols-2`}>
+          <div className="grid gap-5 lg:grid-cols-2">
             {fieldConfigs.map((config) => {
               const errorId = `${config.field}-error`;
               const error = shouldShowError(config.field, isSubmitted)
@@ -205,7 +198,10 @@ function FeeMessageTemplateDialogContent({
                   >
                     {config.label}
                   </label>
-                  <FeeTemplateEditor
+                  <p className="mt-1 text-xs text-gray-500">
+                    Enter để xuống dòng · Backspace ở đầu dòng để nối.
+                  </p>
+                  <FeeMessageCodeEditor
                     ref={config.textareaRef}
                     id={config.field}
                     value={values[config.field]}
@@ -215,7 +211,7 @@ function FeeMessageTemplateDialogContent({
                     onChange={(value) => updateField(config.field, value)}
                     onBlur={() => markBlur(config.field)}
                   />
-                  <div className="mt-1.5 flex min-h-5 items-start justify-between gap-3">
+                  <div className="mt-1.5 flex min-h-5 flex-wrap items-center justify-between gap-x-3 gap-y-1">
                     {error ? (
                       <p id={errorId} className="text-sm font-medium text-destructive">
                         {error}
@@ -250,6 +246,15 @@ function FeeMessageTemplateDialogContent({
               );
             })}
           </div>
+          {shouldShowUnsavedNotice ? (
+            <div className="mt-4">
+              <UnsavedChangesNotice
+                hasChanges={hasDraftChanges}
+                hasErrors={hasErrors}
+                isSaving={isSaving}
+              />
+            </div>
+          ) : null}
           </FormDialogBody>
 
         <FormDialogFooter

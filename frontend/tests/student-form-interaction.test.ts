@@ -6,6 +6,10 @@ const studentPageSource = readFileSync(
   new URL("../src/app/(dashboard)/students/page.tsx", import.meta.url),
   "utf8",
 );
+const studentWorkspaceSource = readFileSync(
+  new URL("../src/components/students/student-workspace-dialog.tsx", import.meta.url),
+  "utf8",
+);
 const shellSource = readFileSync(
   new URL("../src/components/ui/form-dialog-shell.tsx", import.meta.url),
   "utf8",
@@ -51,22 +55,26 @@ test("visible custom fee allows selecting its label and amount as one value", ()
 test("removing a student describes the last-class lifecycle and uses precise action labels", () => {
   assert.match(
     studentPageSource,
-    /label: `Xoá \$\{actionTarget\.full_name\} khỏi lớp`/,
+    /<StudentWorkspaceDialog/,
+  );
+  assert.doesNotMatch(
+    studentPageSource,
+    /EntityActionsDialog/,
   );
   assert.match(
-    studentPageSource,
-    /actionTarget && !isFormOpen && !deleteTarget && !pendingIdentityConflict/,
+    studentWorkspaceSource,
+    /label:\s*"Rời lớp"/,
   );
   assert.match(
-    studentPageSource,
+    studentWorkspaceSource,
     /const isLastActiveClass = student\.active_enrollments\.length <= 1/,
   );
   assert.match(
-    studentPageSource,
-    /Đây là lớp đang học cuối cùng nên hồ sơ cũng sẽ được xoá khỏi danh sách học viên\. Lịch sử học phí vẫn được giữ nguyên\./,
+    studentWorkspaceSource,
+    /Đây là lớp đang học cuối cùng nên hồ sơ sẽ chuyển sang danh sách Đã rời lớp\. Lịch sử học phí vẫn được giữ nguyên\./,
   );
   assert.match(
-    studentPageSource,
+    studentWorkspaceSource,
     /Hồ sơ và các lớp đang học khác vẫn được giữ nguyên\./,
   );
 });

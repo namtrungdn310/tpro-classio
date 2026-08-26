@@ -1,4 +1,4 @@
-﻿import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 /**
  * BROWSER COMPONENT HARNESS — test pointer geometry/lane/assignment trên
@@ -14,8 +14,8 @@ type Occ = {
   className: string;
   classCategory?: "SPECIALIZED";
   gradeLevel?: number;
-  busyTeacherIds: string[];
-  busyAssistantIds: string[];
+  busyTeacherIds?: string[];
+  busyAssistantIds?: string[];
 };
 
 const occupiedBlock = (
@@ -69,10 +69,13 @@ const setAvailabilityError = (page: Page, message: string | null) =>
     message,
   );
 
+const selectTeacher = (page: Page, name: string) =>
+  page.evaluate((next) => window.__scheduleTest.selectTeacher(next), name);
+
 const clickConfirm = (page: Page) =>
   page.evaluate(() => {
     const btn = [...document.querySelectorAll<HTMLButtonElement>("button")].find(
-      (b) => /xác nhận/i.test(b.textContent ?? ""),
+      (b) => /áp dụng lịch|xác nhận/i.test(b.textContent ?? ""),
     );
     if (btn) btn.click();
     return Boolean(btn);
@@ -93,20 +96,36 @@ test.beforeEach(async ({ page }) => {
   await page.waitForTimeout(400);
 });
 
-test("drag of exactly two 30-minute cells commits a 60-minute payload", async ({
+test("multi-teacher default is the overview scope where painting is blocked", async ({
   page,
 }) => {
-  await drag(page, [0, 6], [0, 8]);
   let s = await state(page);
+  expect(s.activeTeacher).toBe("overview");
+  await drag(page, [0, 6], [0, 8]);
+  s = await state(page);
+  expect(s.pressed).toEqual([]);
+  await expect(page.locator("[role='status']")).toContainText(
+    "Chọn một giáo viên để bắt đầu tô lịch",
+  );
+});
+
+test("drag of exactly two 30-minute cells commits a 60-minute payload for the chosen teacher", async ({
+  page,
+}) => {
+  await selectTeacher(page, "Cô Hạnh");
+  let s = await state(page);
+  expect(s.activeTeacher).toBe("t1");
+  await drag(page, [0, 6], [0, 8]);
+  s = await state(page);
   expect(s.pressed).toEqual(["0:6", "0:7"]);
-  expect(s.detail).toContain("Thứ 2 (10:00-11:00)");
+  expect(s.detail).toContain("Thứ 2 10:00–11:00");
   expect(await clickConfirm(page)).toBe(true);
   s = await state(page);
   expect(s.saved?.slots?.[0]).toMatchObject({
     day: "Thứ 2",
     start: "10:00",
     end: "11:00",
-    teacher_ids: ["t1", "t2"],
+    teacher_ids: ["t1"],
     assistant_ids: ["a1"],
   });
 });
@@ -114,6 +133,7 @@ test("drag of exactly two 30-minute cells commits a 60-minute payload", async ({
 test("two adjacent clicks create 60 minutes without committing a 30-minute orphan", async ({
   page,
 }) => {
+  await selectTeacher(page, "Cô Hạnh");
   const first = await cellRect(page, 0, 6);
   const second = await cellRect(page, 0, 7);
   await page.mouse.click(first.x + first.w / 2, first.y + first.h / 2);
@@ -127,22 +147,65 @@ test("two adjacent clicks create 60 minutes without committing a 30-minute orpha
   await page.mouse.click(second.x + second.w / 2, second.y + second.h / 2);
   s = await state(page);
   expect(s.pressed).toEqual(["0:6", "0:7"]);
-  expect(s.detail).toContain("Thứ 2 (10:00-11:00)");
+  expect(s.detail).toContain("Thứ 2 10:00–11:00");
   expect(s.confirmDisabled).toBeNull();
   await expect(page.locator("[data-click-anchor='true']")).toHaveCount(0);
 });
 
-test("one busy teacher blocks nothing when another teacher is free; defaults to the free one", async ({
+test("the chosen teacher's busy block locks only her scope; the free teacher paints it", async ({
   page,
 }) => {
   await setOccupied(page, [occupiedBlock("10:00", "11:00", "TEACHER", ["t1"])]);
   await page.waitForTimeout(300);
+
+  await selectTeacher(page, "Cô Hạnh");
+  let s = await state(page);
+  expect(s.activeTeacher).toBe("t1");
+  const busyCell = page.locator(
+    "button[data-schedule-day='Thứ 2'][data-schedule-time='10:00']",
+  );
+  await expect(busyCell).toHaveAttribute("data-schedule-state", "busy");
+  await expect(busyCell).toHaveAttribute("aria-disabled", "true");
+  await expect(busyCell).toHaveAttribute("title", /Cô Hạnh.*đã bận lớp/);
+  await drag(page, [0, 6], [0, 8]);
+  s = await state(page);
+  expect(s.pressed).toEqual([], "Hạnh cannot paint her busy slot");
+
+  await selectTeacher(page, "Thầy Phúc");
+  const freeCell = page.locator(
+    "button[data-schedule-day='Thứ 2'][data-schedule-time='10:00']",
+  );
+  await expect(freeCell).toHaveAttribute("data-schedule-state", "free");
+  await expect(freeCell).not.toHaveAttribute("aria-disabled", "true");
+  await drag(page, [0, 6], [0, 8]);
+  s = await state(page);
+  expect(s.pressed).toEqual(["0:6", "0:7"]);
+  await expect(clickConfirm(page)).resolves.toBe(true);
+  const saved = await state(page);
+  expect(saved.saved?.slots?.[0]?.teacher_ids).toEqual(["t2"]);
+});
+
+test("a legacy conflict without staff ids fails closed for every teacher", async ({
+  page,
+}) => {
+  await setOccupied(page, [
+    {
+      day: "Thứ 2",
+      start: "10:00",
+      end: "11:00",
+      classId: "legacy",
+      className: "Lớp cũ",
+    },
+  ]);
+  await page.waitForTimeout(300);
+  await selectTeacher(page, "Cô Hạnh");
+  const cell = page.locator(
+    "button[data-schedule-day='Thứ 2'][data-schedule-time='10:00']",
+  );
+  await expect(cell).toHaveAttribute("title", /Không xác định được lịch giáo viên/);
   await drag(page, [0, 6], [0, 8]);
   const s = await state(page);
-  expect(s.pressed.length).toBe(2);
-  await clickConfirm(page);
-  const after = await state(page);
-  expect(after.saved?.slots?.[0]?.teacher_ids).toEqual(["t2"]);
+  expect(s.pressed).toEqual([]);
 });
 
 test("no free teacher across the whole interval blocks painting", async ({
@@ -153,6 +216,7 @@ test("no free teacher across the whole interval blocks painting", async ({
     occupiedBlock("10:30", "11:00", "TEACHER", ["t2"]),
   ]);
   await page.waitForTimeout(300);
+  await selectTeacher(page, "Cô Hạnh");
   await drag(page, [0, 6], [0, 8]);
   const s = await state(page);
   expect(s.pressed).toEqual([]);
@@ -163,6 +227,7 @@ test("busy assistant neither blocks the slot nor is assigned", async ({
 }) => {
   await setOccupied(page, [occupiedBlock("10:00", "11:00", "ASSISTANT", ["a1"])]);
   await page.waitForTimeout(300);
+  await selectTeacher(page, "Cô Hạnh");
   await drag(page, [0, 6], [0, 8]);
   const s = await state(page);
   expect(s.pressed.length).toBe(2);
@@ -171,7 +236,7 @@ test("busy assistant neither blocks the slot nor is assigned", async ({
   expect(after.saved?.slots?.[0]?.assistant_ids).toEqual([]);
 });
 
-test("dual-role same session: ONE canonical block carrying BOTH busy teacher and busy assistant ids", async ({
+test("dual-role same session: ONE canonical block carrying the busy teacher label", async ({
   page,
 }) => {
   await setOccupied(page, [
@@ -188,15 +253,15 @@ test("dual-role same session: ONE canonical block carrying BOTH busy teacher and
     },
   ]);
   await page.waitForTimeout(300);
+  await selectTeacher(page, "Cô Hạnh");
   const labels = await blockLabels(page);
   const canonical = labels.filter((label) => label.includes("Lớp 6A1"));
   expect(canonical.length).toBe(1);
   expect(canonical[0]).toContain("10:00 đến 11:00");
-  expect(canonical[0]).toContain("giáo viên bận");
-  expect(canonical[0]).toContain("trợ giảng bận");
+  expect(canonical[0]).toContain("Cô Hạnh đang bận");
 });
 
-test("lane chain A-B-C renders all three blocks with no overflow badge", async ({
+test("lane chain A-B-C renders all three blocks with no overflow badge in overview", async ({
   page,
 }) => {
   await setOccupied(page, [
@@ -214,6 +279,7 @@ test("lane chain A-B-C renders all three blocks with no overflow badge", async (
 test("Escape during drag cancels the preview, keeps the panel open and clears selection", async ({
   page,
 }) => {
+  await selectTeacher(page, "Cô Hạnh");
   const a = await cellRect(page, 0, 6);
   const b = await cellRect(page, 0, 8);
   await page.mouse.move(a.x + a.w / 2, a.y + a.h / 2);
@@ -237,6 +303,7 @@ test("real availability error shows alert, disables confirm and painting; retry 
   expect(s.alertText).toContain("Không thể tải lịch bận");
   expect(s.confirmDisabled).not.toBeNull();
 
+  await selectTeacher(page, "Cô Hạnh");
   const one = await cellRect(page, 0, 6);
   await page.mouse.click(one.x + one.w / 2, one.y + one.h / 2);
   await page.keyboard.press("Space");
@@ -257,14 +324,11 @@ test("real availability error shows alert, disables confirm and painting; retry 
 });
 
 test("pointercancel does not commit a painted session", async ({ page }, testInfo) => {
-  // Firefox desktop không tạo pointer capture cho mouse (chỉ touch/pen) nên
-  // sự kiện pointercancel không tồn tại ở đây — hành vi được phủ bởi unit
-  // test jsdom (schedule-grid-pointer-lifecycle.test.ts "pointercancel discards
-  // the preview...") và chromium E2E bên dưới.
   test.skip(
     testInfo.project.name === "firefox",
     "Firefox desktop mouse có pointer capture; pointercancel chỉ tồn tại cho touch/pen — phủ bởi jsdom unit test",
   );
+  await selectTeacher(page, "Cô Hạnh");
   const a = await cellRect(page, 0, 6);
   const b = await cellRect(page, 0, 8);
   await page.mouse.move(a.x + a.w / 2, a.y + a.h / 2);

@@ -80,9 +80,63 @@ export const classResponseSchema = z.object({
   next_fee_due_state: z.enum(["OVERDUE", "UPCOMING", "NONE"]).default("NONE"),
   cancelled_at: z.string().nullable().default(null),
   unresolved_makeup_count: z.number().int().min(0).default(0),
+  active_suspension: z
+    .object({
+      id: z.string().uuid(),
+      suspended_from: z.string(),
+      resume_on: z.string(),
+      reason_code: z.string().min(1),
+    })
+    .nullable()
+    .default(null),
+  previous_class_id: z.string().uuid().nullable().default(null),
 });
 
 export const classResponseListSchema = z.array(classResponseSchema);
+
+const classCopyTemplateSchema = z.object({
+  name: z.string().min(1).max(120),
+  type: z.enum(["MONTHLY", "COURSE"]),
+  base_fee: z.number().int().min(0).max(999_999_999_999),
+  billing_cycle_months: z.number().int().min(1).max(24),
+  billing_cycle_weeks: z.number().int().min(1).max(32_767).nullable().default(null),
+  identity_scheme: z.enum(["ACADEMIC_YEAR", "INTAKE"]),
+  class_category: z.enum(["GENERAL", "SPECIALIZED", "IELTS", "CUSTOM"]).nullable(),
+  grade_mode: z.enum(["GRADE", "NONE"]).nullable(),
+  program_name: z.string().min(1).max(120).nullable(),
+  grade_level: z.number().int().min(1).max(12).nullable(),
+  academic_year_start: z.number().int().min(2000).max(2200).nullable(),
+  schedule: classScheduleSchema,
+  teacher_ids: z.array(z.string().uuid()).default([]),
+  assistant_ids: z.array(z.string().uuid()).default([]),
+  source_class_id: z.string().uuid(),
+});
+
+export const classContinuationPreviewSchema = z.object({
+  source_class_id: z.string().uuid(),
+  source_version: z.number().int().min(1),
+  suggested_start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  suggested_end_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  template: classCopyTemplateSchema,
+  students: z.array(z.object({
+    student_id: z.string().uuid(),
+    student_code: z.string().nullable(),
+    full_name: z.string().min(1),
+    source_enrollment_id: z.string().uuid(),
+    custom_fee: z.number().int().min(0).nullable(),
+    selected_slot_count: z.number().int().min(0),
+    selected_slots: z.array(z.object({
+      day: z.enum(["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7", "Chủ Nhật"]),
+      start: z.string().regex(/^\d{2}:\d{2}$/),
+      end: z.string().regex(/^\d{2}:\d{2}$/),
+    })).max(4),
+  })),
+});
+
+export const classContinuationCreateResponseSchema = z.object({
+  created_class: classResponseSchema,
+  enrolled_student_count: z.number().int().min(0),
+});
 
 export const classScopeSummarySchema = z.object({
   operational: z.number().int().min(0),
@@ -131,6 +185,22 @@ export const classHistorySchema = z.object({
   start_date: z.string().nullable(),
   end_date: z.string().nullable(),
   schedule: classScheduleSchema,
+  schedule_slots: z.array(
+    z.object({
+      slot_id: z.string().uuid(),
+      day: z.enum(["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7", "Chủ Nhật"]),
+      start: z.string(),
+      end: z.string(),
+      effective_from: z.string(),
+      effective_until: z.string().nullable(),
+      teachers: z.array(
+        z.object({
+          staff_id: z.string().uuid(),
+          staff_name: z.string().min(1),
+        }),
+      ).default([]),
+    }),
+  ).default([]),
   teachers: z.array(
     z.object({
       teacher_id: z.string().uuid(),
@@ -176,7 +246,6 @@ export const classHistorySchema = z.object({
       display_status: z.enum([
         "MAKEUP_PENDING",
         "MAKEUP_SCHEDULED",
-        "AWAITING_CONFIRMATION",
         "MAKEUP_COMPLETED",
         "RESTORED",
         "CANCELLED",
@@ -203,7 +272,6 @@ export const classOccurrenceSchema = z.object({
     .enum([
       "MAKEUP_PENDING",
       "MAKEUP_SCHEDULED",
-      "AWAITING_CONFIRMATION",
       "MAKEUP_COMPLETED",
       "RESTORED",
       "CANCELLED",
@@ -238,7 +306,6 @@ export const classSessionExceptionSchema = z.object({
   display_status: z.enum([
     "MAKEUP_PENDING",
     "MAKEUP_SCHEDULED",
-    "AWAITING_CONFIRMATION",
     "MAKEUP_COMPLETED",
     "RESTORED",
     "CANCELLED",
@@ -317,6 +384,21 @@ export const postponementCreateSchema = z.object({
   }),
   exceptions: z.array(classSessionExceptionSchema),
   billing_impact: z.literal("NONE"),
+});
+
+export const suspensionPreviewSchema = z.object({
+  class_id: z.string().uuid(),
+  suspended_from: z.string(),
+  resume_on: z.string(),
+  credit_days: z.number().int().nonnegative(),
+  member_summary: z.array(
+    z.object({
+      enrollment_id: z.string().uuid(),
+      overlap_days: z.number().int().nonnegative(),
+    }),
+  ),
+  target_cycle_count: z.number().int().nonnegative(),
+  protected_case_count: z.number().int().nonnegative(),
 });
 
 export const makeupSchedulePreviewSchema = z.object({

@@ -21,6 +21,7 @@ export const feeOperationItemSchema = z.object({
   fee_record_id: nullableUuid,
   enrollment_id: nullableUuid,
   student_id: nullableUuid,
+  student_code: z.string().regex(/^TP\d{9}$/).nullable(),
   student_name: z.string().nullable(),
   class_id: nullableUuid,
   class_name: z.string().nullable(),
@@ -84,6 +85,7 @@ export const feePaidReceiptTimelineEventSchema = z.enum([
 ]);
 
 const paymentMethodSchema = z.enum(["bank_transfer", "cash"]);
+const paymentOriginSchema = z.enum(["manual", "manual_early", "pay2s"]);
 const nonnegativeAmount = z.number().int().safe().nonnegative();
 const paidReceiptActorSchema = {
   actor_name: z.string().nullable(),
@@ -95,11 +97,17 @@ export const feePaidReceiptSummarySchema = z.object({
   receipt_id: z.string().min(1),
   payment_operation_id: z.string().uuid(),
   student_id: nullableUuid,
+  student_code: z.string().nullable().default(null),
   student_name: z.string().min(1),
   period: z.string().regex(/^\d{4}-\d{2}$/).nullable(),
   paid_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   paid_at: z.string().datetime({ offset: true }),
   payment_method: paymentMethodSchema,
+  payment_origin: paymentOriginSchema,
+  settlement_account_id: nullableUuid.optional().default(null),
+  settlement_bank_name: z.string().nullable().optional().default(null),
+  settlement_account_number: z.string().nullable().optional().default(null),
+  settlement_account_name: z.string().nullable().optional().default(null),
   gross_amount: nonnegativeAmount,
   refunded_amount: nonnegativeAmount,
   net_amount: nonnegativeAmount,
@@ -137,6 +145,10 @@ export const feePaidReceiptTimelineItemSchema = z.object({
   occurred_at: z.string().datetime({ offset: true }),
   amount_delta: signedAmount,
   payment_method: paymentMethodSchema,
+  payment_origin: paymentOriginSchema,
+  settlement_account_id: nullableUuid.optional().default(null),
+  settlement_bank_name: z.string().nullable().optional().default(null),
+  settlement_account_number: z.string().nullable().optional().default(null),
   ...paidReceiptActorSchema,
   reason: z.string().nullable(),
 }).strict();
@@ -150,4 +162,31 @@ export const feePaidReceiptListSchema = z.object({
   receipts: z.array(feePaidReceiptSummarySchema),
   next_cursor: z.string().nullable(),
   summary: feePaidReportSummarySchema,
+}).strict();
+
+export const paymentReconciliationItemSchema = z.object({
+  id: z.string().uuid(),
+  delivery_id: z.string().uuid(),
+  status: z.enum(["PENDING", "PROCESSING", "POSTED", "REVIEW", "DEAD"]),
+  review_reason: z.string().nullable(),
+  resolution: z.string().nullable(),
+  payment_request_id: nullableUuid,
+  provider_transaction_id: z.string().nullable(),
+  source: z.string().nullable(),
+  bank_account_id: nullableUuid,
+  bank_name: z.string().nullable(),
+  account_number: z.string().nullable(),
+  transfer_type: z.string().nullable(),
+  amount: signedAmount.nullable(),
+  content: z.string().nullable(),
+  transaction_date: z.string().nullable(),
+  result_code: z.string().nullable(),
+  provider_message: z.string().nullable(),
+  received_at: z.string().datetime({ offset: true }),
+  resolved_at: z.string().datetime({ offset: true }).nullable(),
+}).strict();
+
+export const paymentReconciliationListSchema = z.object({
+  items: z.array(paymentReconciliationItemSchema),
+  review_count: z.number().int().nonnegative(),
 }).strict();

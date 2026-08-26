@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   feePaidReceiptDetailSchema,
   feePaidReceiptListSchema,
+  paymentReconciliationListSchema,
 } from "../src/lib/schemas/reports";
 import {
   getPaidReceiptActor,
@@ -22,6 +23,7 @@ const receipt = {
   paid_date: "2026-07-30",
   paid_at: "2026-07-30T08:30:00+07:00",
   payment_method: "bank_transfer" as const,
+  payment_origin: "manual" as const,
   gross_amount: 1_500_000,
   refunded_amount: 250_000,
   net_amount: 1_250_000,
@@ -75,6 +77,7 @@ test("paid receipt detail contains allocations and financial timeline only", () 
         occurred_at: "2026-07-30T09:00:00+07:00",
         amount_delta: -250_000,
         payment_method: "bank_transfer",
+        payment_origin: "manual",
         actor_name: "Châu Thành Nam Trung",
         actor_username: "chauthanhnamtrung",
         actor_role: "admin",
@@ -147,4 +150,36 @@ test("payment distribution handles a zero net total without invalid widths", () 
     }),
     { bankPercent: 0, cashPercent: 0 },
   );
+});
+
+test("payment reconciliation accepts only the bounded review contract", () => {
+  const parsed = paymentReconciliationListSchema.parse({
+    items: [
+      {
+        id: "11111111-1111-4111-8111-111111111111",
+        delivery_id: "22222222-2222-4222-8222-222222222222",
+        status: "REVIEW",
+        review_reason: "unmatched_reference_or_amount",
+        resolution: null,
+        payment_request_id: null,
+        provider_transaction_id: "PAY2S-001",
+        source: "partner_webhook",
+        bank_account_id: "33333333-3333-4333-8333-333333333333",
+        bank_name: "Vietcombank",
+        account_number: "1234567890",
+        transfer_type: "IN",
+        amount: 750_000,
+        content: "TP123456789PABCDEFGH",
+        transaction_date: "2026-08-23T08:30:00+07:00",
+        result_code: null,
+        provider_message: null,
+        received_at: "2026-08-23T08:30:01+07:00",
+        resolved_at: null,
+      },
+    ],
+    review_count: 1,
+  });
+
+  assert.equal(parsed.items[0].status, "REVIEW");
+  assert.equal(parsed.items[0].amount, 750_000);
 });

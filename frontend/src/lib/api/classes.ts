@@ -2,6 +2,8 @@ import { apiClient } from "@/lib/api/client";
 import {
   classAdjustmentListSchema,
   classEndDatePreviewSchema,
+  classContinuationCreateResponseSchema,
+  classContinuationPreviewSchema,
   classHistorySchema,
   classOccurrenceListSchema,
   classResponseListSchema,
@@ -13,10 +15,14 @@ import {
   makeupSchedulePreviewSchema,
   postponementCreateSchema,
   postponementPreviewSchema,
+  suspensionPreviewSchema,
 } from "@/lib/schemas/class";
 import type {
   ClassAdjustmentListResponse,
   ClassCreate,
+  ClassContinuationCreate,
+  ClassContinuationCreateResponse,
+  ClassContinuationPreview,
   ClassEndDateUpdate,
   ClassEndDatePreview,
   ClassHistory,
@@ -33,6 +39,7 @@ import type {
   MakeupCommandRequest,
   MakeupSchedulePreviewResponse,
   MakeupScheduleRequest,
+  MakeupReasonCode,
   PostponementCreateRequest,
   PostponementCreateResponse,
   PostponementPreviewResponse,
@@ -71,6 +78,25 @@ export async function getClassDetail(id: string): Promise<ClassResponse> {
 export async function createClass(data: ClassCreate): Promise<ClassResponse> {
   const response = await apiClient.post<ClassResponse>("/classes", data);
   return classResponseSchema.parse(response.data);
+}
+
+export async function getClassContinuationPreview(
+  id: string,
+): Promise<ClassContinuationPreview> {
+  const response = await apiClient.get<unknown>(`/classes/${id}/continuation-preview`);
+  return classContinuationPreviewSchema.parse(response.data);
+}
+
+export async function createClassContinuation(
+  id: string,
+  data: ClassContinuationCreate,
+): Promise<ClassContinuationCreateResponse> {
+  const response = await apiClient.post<unknown>(`/classes/${id}/continuation`, data, {
+    // A full cohort is persisted atomically. Keep this request alive beyond
+    // the global interactive-request limit while the server finishes safely.
+    timeout: 60_000,
+  });
+  return classContinuationCreateResponseSchema.parse(response.data);
 }
 
 export async function updateClass(id: string, data: ClassUpdate): Promise<ClassResponse> {
@@ -186,6 +212,34 @@ export async function createPostponement(
     payload,
   );
   return postponementCreateSchema.parse(response.data);
+}
+
+export async function previewClassSuspension(
+  classId: string,
+  payload: { suspended_from: string; resume_on: string },
+) {
+  const response = await apiClient.post(
+    `/classes/${classId}/suspensions/preview`,
+    payload,
+  );
+  return suspensionPreviewSchema.parse(response.data);
+}
+
+export async function createClassSuspension(
+  classId: string,
+  payload: {
+    suspended_from: string;
+    resume_on: string;
+    reason_code: MakeupReasonCode;
+    reason_note?: string | null;
+    request_id: string;
+  },
+) {
+  const response = await apiClient.post(
+    `/classes/${classId}/suspensions`,
+    payload,
+  );
+  return suspensionPreviewSchema.parse(response.data);
 }
 
 export async function previewMakeupSchedule(

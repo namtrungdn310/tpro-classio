@@ -27,6 +27,7 @@ function DashboardContent({ children }: { children: ReactNode }) {
     pathname.startsWith("/classes") ||
     pathname.startsWith("/students") ||
     pathname.startsWith("/fees") ||
+    pathname.startsWith("/banking") ||
     pathname.startsWith("/report") ||
     pathname.startsWith("/staff") ||
     pathname.startsWith("/settings");
@@ -127,7 +128,7 @@ function DashboardContent({ children }: { children: ReactNode }) {
 
   return (
     <div className={lockScrollToPanel ? "dashboard-app min-h-screen bg-background md:h-screen md:overflow-hidden" : "dashboard-app min-h-screen bg-background"}>
-      <header className="dashboard-header fixed inset-x-0 top-0 z-40 select-none border-b border-gray-100 bg-white">
+      <header className="dashboard-header fixed inset-x-0 top-0 z-40 select-none border-b border-slate-200 bg-white">
         <Navbar />
       </header>
       <div className={lockScrollToPanel ? "pt-14 md:flex md:h-full md:overflow-hidden" : "pt-14 md:flex"}>

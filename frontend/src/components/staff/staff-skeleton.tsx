@@ -18,7 +18,7 @@ export function StaffSkeleton({
     : canViewPrivate
       ? STAFF_PRIVATE_VIEWER_GRID
       : STAFF_PUBLIC_VIEWER_GRID;
-  const columnCount = canViewPrivate ? 4 : 3;
+  const columnCount = canManage ? 4 : canViewPrivate ? 3 : 2;
 
   return (
     <div aria-hidden="true" className="h-full min-h-0 animate-pulse overflow-hidden">

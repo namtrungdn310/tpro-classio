@@ -58,8 +58,12 @@ export function getSuggestedClassEndDate({
 }): string | null {
   if (!Number.isInteger(count) || count < 1) return null;
   if (type === "MONTHLY") {
-    const boundary = addMonthsEomClamped(startDate, count);
-    return boundary ? addDays(boundary, 1) : null;
+    // The shortcut is only a convenience for filling the independent class
+    // end date.  It must land on the same calendar day after `count` months
+    // (clamped for short target months), without the legacy minimum-end +1
+    // adjustment.  Billing anchors are derived separately from enrollment
+    // dates and must not change the class lifecycle date.
+    return addMonthsEomClamped(startDate, count);
   }
   if (!billingCycleWeeks || !Number.isInteger(billingCycleWeeks) || billingCycleWeeks < 1) {
     return null;

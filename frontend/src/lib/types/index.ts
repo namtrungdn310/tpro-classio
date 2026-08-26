@@ -4,11 +4,7 @@ export type ClassCategory = "GENERAL" | "SPECIALIZED" | "IELTS" | "CUSTOM";
 export type ClassGradeMode = "GRADE" | "NONE";
 export type ClassEducationLevel = "PRIMARY" | "MIDDLE" | "HIGH";
 export type ClassEffectiveStatus =
-  | "LEGACY"
-  | "SCHEDULED"
-  | "ACTIVE"
-  | "COMPLETED"
-  | "CANCELLED";
+  "LEGACY" | "SCHEDULED" | "ACTIVE" | "COMPLETED" | "CANCELLED";
 export type ClassScope =
   | "operational"
   | "active"
@@ -17,16 +13,15 @@ export type ClassScope =
   | "completed"
   | "cancelled";
 
-export type MakeupReasonCode = "TEACHER_UNAVAILABLE" | "CENTER_OPERATION" | "OTHER";
+export type MakeupReasonCode =
+  "TEACHER_UNAVAILABLE" | "CENTER_OPERATION" | "OTHER";
 export type ExceptionStatus =
   | "MAKEUP_PENDING"
   | "MAKEUP_SCHEDULED"
   | "MAKEUP_COMPLETED"
   | "RESTORED"
   | "CANCELLED";
-export type ExceptionDisplayStatus =
-  | ExceptionStatus
-  | "AWAITING_CONFIRMATION";
+export type ExceptionDisplayStatus = ExceptionStatus;
 export type OccurrenceKind = "REGULAR" | "POSTPONED" | "MAKEUP";
 export type MakeupErrorCode =
   | "CLASS_VERSION_CONFLICT"
@@ -73,6 +68,7 @@ export type ClassScheduleAvailabilityRequest = {
   class_id?: string | null;
   start_date: string;
   end_date: string;
+  scope?: "selected_staff" | "all_classes";
   teacher_ids: string[];
   assistant_ids: string[];
 };
@@ -117,6 +113,13 @@ export type ClassResponse = {
   next_fee_due_state?: "OVERDUE" | "UPCOMING" | "NONE";
   cancelled_at?: string | null;
   unresolved_makeup_count?: number;
+  active_suspension?: {
+    id: string;
+    suspended_from: string;
+    resume_on: string;
+    reason_code: string;
+  } | null;
+  previous_class_id?: string | null;
 };
 
 export type ClassOccurrence = {
@@ -237,7 +240,6 @@ export type PostponementCreateRequest = {
   original_start_at: string[];
   reason_code: MakeupReasonCode;
   reason_note?: string | null;
-  schedule_now: boolean;
   request_id: string;
   retrospective?: boolean;
 };
@@ -246,6 +248,29 @@ export type PostponementCreateResponse = {
   adjustment: ClassScheduleAdjustmentResponse;
   exceptions: ClassSessionExceptionResponse[];
   billing_impact: "NONE";
+};
+
+export type SuspensionMemberSummary = {
+  enrollment_id: string;
+  overlap_days: number;
+};
+
+export type SuspensionPreviewResponse = {
+  class_id: string;
+  suspended_from: string;
+  resume_on: string;
+  credit_days: number;
+  member_summary: SuspensionMemberSummary[];
+  target_cycle_count: number;
+  protected_case_count: number;
+};
+
+export type SuspensionCreateRequest = {
+  suspended_from: string;
+  resume_on: string;
+  reason_code?: MakeupReasonCode;
+  reason_note?: string | null;
+  request_id: string;
 };
 
 export type MakeupScheduleRequest = {
@@ -305,6 +330,21 @@ export type ClassHistoryAdjustment = {
   version: number;
 };
 
+export type ClassHistorySlotTeacher = {
+  staff_id: string;
+  staff_name: string;
+};
+
+export type ClassHistoryScheduleSlot = {
+  slot_id: string;
+  day: ClassScheduleSlot["day"];
+  start: string;
+  end: string;
+  effective_from: string;
+  effective_until: string | null;
+  teachers: ClassHistorySlotTeacher[];
+};
+
 export type ClassHistory = {
   id: string;
   name: string;
@@ -315,6 +355,7 @@ export type ClassHistory = {
   start_date: string | null;
   end_date: string | null;
   schedule: ClassSchedule;
+  schedule_slots: ClassHistoryScheduleSlot[];
   teachers: ClassHistoryTeacherEvent[];
   enrollments: ClassHistoryEnrollment[];
   lifecycle_events: ClassHistoryEvent[];
@@ -347,6 +388,52 @@ export type ClassCreate = {
   teacher_id?: string | null;
   teacher_ids?: string[];
   assistant_ids?: string[];
+  source_class_id?: string | null;
+};
+
+export type ClassContinuationStudentCandidate = {
+  student_id: string;
+  student_code: string | null;
+  full_name: string;
+  source_enrollment_id: string;
+  custom_fee: number | null;
+  selected_slot_count: number;
+  selected_slots: ClassContinuationSlotReference[];
+};
+
+export type ClassContinuationSlotReference = Pick<ClassScheduleSlot, "day" | "start" | "end">;
+
+export type ClassContinuationPreview = {
+  source_class_id: string;
+  source_version: number;
+  suggested_start_date: string;
+  suggested_end_date: string;
+  template: Omit<ClassCreate, "start_date" | "end_date" | "class_category" | "grade_mode"> & {
+    source_class_id: string;
+    class_category: ClassCategory | null;
+    grade_mode: ClassGradeMode | null;
+  };
+  students: ClassContinuationStudentCandidate[];
+};
+
+export type ClassContinuationCreate = {
+  request_id: string;
+  expected_source_version: number;
+  class_data: ClassCreate;
+  students: Array<{
+    student_id: string;
+    source_enrollment_id?: string | null;
+    selected_slots?: ClassContinuationSlotReference[] | null;
+    custom_fee?: number | null;
+    partial_fee_reviewed?: boolean;
+  }>;
+  preserve_custom_fees: boolean;
+  preserve_slot_selections: boolean;
+};
+
+export type ClassContinuationCreateResponse = {
+  created_class: ClassResponse;
+  enrolled_student_count: number;
 };
 
 export type ClassUpdate = Partial<Omit<ClassCreate, "identity_scheme">> & {
@@ -378,7 +465,7 @@ export type ClassEndDatePreview = {
 };
 
 export type StudentStatus = "active" | "inactive" | "archived";
-export type StudentListState = "UNASSIGNED" | "CURRENT" | "FORMER" | "ARCHIVED";
+export type StudentListState = "UNASSIGNED" | "CURRENT" | "STOPPED";
 export type StudentHiddenField =
   | "birth_date"
   | "school"
@@ -406,12 +493,13 @@ export type StudentEnrollmentInfo = {
   custom_fee: number | null;
   effective_fee: number;
   enrollment_date: string | null;
+  selected_slot_ids: string[];
   status: "active" | "dropped" | "completed" | "cancelled";
 };
 
 export type StudentResponse = {
   id: string;
-  student_code?: string | null;
+  student_code: string;
   full_name: string;
   birth_date: string | null;
   school: string | null;
@@ -423,12 +511,53 @@ export type StudentResponse = {
   notes: string | null;
   hidden_fields: StudentHiddenField[];
   status: StudentStatus;
-  list_state?: StudentListState;
+  list_state: StudentListState;
   archived_at?: string | null;
   archived_reason?: string | null;
   classes: StudentClassInfo[];
   active_enrollments: StudentEnrollmentInfo[];
+  last_enrollment: {
+    class_id: string;
+    class_name: string;
+    status: "active" | "dropped" | "completed" | "cancelled";
+    enrollment_date: string | null;
+    ended_at: string | null;
+    end_reason: string | null;
+  } | null;
   created_at: string;
+  updated_at: string;
+};
+
+export type StudentListPageResponse = {
+  items: StudentResponse[];
+  next_cursor: string | null;
+  has_more: boolean;
+};
+
+export type StudentScopeSummary = {
+  unassigned: number;
+  current: number;
+  stopped: number;
+};
+
+export type StudentMembershipCommand = {
+  request_id: string;
+  expected_updated_at: string;
+  profile: StudentUpdate;
+  enrollment_updates: Array<{
+    enrollment_id: string;
+    custom_fee?: number | null;
+    enrollment_date?: string | null;
+    selected_slot_ids?: string[] | null;
+  }>;
+  targets: Array<{
+    class_id: string;
+    custom_fee?: number | null;
+    enrollment_date?: string | null;
+    selected_slot_ids?: string[] | null;
+  }>;
+  mode: "supplement" | "transfer";
+  source_enrollment_id?: string | null;
 };
 
 export type StudentCreate = {
@@ -436,6 +565,7 @@ export type StudentCreate = {
   class_id?: string | null;
   custom_fee?: number | null;
   enrollment_date?: string | null;
+  selected_slot_ids?: string[] | null;
   birth_date: string;
   school: string;
   parent_name?: string | null;
@@ -455,7 +585,9 @@ export type StudentDuplicateResolution = {
 
 export type StudentIdentityCandidate = {
   id: string;
+  student_code: string;
   status: StudentStatus;
+  list_state: StudentListState;
   full_name: string;
   birth_date: string | null;
   school: string | null;
@@ -494,7 +626,6 @@ export type StudentUpdate = {
   student_phone?: string | null;
   notes?: string | null;
   hidden_fields?: StudentHiddenField[];
-  status?: StudentStatus;
 };
 
 export type ContactSuggestionResponse = {
@@ -516,11 +647,13 @@ export type EnrollmentResponse = {
   class_start_date: string | null;
   class_end_date: string | null;
   effective_fee: number;
+  selected_slot_ids: string[];
 };
 
 export type EnrollmentUpdate = {
   custom_fee?: number | null;
   enrollment_date?: string | null;
+  selected_slot_ids?: string[] | null;
 };
 
 export type EnrollmentCreate = {
@@ -528,6 +661,7 @@ export type EnrollmentCreate = {
   class_id: string;
   custom_fee?: number | null;
   enrollment_date?: string | null;
+  selected_slot_ids?: string[] | null;
 };
 
 type DashboardOperationsSummary = {
@@ -562,17 +696,50 @@ export type DashboardOverviewResponse = {
 
 export type FeeNotificationState = "UNNOTIFIED" | "NOTIFIED_UNPAID" | "PAID";
 export type FeePaymentMethod = "bank_transfer" | "cash";
+export type FeePaymentOrigin = "manual" | "manual_early" | "pay2s";
+export type PaymentRequestStatus =
+  "OPEN" | "EXPIRED" | "REVOKED" | "PAID" | "FAILED" | "REVIEW";
+export type PaymentRequestShareChannel =
+  "zalo_manual" | "copy_message" | "download_qr" | "share_link" | "other";
+
+export type OpsWorkspaceSummary = {
+  id: string;
+  name: string;
+  owner_user_id: string | null;
+  admin_count: number;
+  active_admin_count: number;
+  open_request_count: number;
+  review_request_count: number;
+  quarantined_count: number;
+  provider_status: string;
+  provider_last_error: string | null;
+  last_received_at: string | null;
+};
+
+export type OpsIncident = {
+  incident_id: string;
+  severity: "low" | "medium" | "high" | "critical";
+  title: string;
+  summary: string;
+};
+
+export type OpsOverviewResponse = {
+  generated_at: string;
+  status: "operational" | "degraded";
+  workspaces: OpsWorkspaceSummary[];
+  incidents: OpsIncident[];
+};
+
 export type FeeRefundState = "NONE" | "PARTIAL" | "FULL";
 export type FeePaymentEntryType =
-  | "payment"
-  | "payment_reversal"
-  | "refund"
-  | "refund_reversal";
+  "payment" | "payment_reversal" | "refund" | "refund_reversal";
 
 export type FeeRecordResponse = {
   id: string;
   enrollment_id: string;
   student_id: string;
+  student_code?: string | null;
+  student_status?: StudentStatus | null;
   student_name: string;
   class_id: string;
   class_name: string;
@@ -588,6 +755,12 @@ export type FeeRecordResponse = {
   period: string;
   enrollment_date: string | null;
   due_date: string | null;
+  cycle_no?: number | null;
+  base_due_date?: string | null;
+  adjusted_due_date?: string | null;
+  coverage_start?: string | null;
+  coverage_end?: string | null;
+  origin?: string | null;
   base_amount: number;
   discount_amount: number;
   final_amount: number;
@@ -604,9 +777,217 @@ export type FeeRecordResponse = {
   notification_state: FeeNotificationState;
 };
 
+export type PaymentRequestItemResponse = {
+  fee_record_id: string;
+  enrollment_id: string;
+  student_code: string;
+  class_name: string;
+  cycle_no: number;
+  base_due_date: string | null;
+  adjusted_due_date: string | null;
+  expected_amount: number;
+};
+
+export type PaymentRequestResponse = {
+  id: string;
+  request_id: string;
+  payment_reference: string;
+  status: PaymentRequestStatus;
+  provider: string;
+  currency: string;
+  expected_amount: number;
+  early_payment: boolean;
+  expires_at: string | null;
+  sent_at: string | null;
+  sent_channel?: PaymentRequestShareChannel | null;
+  send_count?: number;
+  created_at: string;
+  settlement_account_id: string | null;
+  qr_payload: {
+    reference: string;
+    amount: number;
+    currency: string;
+    payment_url?: string | null;
+    manual_qr_url?: string | null;
+    receiving_account?: {
+      id: string;
+      label: string;
+      bank_name: string;
+      account_number: string;
+      account_name: string;
+    };
+    qr_list?: Array<Record<string, unknown>>;
+  } | null;
+  items: PaymentRequestItemResponse[];
+};
+
+export type PaymentRequestListResponse = {
+  requests: PaymentRequestResponse[];
+};
+
+export type BankAccount = {
+  id: string;
+  label: string;
+  bank_code: string;
+  bank_name: string;
+  account_number: string;
+  account_name: string;
+  qr_source_url: string | null;
+  provider_account_id: string | null;
+  provider_bank_id: string | null;
+  va_number: string | null;
+  provider_status: string;
+  connection_type: "external" | "pay2s";
+  webhook_configured: boolean;
+  is_default: boolean;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type BankAccountCreate = Omit<
+  BankAccount,
+  | "id"
+  | "is_active"
+  | "created_at"
+  | "updated_at"
+  | "provider_bank_id"
+  | "provider_account_id"
+  | "connection_type"
+  | "va_number"
+  | "provider_status"
+  | "webhook_configured"
+>;
+
+export type BankAccountUpdate = Partial<
+  Omit<
+    BankAccount,
+    | "id"
+    | "created_at"
+    | "updated_at"
+    | "provider_status"
+    | "webhook_configured"
+    | "connection_type"
+  >
+>;
+
+export type Pay2SProviderStatus = {
+  provider: "pay2s";
+  status:
+    | "not_configured"
+    | "pending_verification"
+    | "connected"
+    | "error"
+    | "disabled";
+  plan: string;
+  merchant_id: string | null;
+  partner_code: string | null;
+  collection_partner_code: string | null;
+  access_key_configured: boolean;
+  webhook_configured: boolean;
+  webhook_url: string | null;
+  connected_at: string | null;
+  last_error: string | null;
+};
+
+export type Pay2SSupportedBank = {
+  code: string;
+  short_name: string;
+  name: string;
+};
+
+export type Pay2SSupportedBanks = {
+  banks: Pay2SSupportedBank[];
+  source: "pay2s_official_snapshot";
+  verified_at: string;
+};
+
+export type Pay2SConnectionInput = {
+  access_key?: string;
+  secret_key?: string;
+  merchant_id?: string;
+  partner_code?: string;
+  collection_partner_code?: string;
+  plan: string;
+};
+
+export type Pay2SBankConnectInput = {
+  bank_type: "openapi" | "personal";
+  bank_short_name: string;
+  account_number: string;
+  account_name?: string;
+  cccd?: string;
+  merchant_id?: string;
+  acc_mobile?: string;
+  acc_email?: string;
+  internet_banking_username?: string;
+  internet_banking_password?: string;
+  label?: string;
+};
+
+export type Pay2SBankOtpInput = {
+  bank_type: "openapi" | "personal";
+  bank_short_name: string;
+  account_number: string;
+  otp: string;
+  merchant_id?: string;
+  internet_banking_username?: string;
+  internet_banking_password?: string;
+};
+
+export type Pay2SBankConnectResponse = {
+  accepted: boolean;
+  otp_required: boolean;
+  message: string;
+  provider_bank_id: string | null;
+  va_number: string | null;
+  account: BankAccount | null;
+};
+
+export type Pay2SWebhookResponse = {
+  id: string;
+  provider_webhook_id: string | null;
+  status: string;
+  webhook_url: string;
+  webhook_type: string;
+  bank_account_id: string;
+};
+
+export type BankingOverview = {
+  accounts: BankAccount[];
+  provider: Pay2SProviderStatus;
+  readiness: {
+    provider_verified: boolean;
+    receiving_account_connected: boolean;
+    collection_link_configured: boolean;
+    transaction_webhook_configured: boolean;
+    qr_creation_ready: boolean;
+    automatic_recording_ready: boolean;
+    blocker:
+      | "provider_disabled"
+      | "qr_disabled"
+      | "provider_not_verified"
+      | "receiving_account_missing"
+      | "partner_code_missing"
+      | "ipn_url_missing"
+      | "webhook_ingress_disabled"
+      | "auto_post_disabled"
+      | null;
+  };
+};
+
 export type FeeRecordListResponse = {
   period: string;
   records: FeeRecordResponse[];
+};
+
+export type FeePaymentCapabilities = {
+  early_payment_enabled: boolean;
+  qr_creation_enabled: boolean;
+  pay2s_qr_ready: boolean;
+  automatic_recording_ready: boolean;
+  pay2s_blocker: string | null;
+  early_window_days: number;
 };
 
 export type FeePeriodListResponse = {
@@ -614,13 +995,30 @@ export type FeePeriodListResponse = {
 };
 
 export type FeeMessageTemplatesResponse = {
-  payment_reminder_template: string;
-  payment_received_template: string;
+  active: FeeMessageTemplateValues;
+  defaults: FeeMessageTemplateValues;
+  is_customized: boolean;
   version: number;
   updated_at: string | null;
 };
 
-export type FeeMessageTemplatesUpdate = Omit<FeeMessageTemplatesResponse, "updated_at">;
+export type FeeMessageTemplateValues = {
+  payment_reminder_template: string;
+  payment_received_template: string;
+};
+
+export type FeeMessageTemplatesUpdate = FeeMessageTemplateValues & { version: number };
+
+export type FeeMessageDraft = {
+  student_id: string;
+  period: string;
+  kind: "reminder" | "received";
+  message: string;
+  source_fingerprint: string;
+  revision: number;
+  is_customized: boolean;
+  is_stale: boolean;
+};
 
 export type FeeBatchActionResponse = {
   records: FeeRecordResponse[];
@@ -634,6 +1032,7 @@ export type FeeRefundRequest = {
   items: Array<{ record_id: string; amount: number }>;
   reason: string;
   refund_method: FeePaymentMethod;
+  settlement_account_id?: string;
 };
 
 export type FeeRefundReceipt = {
@@ -666,6 +1065,10 @@ export type FeeTransactionResponse = {
   amount: number;
   transaction_date: string;
   payment_method: FeePaymentMethod;
+  payment_origin: FeePaymentOrigin;
+  settlement_account_id?: string | null;
+  settlement_bank_name?: string | null;
+  settlement_account_number?: string | null;
   note: string | null;
   related_payment_id: string | null;
   request_id: string | null;
@@ -703,6 +1106,7 @@ export type FeeOperationItem = {
   fee_record_id: string | null;
   enrollment_id: string | null;
   student_id: string | null;
+  student_code: string | null;
   student_name: string | null;
   class_id: string | null;
   class_name: string | null;
@@ -752,26 +1156,26 @@ export type FeeOperationListResponse = {
 };
 
 export type FeePaidReceiptRefundState =
-  | "NONE"
-  | "PARTIAL"
-  | "FULL"
-  | "REVERSED";
+  "NONE" | "PARTIAL" | "FULL" | "REVERSED";
 
 export type FeePaidReceiptTimelineEvent =
-  | "payment"
-  | "refund"
-  | "refund_reversal"
-  | "payment_reversal";
+  "payment" | "refund" | "refund_reversal" | "payment_reversal";
 
 export type FeePaidReceiptSummary = {
   receipt_id: string;
   payment_operation_id: string;
   student_id: string | null;
+  student_code?: string | null;
   student_name: string;
   period: string | null;
   paid_date: string;
   paid_at: string;
   payment_method: FeePaymentMethod;
+  payment_origin: FeePaymentOrigin;
+  settlement_account_id: string | null;
+  settlement_bank_name: string | null;
+  settlement_account_number: string | null;
+  settlement_account_name: string | null;
   gross_amount: number;
   refunded_amount: number;
   net_amount: number;
@@ -811,6 +1215,10 @@ export type FeePaidReceiptTimelineItem = {
   occurred_at: string;
   amount_delta: number;
   payment_method: FeePaymentMethod;
+  payment_origin: FeePaymentOrigin;
+  settlement_account_id: string | null;
+  settlement_bank_name: string | null;
+  settlement_account_number: string | null;
   actor_name: string | null;
   actor_username: string | null;
   actor_role: string | null;
@@ -828,7 +1236,52 @@ export type FeePaidReceiptListResponse = {
   summary: FeePaidReportSummary;
 };
 
+export type PaymentReconciliationStatus =
+  | "PENDING"
+  | "PROCESSING"
+  | "POSTED"
+  | "REVIEW"
+  | "DEAD";
+
+export type PaymentReconciliationItem = {
+  id: string;
+  delivery_id: string;
+  status: PaymentReconciliationStatus;
+  review_reason: string | null;
+  resolution: string | null;
+  payment_request_id: string | null;
+  provider_transaction_id: string | null;
+  source: string | null;
+  bank_account_id: string | null;
+  bank_name: string | null;
+  account_number: string | null;
+  transfer_type: string | null;
+  amount: number | null;
+  content: string | null;
+  transaction_date: string | null;
+  result_code: string | null;
+  provider_message: string | null;
+  received_at: string;
+  resolved_at: string | null;
+};
+
+export type PaymentReconciliationListResponse = {
+  items: PaymentReconciliationItem[];
+  review_count: number;
+};
+
+export type PaymentReconciliationResolveAction =
+  | "retry"
+  | "manual_match"
+  | "ignore";
+
 export type StaffType = "TEACHER" | "ASSISTANT";
+export type StaffAttendanceAccountStatus =
+  | "connected"
+  | "disabled"
+  | "invited"
+  | "expired"
+  | "not_connected";
 
 export type StaffAssignedClass = {
   id: string;
@@ -842,6 +1295,10 @@ export type StaffResponse = {
   staff_type: StaffType;
   zalo_name: string | null;
   phone: string | null;
+  email: string | null;
+  checkin_window_after_hours: number;
+  current_rate: number | null;
+  attendance_account_status: StaffAttendanceAccountStatus;
   is_active: boolean;
   assigned_classes: StaffAssignedClass[];
   created_at: string;
@@ -852,6 +1309,7 @@ export type TeacherOptionResponse = {
   id: string;
   full_name: string;
   staff_type: StaffType;
+  email: string | null;
 };
 
 export type StaffCreate = {
@@ -859,6 +1317,8 @@ export type StaffCreate = {
   staff_type: StaffType;
   zalo_name?: string | null;
   phone?: string | null;
+  email?: string | null;
+  checkin_window_after_hours?: number;
   is_active?: boolean;
 };
 

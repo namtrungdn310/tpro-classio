@@ -61,15 +61,18 @@ test("schedule always renders four flexible tracks on one grid", () => {
   assert.match(scheduleSource, /col-span-full inline-flex w-fit/);
 });
 
-test("fee column is two lines, wraps by business cluster and never overflows", () => {
+test("fee column only separates the active collection status", () => {
   assert.match(tableSource, /<FeeMetaLine class_=\{class_\} \/>/);
   assert.doesNotMatch(tableSource, /NextFeeDueLine/);
   assert.doesNotMatch(tableSource, /Kỳ thu tiếp: /);
   assert.doesNotMatch(tableSource, /getClassBillingModeLabel/);
   assert.match(tableSource, /flex min-w-0 flex-wrap items-baseline gap-x-1/);
-  assert.match(tableSource, /text: `· Quá hạn \$\{formatDate\(class_\.next_fee_due_date\)\}`/);
+  assert.match(tableSource, /text: `Đang thu · Hạn \$\{formatDate\(class_\.next_fee_due_date\)\}`/);
   assert.match(tableSource, /text: `· Thu \$\{formatDate\(class_\.next_fee_due_date\)\}`/);
-  assert.match(tableSource, /whitespace-nowrap \$\{cluster\.tone === "amber"/);
+  assert.match(tableSource, /const modeClusters = clusters\.filter\(\(cluster\) => cluster\.key !== "due"\)/);
+  assert.match(tableSource, /const separateDueCluster = dueCluster\?\.tone === "amber" \? dueCluster : null/);
+  assert.match(tableSource, /const inlineClusters = separateDueCluster/);
+  assert.match(tableSource, /mt-0\.5 whitespace-nowrap/);
 });
 
 test("schedule cell stretches to the row height and centers vertically", () => {

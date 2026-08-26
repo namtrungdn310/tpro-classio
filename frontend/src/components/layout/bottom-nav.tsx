@@ -13,6 +13,7 @@ import {
 import { useAuth } from "@/lib/hooks/useAuth";
 import { isManagementUser } from "@/lib/auth/permissions";
 import { prefetchRouteData } from "@/lib/query-prefetch";
+import { useOptimisticNavigation } from "@/lib/hooks/useOptimisticNavigation";
 import {
   buildStudentsHref,
   getSelectedStudentClassFromSearchParams,
@@ -36,6 +37,8 @@ export function BottomNav() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { user } = useAuth();
+  const { optimisticPathname, showNavigationIntent } =
+    useOptimisticNavigation(pathname);
   const [mounted, setMounted] = useState(false);
   const visibleTabs = [...MAIN_NAVIGATION_ITEMS, SETTINGS_NAVIGATION_ITEM];
 
@@ -78,6 +81,8 @@ export function BottomNav() {
       return;
     }
 
+    showNavigationIntent(href);
+
     if (href !== "/students") {
       return;
     }
@@ -98,6 +103,7 @@ export function BottomNav() {
     >
       {visibleTabs.map((tab) => {
         const active = isActive(pathname, tab.href);
+        const visuallyActive = isActive(optimisticPathname, tab.href);
         const Icon = tab.icon;
 
         return (
@@ -111,10 +117,10 @@ export function BottomNav() {
             onTouchStart={() => handlePrefetch(tab.href)}
             onClick={(event) => handleTabClick(event, tab.href, active)}
             className={`relative flex min-w-0 flex-1 flex-col items-center justify-center gap-1.5 py-2.5 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40 ${
-              active ? "text-primary" : "text-gray-500"
+              visuallyActive ? "text-primary" : "text-gray-500"
             }`}
           >
-            {active ? (
+            {visuallyActive ? (
               <span
                 aria-hidden="true"
                 className="absolute inset-x-6 top-0 h-0.5 rounded-b-full bg-primary"

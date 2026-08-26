@@ -6,8 +6,8 @@ function readSafeEtag(headers: Headers): string | null {
   return value && value.length <= 200 && /^[\x21-\x7e]+$/.test(value) ? value : null;
 }
 
-/** Preserve avatar bytes as a stream while rebuilding a minimal safe header set. */
-export function buildPrivateAvatarResponse(upstream: Response): Response {
+/** Preserve private WebP bytes while rebuilding a minimal safe header set. */
+export function buildPrivateWebpImageResponse(upstream: Response): Response {
   const isNotModified = upstream.status === 304;
   const contentType = upstream.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
   if (!isNotModified && contentType !== WEBP_CONTENT_TYPE) {
@@ -31,3 +31,6 @@ export function buildPrivateAvatarResponse(upstream: Response): Response {
     headers,
   });
 }
+
+/** Compatibility export for existing avatar-specific callers and tests. */
+export const buildPrivateAvatarResponse = buildPrivateWebpImageResponse;

@@ -8,6 +8,7 @@ import {
   getPaidReceiptClassSummary,
   getPaidReceiptCode,
   getPaymentMethodLabel,
+  getPaymentOriginLabel,
   PAID_RECEIPT_REFUND_META,
 } from "@/lib/reports/paid-report-view-model";
 import {
@@ -15,26 +16,28 @@ import {
   formatDate,
   formatPeriod,
 } from "@/lib/utils/format";
+import { formatStudentCode } from "@/lib/students/student-code";
 
 type PaidReceiptTableProps = {
   hasNextPage: boolean;
   isFetchingNextPage: boolean;
   onLoadMore: () => void;
   onPrefetch: (receiptId: string) => void;
+  onPrefetchLeave: (receiptId: string) => void;
   onSelect: (receiptId: string) => void;
   receipts: FeePaidReceiptSummary[];
   selectedId: string | null;
 };
 
 const RECEIPT_GRID_CLASS =
-  "grid grid-cols-[minmax(0,18fr)_minmax(0,22fr)_minmax(0,13fr)_minmax(0,15fr)_minmax(0,15fr)_minmax(0,17fr)] " +
-  "min-[1800px]:grid-cols-[minmax(0,18fr)_minmax(0,22fr)_minmax(0,13fr)_minmax(0,12fr)_minmax(0,15fr)_minmax(0,15fr)_minmax(0,17fr)_minmax(0,16fr)]";
+  "grid grid-cols-[minmax(0,20fr)_minmax(0,22fr)_minmax(0,14fr)_minmax(0,17fr)_minmax(0,14fr)_minmax(0,15fr)]";
 
 export function PaidReceiptTable({
   hasNextPage,
   isFetchingNextPage,
   onLoadMore,
   onPrefetch,
+  onPrefetchLeave,
   onSelect,
   receipts,
   selectedId,
@@ -49,6 +52,7 @@ export function PaidReceiptTable({
               receipt={receipt}
               selected={selectedId === receipt.receipt_id}
               onPrefetch={onPrefetch}
+              onPrefetchLeave={onPrefetchLeave}
               onSelect={onSelect}
             />
           ))}
@@ -65,13 +69,9 @@ export function PaidReceiptTable({
         aria-label="Danh sách phiếu thu học phí đã nộp"
         className="hidden h-full min-h-0 flex-col overflow-hidden xl:flex"
       >
-        <div role="rowgroup" className="shrink-0 border-b border-slate-200 bg-slate-100">
-          <div role="row" className={`${RECEIPT_GRID_CLASS} table-heading-text select-none text-left text-slate-600`}>
-            <div role="columnheader" className="relative whitespace-nowrap py-3 pl-7 pr-3">
-              <span
-                aria-hidden="true"
-                className="absolute bottom-0 left-[13px] top-0 w-px bg-slate-300"
-              />
+        <div role="rowgroup" className="shrink-0 border-b border-gray-200 bg-gray-50">
+          <div role="row" className={`${RECEIPT_GRID_CLASS} table-heading-text select-none text-left text-gray-600`}>
+            <div role="columnheader" className="whitespace-nowrap py-3 pl-5 pr-3">
               Học viên
             </div>
             <div role="columnheader" className="whitespace-nowrap px-3 py-3">
@@ -80,20 +80,14 @@ export function PaidReceiptTable({
             <div role="columnheader" className="whitespace-nowrap px-3 py-3">
               Ngày nộp
             </div>
-            <div role="columnheader" className="hidden whitespace-nowrap px-3 py-3 min-[1800px]:block">
+            <div role="columnheader" className="whitespace-nowrap px-3 py-3">
               Hình thức
             </div>
             <div role="columnheader" className="whitespace-nowrap px-3 py-3 text-right">
               Đã nhận
             </div>
             <div role="columnheader" className="whitespace-nowrap px-3 py-3 text-right">
-              Đã hoàn
-            </div>
-            <div role="columnheader" className="whitespace-nowrap px-3 py-3 text-right">
               Thực thu
-            </div>
-            <div role="columnheader" className="hidden whitespace-nowrap px-3 py-3 min-[1800px]:block">
-              Người ghi nhận
             </div>
           </div>
         </div>
@@ -106,6 +100,7 @@ export function PaidReceiptTable({
                 receipt={receipt}
                 selected={selectedId === receipt.receipt_id}
                 onPrefetch={onPrefetch}
+                onPrefetchLeave={onPrefetchLeave}
                 onSelect={onSelect}
               />
             ))}
@@ -123,11 +118,13 @@ export function PaidReceiptTable({
 
 function ReceiptRow({
   onPrefetch,
+  onPrefetchLeave,
   onSelect,
   receipt,
   selected,
 }: {
   onPrefetch: (receiptId: string) => void;
+  onPrefetchLeave: (receiptId: string) => void;
   onSelect: (receiptId: string) => void;
   receipt: FeePaidReceiptSummary;
   selected: boolean;
@@ -140,22 +137,18 @@ function ReceiptRow({
       role="row"
       onClick={() => onSelect(receipt.receipt_id)}
       onMouseEnter={() => onPrefetch(receipt.receipt_id)}
+      onMouseLeave={() => onPrefetchLeave(receipt.receipt_id)}
       className={`${RECEIPT_GRID_CLASS} group relative cursor-pointer transition-colors duration-150 motion-reduce:transition-none ${
         selected ? "bg-slate-100/70" : "hover:bg-slate-100/60"
       } ${isReversed ? "text-slate-400" : ""}`}
     >
-      <div role="cell" className="relative min-w-0 py-3 pl-7 pr-3">
+      <div role="cell" className="relative min-w-0 py-3 pl-5 pr-3">
         {selected ? (
           <span
             aria-hidden="true"
             className="absolute bottom-2 left-[11px] top-2 w-[3px] rounded-full bg-primary"
           />
-        ) : (
-          <span
-            aria-hidden="true"
-            className="absolute bottom-0 left-[13px] top-0 w-px bg-slate-200"
-          />
-        )}
+        ) : null}
         <button
           type="button"
           onClick={(event) => {
@@ -170,8 +163,8 @@ function ReceiptRow({
           <span className="block truncate font-semibold text-slate-900">
             {receipt.student_name}
           </span>
-          <span className="mt-1 block text-[11px] font-medium tabular-nums text-slate-400">
-            {getPaidReceiptCode(receipt.payment_operation_id)}
+          <span className="mt-1 block text-[13px] font-medium tabular-nums text-gray-500">
+            {receipt.student_code ? formatStudentCode(receipt.student_code) : getPaidReceiptCode(receipt.payment_operation_id)}
           </span>
         </button>
       </div>
@@ -179,7 +172,7 @@ function ReceiptRow({
         <span className="block truncate text-slate-800">
           {getPaidReceiptClassSummary(receipt)}
         </span>
-        <span className="mt-1 block truncate text-[12px] font-normal text-slate-500">
+        <span className="mt-1 block truncate text-[13px] font-normal text-gray-500">
           {receipt.period ? formatPeriod(receipt.period) : "Nhiều kỳ học phí"}
         </span>
       </div>
@@ -187,19 +180,20 @@ function ReceiptRow({
         <time dateTime={receipt.paid_at} className="whitespace-nowrap">
           {formatDate(receipt.paid_date)}
         </time>
-        <span className="mt-1 block text-[12px] font-normal text-slate-500">
+        <span className="mt-1 block text-[13px] font-normal text-gray-500">
           {formatPaidTime(receipt.paid_at)}
         </span>
       </div>
-      <div role="cell" className="hidden px-3 py-3 text-slate-600 min-[1800px]:block">
-        {getPaymentMethodLabel(receipt.payment_method)}
+      <div role="cell" className="min-w-0 px-3 py-3 text-slate-700">
+        <span className="block truncate">{getPaymentMethodLabel(receipt.payment_method)}</span>
+        <span className="mt-1 block truncate text-xs font-normal text-slate-500">
+          {getPaymentOriginLabel(receipt.payment_origin)}
+        </span>
       </div>
-      <MoneyCell amount={receipt.gross_amount} />
-      <MoneyCell
-        amount={receipt.refunded_amount}
-        emptyWhenZero
-        tone={receipt.refunded_amount > 0 ? "rose" : "default"}
-      />
+      <div role="cell" className="px-3 py-3 text-right">
+        <span className="block whitespace-nowrap tabular-nums text-gray-700">{formatCurrency(receipt.gross_amount)}</span>
+        {receipt.refunded_amount > 0 ? <span className="mt-1 block text-[13px] tabular-nums text-rose-700">Hoàn {formatCurrency(receipt.refunded_amount)}</span> : null}
+      </div>
       <div role="cell" className="px-3 py-3 text-right">
         <span
           className={`block whitespace-nowrap font-semibold tabular-nums ${
@@ -210,16 +204,11 @@ function ReceiptRow({
         </span>
         {receipt.refund_state !== "NONE" ? (
           <span
-            className={`mt-1 inline-flex text-[11px] font-medium ${getStateTextClass(state.tone)}`}
+            className={`mt-1 inline-flex text-xs font-medium ${getStateTextClass(state.tone)}`}
           >
             {state.label}
           </span>
         ) : null}
-      </div>
-      <div role="cell" className="hidden min-w-0 px-3 py-3 min-[1800px]:block">
-        <span className="block truncate">
-          {getPaidReceiptActor(receipt)}
-        </span>
       </div>
     </div>
   );
@@ -227,11 +216,13 @@ function ReceiptRow({
 
 function MobileReceipt({
   onPrefetch,
+  onPrefetchLeave,
   onSelect,
   receipt,
   selected,
 }: {
   onPrefetch: (receiptId: string) => void;
+  onPrefetchLeave: (receiptId: string) => void;
   onSelect: (receiptId: string) => void;
   receipt: FeePaidReceiptSummary;
   selected: boolean;
@@ -244,6 +235,7 @@ function MobileReceipt({
       onClick={() => onSelect(receipt.receipt_id)}
       onFocus={() => onPrefetch(receipt.receipt_id)}
       onMouseEnter={() => onPrefetch(receipt.receipt_id)}
+      onMouseLeave={() => onPrefetchLeave(receipt.receipt_id)}
       className={`relative block w-full px-5 py-4 text-left transition-colors ${
         selected ? "bg-slate-100/70" : "bg-white hover:bg-slate-100/60"
       }`}
@@ -269,7 +261,7 @@ function MobileReceipt({
             {formatCurrency(receipt.net_amount)}
           </span>
           <span
-            className={`mt-1 block text-[11px] font-medium ${getStateTextClass(state.tone)}`}
+            className={`mt-1 block text-xs font-medium ${getStateTextClass(state.tone)}`}
           >
             {state.label}
           </span>
@@ -282,32 +274,10 @@ function MobileReceipt({
         </span>
         <ChevronRight className="h-4 w-4 shrink-0" aria-hidden="true" />
       </div>
+      <span className="mt-2 block truncate pl-2 text-xs text-slate-500">
+        {getPaymentOriginLabel(receipt.payment_origin)} · {getPaidReceiptActor(receipt)}
+      </span>
     </button>
-  );
-}
-
-function MoneyCell({
-  amount,
-  emptyWhenZero = false,
-  tone = "default",
-}: {
-  amount: number;
-  emptyWhenZero?: boolean;
-  tone?: "default" | "rose";
-}) {
-  return (
-    <div
-      role="cell"
-      className={`whitespace-nowrap px-3 py-3 text-right tabular-nums ${
-        tone === "rose" ? "text-rose-700" : "text-slate-700"
-      }`}
-    >
-      {emptyWhenZero && amount === 0 ? (
-        <span className="sr-only">Chưa phát sinh hoàn phí</span>
-      ) : (
-        formatCurrency(amount)
-      )}
-    </div>
   );
 }
 

@@ -1,25 +1,14 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { RiArrowLeftSLine as ChevronLeft, RiArrowRightSLine as ChevronRight } from "react-icons/ri";
 import type {
   ClassFeeSummary,
   FeeSummaryMetrics,
   FeeTab,
   UnpaidStage,
 } from "@/lib/fees/types";
-import { getClassGroupInfoForRecord } from "@/lib/classes/presentation";
+import { formTextControlClassName } from "@/components/ui/form-text-control";
+import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/utils/format";
-import {
-  DEFAULT_FEE_CLASS_CARDS_PER_ROW,
-  FEE_CLASS_FILTER_ROWS,
-  getFeeClassCardsPerRow,
-  getFeeClassMinimumCardWidth,
-  getFeeClassPageColumnCount,
-  getFeeClassPageCount,
-  getFeeClassPageIndex,
-  getFeeClassPageItems,
-} from "@/lib/fees/class-filter-pagination";
 
 type FeeReportPanelProps = {
   activeClassId: string;
@@ -28,20 +17,18 @@ type FeeReportPanelProps = {
   onChangeClass: (classId: string) => void;
   onChangeTab: (tab: FeeTab) => void;
   onChangeUnpaidStage: (stage: UnpaidStage) => void;
+  embedded?: boolean;
+  scopeLabel: string;
   summary: FeeSummaryMetrics;
   unpaidStage: UnpaidStage;
+  outstandingView?: boolean;
 };
 
-type FeeMetricProps = {
-  hint: React.ReactNode;
-  label: React.ReactNode;
-  onClick?: () => void;
-  selected?: boolean;
-  className?: string;
-  tone: "slate" | "rose" | "amber" | "sky" | "emerald";
-  value: React.ReactNode;
-};
-
+/**
+ * A quiet ledger header: one financial summary, one status filter and one
+ * class filter. It deliberately avoids dashboard-only decoration so the fee
+ * list remains the primary working surface.
+ */
 export function FeeReportPanel({
   activeClassId,
   activeTab,
@@ -49,99 +36,105 @@ export function FeeReportPanel({
   onChangeClass,
   onChangeTab,
   onChangeUnpaidStage,
+  embedded = false,
+  scopeLabel,
   summary,
   unpaidStage,
+  outstandingView = false,
 }: FeeReportPanelProps) {
-  const classGridId = useId();
-  const classGridRef = useRef<HTMLDivElement>(null);
-  const [cardsPerRow, setCardsPerRow] = useState(DEFAULT_FEE_CLASS_CARDS_PER_ROW);
-  const [pageIndex, setPageIndex] = useState(0);
-  const minimumClassCardWidth = useMemo(
-    () => getFeeClassMinimumCardWidth(classItems.map((item) => item.name)),
-    [classItems],
-  );
-  const pageCount = getFeeClassPageCount(classItems.length, cardsPerRow);
-  const safePageIndex = Math.min(pageIndex, pageCount - 1);
-  const pageItems = useMemo(
-    () => getFeeClassPageItems(classItems, safePageIndex, cardsPerRow),
-    [cardsPerRow, classItems, safePageIndex],
-  );
-  const pageColumnCount = getFeeClassPageColumnCount(pageItems.length, cardsPerRow);
-
-  useEffect(() => {
-    const grid = classGridRef.current;
-    if (!grid) return;
-
-    const updateCardsPerRow = () => {
-      setCardsPerRow((current) => {
-        const next = getFeeClassCardsPerRow(
-          grid.getBoundingClientRect().width,
-          minimumClassCardWidth,
-        );
-        return current === next ? current : next;
-      });
-    };
-
-    updateCardsPerRow();
-    if (typeof ResizeObserver === "undefined") {
-      window.addEventListener("resize", updateCardsPerRow);
-      return () => window.removeEventListener("resize", updateCardsPerRow);
-    }
-
-    const observer = new ResizeObserver(updateCardsPerRow);
-    observer.observe(grid);
-    return () => observer.disconnect();
-  }, [minimumClassCardWidth]);
-
-  useEffect(() => {
-    setPageIndex((current) => Math.min(current, pageCount - 1));
-  }, [pageCount]);
-
-  useEffect(() => {
-    if (!activeClassId) return;
-    const activeItemIndex = classItems.findIndex((item) => item.id === activeClassId);
-    if (activeItemIndex >= 0) {
-      setPageIndex(getFeeClassPageIndex(activeItemIndex, cardsPerRow));
-    }
-  }, [activeClassId, cardsPerRow, classItems]);
+  const collectedPercent =
+    summary.total > 0
+      ? Math.min(100, Math.max(0, (summary.netCollected / summary.total) * 100))
+      : 0;
+  const roundedCollectedPercent = Math.round(collectedPercent);
+  const hasCurrentPeriodFees = summary.total > 0;
 
   return (
-    <aside className="grid select-none items-stretch gap-3 xl:grid-cols-[340px_1fr] xl:gap-4">
-      <section className="flex flex-col gap-2 overflow-visible">
-        <div className="relative flex flex-1 flex-col overflow-hidden rounded-md border border-gray-200 bg-slate-50/30 px-4 py-3 shadow-sm">
-          <span
-            className="absolute inset-y-0 left-0 w-1 bg-primary"
-            aria-hidden="true"
-          />
-          <div className="flex items-center justify-between gap-3 pl-1">
-            <p className="table-heading-text whitespace-nowrap text-gray-600">
-              Thực thu
+    <section
+      aria-label="Tổng quan và bộ lọc khoản thu"
+      className={cn(
+        "shrink-0 rounded-xl border border-gray-200 bg-white px-4 py-3",
+        embedded && "xl:rounded-b-none",
+      )}
+    >
+      <div className="grid min-w-0 gap-4 md:grid-cols-2 md:gap-x-5 md:gap-y-3 lg:grid-cols-12 lg:items-center lg:gap-0">
+        <div className="min-w-0 md:col-span-1 lg:col-span-4 lg:pr-5">
+          <div className="flex min-w-0 items-center justify-between gap-3">
+            <p className="table-heading-text text-gray-500">
+              {outstandingView ? "Khoản thu kỳ trước trễ hạn" : "Khoản thu kỳ hiện tại"}
             </p>
-            <span className="shrink-0 rounded-md bg-gray-200/60 px-2 py-1 text-[11px] font-semibold text-gray-800">
-              {summary.paid}/{summary.recordCount} khoản
+            <span className="truncate text-[12px] font-medium text-gray-500">
+              {scopeLabel}
             </span>
           </div>
-          <div className="flex flex-1 items-center pl-1">
-            <p className="metric-value metric-money whitespace-nowrap text-[20px] leading-tight text-gray-950 xl:text-[21px]">
-              {formatCurrency(summary.netCollected)} /{" "}
-              {formatCurrency(summary.total)}
-            </p>
-          </div>
-          <div className="pl-1 text-xs font-medium leading-4 text-gray-500">
-            <span className="block">
-              Đã nhận {formatCurrency(summary.grossCollected)} · Đã hoàn{" "}
-              {formatCurrency(summary.refunded)}
-            </span>
-            <span className="block">
-              Còn phải thu {formatCurrency(summary.outstanding)}
-            </span>
-          </div>
+
+          {outstandingView ? (
+            <>
+              <p className="metric-money mt-1 text-[22px] leading-7 text-gray-950">
+                {formatCurrency(summary.outstanding)}
+              </p>
+              <p className="mt-0.5 text-[13px] font-medium leading-5 text-gray-500">
+                {summary.recordCount > 0
+                  ? `${summary.recordCount} khoản chưa hoàn tất`
+                  : "Không còn khoản chờ thu"}
+              </p>
+            </>
+          ) : hasCurrentPeriodFees ? (
+            <>
+              <p className="metric-money mt-1 min-w-0 text-[22px] leading-7 text-gray-950">
+                {formatCurrency(summary.netCollected)}
+                <span className="mx-1.5 text-base font-medium text-gray-300">/</span>
+                <span className="text-base font-medium text-gray-600">
+                  {formatCurrency(summary.total)}
+                </span>
+              </p>
+              <div className="mt-0.5 flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-0.5 text-[13px] leading-5">
+                <span className="text-gray-500">
+                  Chưa thu {formatCurrency(summary.outstanding)}
+                  {summary.refunded > 0
+                    ? ` · Đã hoàn ${formatCurrency(summary.refunded)}`
+                    : ""}
+                </span>
+                <span className="shrink-0 font-semibold tabular-nums text-primary">
+                  {roundedCollectedPercent >= 100 ? "Đã thu đủ" : `${roundedCollectedPercent}%`}
+                </span>
+              </div>
+              <div
+                role="progressbar"
+                aria-label="Tỷ lệ học phí đã thu trong kỳ"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={roundedCollectedPercent}
+                className="mt-2 h-1 overflow-hidden rounded-full bg-gray-100"
+              >
+                <span
+                  aria-hidden="true"
+                  className="block h-full rounded-full bg-primary transition-[width] duration-200 motion-reduce:transition-none"
+                  style={{ width: `${collectedPercent}%` }}
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="mt-1 text-base font-semibold text-gray-900">Chưa phát sinh</p>
+              <p className="mt-0.5 text-[13px] font-medium leading-5 text-gray-500">
+                Chưa có khoản học phí trong kỳ này.
+              </p>
+            </>
+          )}
         </div>
-        <div className="grid grid-cols-3 gap-2 px-1">
-          <FeeMetric
+
+        <div
+          role="group"
+          aria-label="Lọc theo trạng thái khoản thu"
+          className={cn(
+            "order-3 grid min-w-0 gap-1 rounded-lg bg-gray-50 p-1 md:col-span-2 lg:order-none lg:col-span-5 lg:mx-5",
+            outstandingView ? "grid-cols-2" : "grid-cols-3",
+          )}
+        >
+          <FeeStatusFilter
             label="Chưa báo"
             value={summary.unnotified}
-            hint="khoản"
             tone="rose"
             selected={activeTab === "unpaid" && unpaidStage === "unnotified"}
             onClick={() => {
@@ -149,10 +142,9 @@ export function FeeReportPanel({
               onChangeUnpaidStage("unnotified");
             }}
           />
-          <FeeMetric
+          <FeeStatusFilter
             label="Đã báo"
             value={summary.notified}
-            hint="khoản"
             tone="amber"
             selected={activeTab === "unpaid" && unpaidStage === "notified"}
             onClick={() => {
@@ -160,176 +152,84 @@ export function FeeReportPanel({
               onChangeUnpaidStage("notified");
             }}
           />
-          <FeeMetric
-            label="Đã nộp"
-            value={summary.paid}
-            hint="khoản"
-            tone="emerald"
-            selected={activeTab === "paid"}
-            onClick={() => onChangeTab("paid")}
-          />
-        </div>
-      </section>
-
-      <section className="flex min-h-0 flex-col rounded-md border border-gray-200">
-        <div className="flex h-9 shrink-0 items-center justify-between gap-3 border-b border-gray-200 bg-gray-100/60 px-3">
-          <p className="text-sm font-semibold text-gray-900">Theo lớp</p>
-          <div className="flex items-center gap-1.5">
-            <span className="min-w-9 text-center text-[11px] font-medium tabular-nums text-gray-500" aria-live="polite">
-              {safePageIndex + 1}/{pageCount}
-            </span>
-            <button
-              type="button"
-              aria-label="Xem các lớp ở trang trước"
-              aria-controls={classGridId}
-              disabled={safePageIndex === 0}
-              onClick={() => setPageIndex((current) => Math.max(0, current - 1))}
-              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 bg-white text-gray-600 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:text-gray-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-300 disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:border-gray-200 disabled:hover:bg-white disabled:hover:text-gray-600"
-            >
-              <ChevronLeft className="h-4 w-4" aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              aria-label="Xem các lớp ở trang sau"
-              aria-controls={classGridId}
-              disabled={safePageIndex >= pageCount - 1}
-              onClick={() => setPageIndex((current) => Math.min(pageCount - 1, current + 1))}
-              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 bg-white text-gray-600 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:text-gray-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-300 disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:border-gray-200 disabled:hover:bg-white disabled:hover:text-gray-600"
-            >
-              <ChevronRight className="h-4 w-4" aria-hidden="true" />
-            </button>
-          </div>
-        </div>
-        <div
-          ref={classGridRef}
-          id={classGridId}
-          role="region"
-          aria-label={`Bộ lọc học phí theo lớp, trang ${safePageIndex + 1} trên ${pageCount}`}
-          className="grid h-[172px] grid-flow-col content-stretch gap-1.5 overflow-hidden p-2"
-          style={{
-            gridTemplateColumns: `repeat(${pageColumnCount}, minmax(0, 1fr))`,
-            gridTemplateRows: `repeat(${FEE_CLASS_FILTER_ROWS}, minmax(0, 1fr))`,
-          }}
-        >
-          {classItems.length === 0 ? (
-            <p className="text-sm text-gray-500">Chưa có dữ liệu.</p>
+          {!outstandingView ? (
+            <FeeStatusFilter
+              label="Đã nộp"
+              value={summary.paid}
+              tone="emerald"
+              selected={activeTab === "paid"}
+              onClick={() => onChangeTab("paid")}
+            />
           ) : null}
-          {pageItems.map((item) => {
-            const selected = activeClassId === item.id;
-            const color = getClassGroupInfoForRecord({
-              name: item.name,
-              class_category: item.classCategory,
-              grade_level: item.gradeLevel,
-            }).color;
-
-            return (
-              <button
-                key={item.id}
-                type="button"
-                aria-pressed={selected}
-                aria-label={`${item.name}: ${item.unpaidStudentCount} học viên chưa nộp, tổng phải thu ${formatCurrency(item.totalAmount)}`}
-                onClick={() => onChangeClass(selected ? "" : item.id)}
-                title={item.name}
-                className={`group flex min-w-0 flex-col justify-center overflow-hidden rounded border px-2 py-1.5 text-left transition ${
-                  selected
-                    ? "border-gray-400 bg-gray-50 shadow-sm"
-                    : "border-gray-100 bg-white hover:border-gray-300 hover:bg-gray-50"
-                }`}
-              >
-                <div className="flex items-center gap-1.5">
-                  <span
-                    className="h-2 w-2 shrink-0 rounded-full"
-                    style={{ backgroundColor: color.border }}
-                  />
-                  <span className="min-w-0 whitespace-nowrap text-xs font-semibold leading-4 text-gray-900">
-                    {item.name}
-                  </span>
-                </div>
-                <div className="mt-0.5 flex items-center justify-between gap-2 pl-3.5 text-xs text-gray-500">
-                  <span title="Chưa nộp / Tổng số">
-                    {item.unpaidStudentCount}/
-                    {item.paidStudentCount + item.unpaidStudentCount}
-                  </span>
-                  <span
-                    className="whitespace-nowrap font-medium text-gray-900"
-                    title="Tổng phải thu trong kỳ"
-                  >
-                    {formatCurrency(item.totalAmount)}
-                  </span>
-                </div>
-              </button>
-            );
-          })}
         </div>
-      </section>
-    </aside>
+
+        <label className="block min-w-0 md:col-span-1 lg:col-span-3 lg:border-l lg:border-gray-200 lg:pl-5">
+          <span className="form-label-text mb-1.5 block select-none text-gray-700">
+            Lớp học
+          </span>
+          <select
+            aria-label="Lọc khoản thu theo lớp"
+            value={activeClassId}
+            onChange={(event) => onChangeClass(event.target.value)}
+            className={cn(formTextControlClassName, "h-11 md:h-8")}
+          >
+            <option value="">Tất cả lớp ({classItems.length})</option>
+            {classItems.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name} · {item.unpaidStudentCount} chưa nộp
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+    </section>
   );
 }
 
-function FeeMetric({
-  hint,
+function FeeStatusFilter({
   label,
   onClick,
   selected,
-  className,
   tone,
   value,
-}: FeeMetricProps) {
-  const toneClass = {
-    slate: "border-slate-200 bg-slate-50 text-slate-950",
-    rose: "border-rose-200 bg-rose-50 text-rose-950",
-    amber: "border-amber-200 bg-amber-50 text-amber-950",
-    sky: "border-sky-200 bg-sky-50 text-sky-950",
-    emerald: "border-emerald-200 bg-emerald-50 text-emerald-950",
+}: {
+  label: string;
+  onClick: () => void;
+  selected: boolean;
+  tone: "rose" | "amber" | "emerald";
+  value: number;
+}) {
+  const dotClass = {
+    rose: "bg-rose-500",
+    amber: "bg-amber-500",
+    emerald: "bg-emerald-500",
   }[tone];
 
-  const selectedRing = selected
-    ? {
-        rose: "!border-rose-400 shadow-sm",
-        amber: "!border-amber-400 shadow-sm",
-        emerald: "!border-emerald-400 shadow-sm",
-        slate: "!border-slate-400 shadow-sm",
-        sky: "!border-sky-400 shadow-sm",
-      }[tone]
-    : "";
-  const clickable = onClick
-    ? "cursor-pointer hover:shadow-sm transition-shadow"
-    : "";
-
-  const content = (
-    <>
-      <p className="text-[11px] font-bold uppercase leading-tight opacity-75">
-        {label}
-      </p>
-      <p className="mt-0.5 flex-1 text-lg font-semibold leading-tight">
-        {value}
-      </p>
-      {hint ? (
-        <p className="mt-1 text-[11px] font-medium leading-tight opacity-70">
-          {hint}
-        </p>
-      ) : null}
-    </>
-  );
-
-  if (onClick) {
-    return (
-      <button
-        type="button"
-        onClick={onClick}
-        aria-pressed={selected}
-        className={`flex flex-col justify-center rounded-md border px-2.5 py-1.5 text-left ${toneClass} ${selectedRing} ${clickable} ${className || ""}`}
-      >
-        {content}
-      </button>
-    );
-  }
-
   return (
-    <div
-      className={`flex flex-col justify-center rounded-md border px-2.5 py-1.5 ${toneClass} ${className || ""}`}
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={`${label}: ${value} khoản`}
+      aria-pressed={selected}
+      className={cn(
+        "inline-flex min-h-11 min-w-0 items-center justify-between gap-2 rounded-md px-2.5 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 md:min-h-9",
+        selected
+          ? "bg-primary-soft font-semibold text-primary ring-1 ring-inset ring-primary/20"
+          : "font-medium text-gray-600 hover:bg-white hover:text-gray-900",
+      )}
     >
-      {content}
-    </div>
+      <span className="flex min-w-0 items-center gap-2">
+        <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", dotClass)} aria-hidden="true" />
+        <span className="truncate">{label}</span>
+      </span>
+      <span
+        className={cn(
+          "shrink-0 text-[13px] font-semibold tabular-nums",
+          selected ? "text-primary" : "text-gray-700",
+        )}
+      >
+        {value}
+      </span>
+    </button>
   );
 }

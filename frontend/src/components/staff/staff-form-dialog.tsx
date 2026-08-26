@@ -9,7 +9,6 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { Button } from "@/components/ui/button";
 import {
-  createEntityDialogFrameClassName,
   FormDialogBody,
   FormDialogFooter,
   FormDialogShell,
@@ -49,27 +48,43 @@ import {
 } from "@/lib/forms/use-contact-pair-suggestion";
 import { cn } from "@/lib/utils";
 
-const STAFF_FEEDBACK_FIELDS = ["full_name", "staff_type", "contact"] as const;
+const STAFF_FEEDBACK_FIELDS = [
+  "full_name",
+  "staff_type",
+  "contact",
+  "email",
+  "checkin_window_hours",
+  "checkin_window_minutes",
+] as const;
 
 const defaultValues: StaffFormValues = {
   full_name: "",
   staff_type: "TEACHER",
   zalo_name: "",
   phone: "",
+  email: "",
+  checkin_window_hours: "24",
+  checkin_window_minutes: "00",
 };
 
 export function StaffFormDialog({
   assignedClassNames,
   contactSuggestionSources,
+  embedded = false,
+  initialStaffType,
   isSaving,
   onClose,
+  onDirtyChange,
   onSubmit,
   staff,
 }: {
   assignedClassNames: string[];
   contactSuggestionSources: ContactSuggestionSource[];
+  embedded?: boolean;
+  initialStaffType?: StaffType;
   isSaving: boolean;
   onClose: () => void;
+  onDirtyChange?: (dirty: boolean) => void;
   onSubmit: (payload: StaffCreate | StaffUpdate) => Promise<void>;
   staff: StaffResponse | null;
 }) {
@@ -90,7 +105,10 @@ export function StaffFormDialog({
     resolver: zodResolver(staff ? staffFormSchema : staffCreateFormSchema),
     mode: "onChange",
     shouldFocusError: true,
-    defaultValues,
+    defaultValues: {
+      ...defaultValues,
+      staff_type: initialStaffType ?? "TEACHER",
+    },
   });
   const {
     markBlur,
@@ -112,18 +130,27 @@ export function StaffFormDialog({
 
   useEffect(() => {
     setSubmitError("");
-    reset(
-      staff
-        ? {
-            full_name: staff.full_name,
-            staff_type: staff.staff_type,
-            zalo_name: staff.zalo_name ?? "",
-            phone: staff.phone ?? "",
-          }
-        : defaultValues,
-    );
+    if (staff) {
+      const windowVal = staff.checkin_window_after_hours ?? 24;
+      const h = Math.floor(windowVal);
+      const m = Math.round((windowVal - h) * 60);
+      reset({
+        full_name: staff.full_name,
+        staff_type: staff.staff_type,
+        zalo_name: staff.zalo_name ?? "",
+        phone: staff.phone ?? "",
+        email: staff.email ?? "",
+        checkin_window_hours: String(h),
+        checkin_window_minutes: m === 0 ? "00" : String(m).padStart(2, "0"),
+      });
+    } else {
+      reset({
+        ...defaultValues,
+        staff_type: initialStaffType ?? "TEACHER",
+      });
+    }
     resetFeedback();
-  }, [reset, resetFeedback, staff]);
+  }, [initialStaffType, reset, resetFeedback, staff]);
 
   async function submit(values: StaffFormValues) {
     markSubmitted();
@@ -140,11 +167,22 @@ export function StaffFormDialog({
       return;
     }
 
+    const rawHours = values.checkin_window_hours;
+    const rawMinutes = values.checkin_window_minutes;
+    const hoursNum =
+      rawHours === "" || rawHours === null || rawHours === undefined ? 24 : Number(rawHours);
+    const minutesNum =
+      rawMinutes === "" || rawMinutes === null || rawMinutes === undefined ? 0 : Number(rawMinutes);
+    const totalHours =
+      Math.round((hoursNum + minutesNum / 60) * 100) / 100 || 24;
+
     const payload: StaffCreate | StaffUpdate = {
       full_name: values.full_name.trim(),
       staff_type: values.staff_type,
       zalo_name: values.zalo_name.trim() || null,
       phone: values.phone ? normalizeVietnamPhone(values.phone) : null,
+      email: values.email.trim() || null,
+      checkin_window_after_hours: totalHours,
     };
 
     try {
@@ -181,14 +219,17 @@ export function StaffFormDialog({
     markInput("contact", [nextZaloName, nextPhone].filter(Boolean));
   }
 
-  if (!mounted) return null;
-
   const hasUnsavedChanges = Boolean(
     staff && normalizedStaffKey(watchedFormValues) !== normalizedStaffKey({
       full_name: staff.full_name,
       staff_type: staff.staff_type,
       zalo_name: staff.zalo_name ?? "",
       phone: staff.phone ?? "",
+      email: staff.email ?? "",
+      checkin_window_hours: String(Math.floor(staff.checkin_window_after_hours ?? 24)),
+      checkin_window_minutes: Math.round(((staff.checkin_window_after_hours ?? 24) % 1) * 60) === 0
+        ? "00"
+        : String(Math.round(((staff.checkin_window_after_hours ?? 24) % 1) * 60)).padStart(2, "0"),
     }),
   );
   const hasErrors =
@@ -205,6 +246,9 @@ export function StaffFormDialog({
   const contactLabelId = `${fieldIdPrefix}-contact-label`;
   const zaloNameId = `${fieldIdPrefix}-zalo-name`;
   const phoneId = `${fieldIdPrefix}-phone`;
+  const emailId = `${fieldIdPrefix}-email`;
+  const checkinHoursId = `${fieldIdPrefix}-checkin-hours`;
+  const checkinMinutesId = `${fieldIdPrefix}-checkin-minutes`;
   const contactError = errors.zalo_name ?? errors.phone;
   const visibleFullNameError = shouldShowError("full_name", isSubmitted)
     ? errors.full_name
@@ -215,8 +259,33 @@ export function StaffFormDialog({
   const visibleContactError = shouldShowError("contact", isSubmitted)
     ? contactError
     : undefined;
+  const visibleEmailError = shouldShowError("email", isSubmitted)
+    ? errors.email
+    : undefined;
+  const visibleCheckinHoursError = shouldShowError(
+    "checkin_window_hours",
+    isSubmitted,
+  )
+    ? errors.checkin_window_hours
+    : undefined;
+  const visibleCheckinMinutesError = shouldShowError(
+    "checkin_window_minutes",
+    isSubmitted,
+  )
+    ? errors.checkin_window_minutes
+    : undefined;
   const contactErrorId = `${fieldIdPrefix}-contact-error`;
   const contactDescribedBy = visibleContactError ? contactErrorId : undefined;
+  const emailErrorId = `${fieldIdPrefix}-email-error`;
+  const emailDescribedBy = visibleEmailError ? emailErrorId : undefined;
+  const checkinHoursErrorId = `${fieldIdPrefix}-checkin-hours-error`;
+  const checkinHoursDescribedBy = visibleCheckinHoursError
+    ? checkinHoursErrorId
+    : undefined;
+  const checkinMinutesErrorId = `${fieldIdPrefix}-checkin-minutes-error`;
+  const checkinMinutesDescribedBy = visibleCheckinMinutesError
+    ? checkinMinutesErrorId
+    : undefined;
   const assignmentsId = `${fieldIdPrefix}-assignments`;
   const fullNameDescription = [
     visibleFullNameError ? `${fullNameId}-error` : null,
@@ -227,23 +296,18 @@ export function StaffFormDialog({
     .filter(Boolean)
     .join(" ") || undefined;
 
-  return (
-    <FormDialogShell
-      title={staff ? "Chỉnh sửa nhân sự" : "Thêm nhân sự"}
-      width={staff ? "md" : "standard"}
-      isBusy={isSaving}
-      dirty={hasUnsavedChanges}
-      onClose={onClose}
-      frameProps={{ className: staff ? undefined : createEntityDialogFrameClassName }}
-    >
+  useEffect(() => {
+    onDirtyChange?.(hasUnsavedChanges);
+  }, [hasUnsavedChanges, onDirtyChange]);
 
-        <form
-          {...noSavedInfoFormProps}
-          noValidate
-          className="flex min-h-0 flex-1 flex-col"
-          onKeyDown={moveFocusByFormArrow}
-          onSubmit={handleSubmit(submit, () => markSubmitted())}
-        >
+  const formElement = (
+    <form
+      {...noSavedInfoFormProps}
+      noValidate
+      className="flex min-h-0 flex-1 flex-col"
+      onKeyDown={moveFocusByFormArrow}
+      onSubmit={handleSubmit(submit, () => markSubmitted())}
+    >
           <FormDialogBody>
             <fieldset disabled={isSaving} className="space-y-3 disabled:opacity-70">
               <FormSection label="Hồ sơ nhân sự" order={1}>
@@ -413,6 +477,101 @@ export function StaffFormDialog({
                   }
                 />
               </FormField>
+
+              <FormField
+                controlId={emailId}
+                error={visibleEmailError?.message}
+                errorId={emailErrorId}
+                label="Email (tùy chọn)"
+              >
+                <input
+                  {...register("email", {
+                    onChange: (event) => {
+                      setSubmitError("");
+                      markInput("email", event.target.value);
+                    },
+                    onBlur: () => markBlur("email"),
+                  })}
+                  id={emailId}
+                  type="text"
+                  inputMode="email"
+                  autoComplete={savedInfoAutocomplete.disabled}
+                  maxLength={320}
+                  aria-invalid={Boolean(visibleEmailError)}
+                  aria-describedby={emailDescribedBy}
+                  className={getInputClass(Boolean(visibleEmailError))}
+                  data-row={2}
+                  data-col={0}
+                />
+                <p className="helper-text select-none text-gray-500">
+                  Lưu ý: Email dùng để giáo viên đăng nhập vào hệ thống và thực hiện chấm công.
+                </p>
+              </FormField>
+              </FormSection>
+
+              <FormSection label="Cửa sổ chấm công" order={3}>
+                <div className="grid grid-cols-2 items-start gap-3">
+                  <div className="min-w-0">
+                    <FormField
+                      controlId={checkinHoursId}
+                      error={visibleCheckinHoursError?.message}
+                      errorId={checkinHoursErrorId}
+                      label="Số giờ"
+                    >
+                      <input
+                        {...register("checkin_window_hours", {
+                          onChange: (event) => {
+                            setSubmitError("");
+                            markInput("checkin_window_hours", event.target.value);
+                          },
+                          onBlur: () => markBlur("checkin_window_hours"),
+                        })}
+                        id={checkinHoursId}
+                        type="text"
+                        inputMode="numeric"
+                        autoComplete={savedInfoAutocomplete.disabled}
+                        placeholder="24"
+                        aria-invalid={Boolean(visibleCheckinHoursError)}
+                        aria-describedby={checkinHoursDescribedBy}
+                        className={getInputClass(Boolean(visibleCheckinHoursError))}
+                        data-row={3}
+                        data-col={0}
+                      />
+                    </FormField>
+                  </div>
+
+                  <div className="min-w-0">
+                    <FormField
+                      controlId={checkinMinutesId}
+                      error={visibleCheckinMinutesError?.message}
+                      errorId={checkinMinutesErrorId}
+                      label="Số phút"
+                    >
+                      <input
+                        {...register("checkin_window_minutes", {
+                          onChange: (event) => {
+                            setSubmitError("");
+                            markInput("checkin_window_minutes", event.target.value);
+                          },
+                          onBlur: () => markBlur("checkin_window_minutes"),
+                        })}
+                        id={checkinMinutesId}
+                        type="text"
+                        inputMode="numeric"
+                        autoComplete={savedInfoAutocomplete.disabled}
+                        placeholder="00"
+                        aria-invalid={Boolean(visibleCheckinMinutesError)}
+                        aria-describedby={checkinMinutesDescribedBy}
+                        className={getInputClass(Boolean(visibleCheckinMinutesError))}
+                        data-row={3}
+                        data-col={1}
+                      />
+                    </FormField>
+                  </div>
+                </div>
+                <p className="helper-text select-none text-gray-500">
+                  Thời gian cho phép giáo viên tự chấm công tính từ lúc buổi học bắt đầu (mặc định: 24 giờ 00 phút).
+                </p>
               </FormSection>
             </fieldset>
 
@@ -451,9 +610,27 @@ export function StaffFormDialog({
             }
           />
         </form>
-      </FormDialogShell>
-    );
+  );
+
+  if (!mounted) return null;
+
+  if (embedded) {
+    return formElement;
   }
+
+  return (
+    <FormDialogShell
+      title={staff ? "Chỉnh sửa nhân sự" : "Thêm nhân sự"}
+      width={staff ? "md" : "standard"}
+      isBusy={isSaving}
+      dirty={hasUnsavedChanges}
+      onClose={onClose}
+      frameProps={{ className: undefined }}
+    >
+      {formElement}
+    </FormDialogShell>
+  );
+}
 
 function getInputClass(hasError: boolean) {
   return cn(formTextControlClassName, hasError && formTextControlErrorClassName);
@@ -465,10 +642,23 @@ function formatClassList(classNames: string[]) {
 }
 
 function normalizedStaffKey(values: StaffFormValues) {
+  const rawHours = values.checkin_window_hours;
+  const rawMinutes = values.checkin_window_minutes;
+  const hoursNum =
+    rawHours === "" || rawHours === null || rawHours === undefined ? 24 : Number(rawHours);
+  const minutesNum =
+    rawMinutes === "" || rawMinutes === null || rawMinutes === undefined ? 0 : Number(rawMinutes);
+  const totalHours =
+    values.checkin_window_after_hours !== undefined
+      ? Number(values.checkin_window_after_hours)
+      : Math.round((hoursNum + minutesNum / 60) * 100) / 100 || 24;
+
   return JSON.stringify({
     full_name: values.full_name.trim(),
     staff_type: values.staff_type,
     zalo_name: values.zalo_name.trim() || null,
     phone: values.phone ? normalizeVietnamPhone(values.phone) : null,
+    email: values.email.trim() || null,
+    checkin_window_after_hours: totalHours,
   });
 }

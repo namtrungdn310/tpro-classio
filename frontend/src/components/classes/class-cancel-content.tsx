@@ -1,7 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { LoadingLabel } from "@/components/ui/loading-label";
+import { PendingActionButton } from "@/components/ui/pending-action-button";
 import type { ClassResponse } from "@/lib/types";
 
 /** Shared class cancel content used by the standalone dialog and the workspace. */
@@ -33,15 +33,16 @@ export function ClassCancelContent({
         >
           Huỷ
         </Button>
-        <Button
+        <PendingActionButton
           type="button"
           variant="destructive"
-          className="h-8 w-fit rounded-md bg-destructive px-3 text-sm text-destructive-foreground hover:bg-destructive/90"
-          disabled={isDeleting}
+          isPending={isDeleting}
+          pendingLabel="Đang hủy"
           onClick={onConfirm}
+          className="h-8 w-fit rounded-md bg-destructive px-3 text-sm text-destructive-foreground hover:bg-destructive/90"
         >
-          {isDeleting ? <LoadingLabel label="Đang hủy" /> : "Hủy lớp"}
-        </Button>
+          Hủy lớp
+        </PendingActionButton>
       </div>
     </>
   );

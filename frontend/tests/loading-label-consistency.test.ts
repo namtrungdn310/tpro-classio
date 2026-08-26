@@ -12,6 +12,7 @@ const classFormSource = source("../src/components/classes/class-form-dialog.tsx"
 const classCancelSource = source("../src/components/classes/class-cancel-content.tsx");
 const staffFormSource = source("../src/components/staff/staff-form-dialog.tsx");
 const studentPageSource = source("../src/app/(dashboard)/students/page.tsx");
+const studentWorkspaceSource = source("../src/components/students/student-workspace-dialog.tsx");
 const feeTemplateSource = source("../src/components/fees/fee-message-template-dialog.tsx");
 const accountSettingsSource = source("../src/components/settings/account-settings-section.tsx");
 const confirmationDialogSource = source("../src/components/ui/confirmation-dialog.tsx");
@@ -43,13 +44,11 @@ test("persisted actions expand only while the shared save button is pending", ()
   ]) {
     assert.match(formSource, /<SaveButton/);
   }
-  assert.match(
-    studentPageSource,
-    /isDeleting \? <LoadingLabel label="Đang xoá" \/> : "Xoá khỏi lớp"/,
-  );
-  assert.match(
-    classCancelSource,
-    /isDeleting \? <LoadingLabel label="Đang hủy" \/> : "Hủy lớp"/,
-  );
+  assert.match(studentWorkspaceSource, /<PendingActionButton/);
+  assert.match(studentWorkspaceSource, /isPending=\{isDeleting\}/);
+  assert.match(studentWorkspaceSource, /pendingLabel="Đang xử lý"/);
+  assert.match(classCancelSource, /<PendingActionButton/);
+  assert.match(classCancelSource, /isPending=\{isDeleting\}/);
+  assert.match(classCancelSource, /pendingLabel="Đang hủy"/);
   assert.match(confirmationDialogSource, /<LoadingLabel label=\{activePendingLabel\} \/>/);
 });

@@ -3,5 +3,6 @@ export type EnrollmentFeeValues = Record<
   {
     custom_fee: number | null;
     enrollment_date: string | null;
+    selected_slot_ids: string[];
   }
 >;

@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  countActiveStaff,
   filterAndSortStaff,
   prepareStaffRecords,
 } from "../src/lib/staff/presentation";
@@ -14,6 +13,10 @@ function makeStaff(overrides: Partial<StaffResponse> = {}): StaffResponse {
     staff_type: "TEACHER",
     zalo_name: "Cô Hạnh",
     phone: "0912345678",
+    email: null,
+    checkin_window_after_hours: 24,
+    current_rate: null,
+    attendance_account_status: "not_connected",
     is_active: true,
     assigned_classes: [
       {
@@ -41,7 +44,7 @@ test("staff presentation keeps all assignments for validation but displays only 
 });
 
 test("viewer search corpus excludes private contact data", () => {
-  const staff = [makeStaff()];
+  const staff = [makeStaff({ email: "cohanh@tpro.test" })];
   const publicRecords = prepareStaffRecords(staff, false);
   const privateRecords = prepareStaffRecords(staff, true);
 
@@ -56,6 +59,22 @@ test("viewer search corpus excludes private contact data", () => {
   assert.equal(
     filterAndSortStaff(privateRecords, {
       search: "0912345678",
+      staffType: "",
+      status: "ACTIVE",
+    }).length,
+    1,
+  );
+  assert.equal(
+    filterAndSortStaff(publicRecords, {
+      search: "cohanh@tpro.test",
+      staffType: "",
+      status: "ACTIVE",
+    }).length,
+    0,
+  );
+  assert.equal(
+    filterAndSortStaff(privateRecords, {
+      search: "cohanh@tpro.test",
       staffType: "",
       status: "ACTIVE",
     }).length,
@@ -91,22 +110,4 @@ test("staff filters status and role while keeping Vietnamese name order", () => 
       .map((record) => record.staff.full_name),
     ["Trợ giảng Bình"],
   );
-});
-
-test("active staff total is derived from the full dataset", () => {
-  const staff = [
-    makeStaff(),
-    makeStaff({
-      id: "4f266758-9fe1-4534-a087-f1d7f81618e3",
-      full_name: "Trợ giảng An",
-      staff_type: "ASSISTANT",
-    }),
-    makeStaff({
-      id: "967c5fd6-8d7d-4a0d-a025-736c57aa44c9",
-      full_name: "Giáo viên cũ",
-      is_active: false,
-    }),
-  ];
-
-  assert.equal(countActiveStaff(staff), 2);
 });

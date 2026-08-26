@@ -1,46 +1,72 @@
 "use client";
 
-import { useDeferredValue, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   RiIdCardLine as IdCardLanyard,
-  RiLoader4Line as LoaderCircle,
   RiAddLine as Plus,
-  RiPencilLine as Pencil,
-  RiArrowGoBackLine as RotateCcw,
   RiSearchLine as SearchX,
-  RiUserUnfollowLine as UserRoundX,
-  RiMoneyDollarCircleLine as Payroll,
 } from "react-icons/ri";
 import { HeaderControlsPortal } from "@/components/layout/header-controls-portal";
 import { HeaderFilterControls } from "@/components/layout/header-filter-controls";
 import { useToast } from "@/components/providers/toast-provider";
 import { StaffFormDialog } from "@/components/staff/staff-form-dialog";
-import { StaffPayrollDialog } from "@/components/staff/staff-payroll-dialog";
+import {
+  StaffWorkspaceDialog,
+  type StaffWorkspaceMode,
+} from "@/components/staff/staff-workspace-dialog";
 import { StaffSkeleton } from "@/components/staff/staff-skeleton";
 import { StaffTable } from "@/components/staff/staff-table";
-import { EntityActionsDialog, type EntityActionItem } from "@/components/shared/entity-actions-dialog";
-import { ConfirmationDialog } from "@/components/ui/confirmation-dialog";
 import { DataSectionEmpty, DataSectionError } from "@/components/ui/data-section-state";
+import { ExcelExportButton } from "@/components/ui/excel-export-button";
 import { LoadingLabel } from "@/components/ui/loading-label";
 import { QuickActionFab } from "@/components/ui/quick-action-fab";
 import { createStaffMember, getStaffMembers, updateStaffMember } from "@/lib/api/staff";
+import { getClasses } from "@/lib/api/classes";
 import { getApiErrorMessage } from "@/lib/api/errors";
 import type { ContactSuggestionSource } from "@/lib/forms/use-contact-pair-suggestion";
 import { useAuth } from "@/lib/hooks/useAuth";
 import { isManagementUser } from "@/lib/auth/permissions";
 import { usePersistentState } from "@/lib/hooks/usePersistentState";
 import {
-  countActiveStaff,
   filterAndSortStaff,
   prepareStaffRecords,
   type PreparedStaffRecord,
   type StaffStatusFilter,
 } from "@/lib/staff/presentation";
 import { staffQueryKeys } from "@/lib/staff/query-keys";
-import type { StaffCreate, StaffResponse, StaffType, StaffUpdate } from "@/lib/types";
+import { exportStaff } from "@/lib/staff/export";
+import { classQueryKeys } from "@/lib/classes/query-keys";
+import { invalidateDomainQueries } from "@/lib/query/invalidation";
+import type { ClassResponse, StaffCreate, StaffResponse, StaffType, StaffUpdate } from "@/lib/types";
 
 const EMPTY_STAFF: StaffResponse[] = [];
+
+export type StaffScope = "teachers" | "assistants" | "inactive";
+
+const STAFF_SCOPE_TABS = [
+  {
+    scope: "teachers" as const,
+    label: "Giáo viên",
+    dotClass: "bg-emerald-500",
+    emptyTitle: "Chưa có giáo viên",
+    emptyDescription: "Thêm giáo viên đầu tiên để phân công vào lớp học và quản lý thù lao.",
+  },
+  {
+    scope: "assistants" as const,
+    label: "Trợ giảng",
+    dotClass: "bg-emerald-500",
+    emptyTitle: "Chưa có trợ giảng",
+    emptyDescription: "Thêm trợ giảng để hỗ trợ các buổi học và chấm công.",
+  },
+  {
+    scope: "inactive" as const,
+    label: "Ngừng hoạt động",
+    dotClass: "bg-gray-400",
+    emptyTitle: "Chưa có nhân sự ngừng hoạt động",
+    emptyDescription: "Các giáo viên hoặc trợ giảng đã ngừng hoạt động sẽ xuất hiện ở đây.",
+  },
+] as const;
 
 export default function StaffPage() {
   const { user } = useAuth();
@@ -48,36 +74,56 @@ export default function StaffPage() {
   const canViewPrivate = canManage;
   const queryClient = useQueryClient();
   const notify = useToast();
+  const [storedScope, setScope] = usePersistentState<StaffScope>("tpro:staff:scope", "teachers");
   const [search, setSearch] = usePersistentState("tpro:staff:search", "");
   const deferredSearch = useDeferredValue(search);
   const [staffType, setStaffType] = useState<StaffType | "">("");
-  const [status, setStatus] = useState<StaffStatusFilter>("ACTIVE");
-  const [editingRecord, setEditingRecord] = useState<PreparedStaffRecord | null>(null);
-  const [isFormOpen, setIsFormOpen] = useState(false);
-  const [statusTarget, setStatusTarget] = useState<PreparedStaffRecord | null>(null);
-  const [actionTarget, setActionTarget] = useState<PreparedStaffRecord | null>(null);
-  const [payrollTarget, setPayrollTarget] = useState<PreparedStaffRecord | null>(null);
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [workspace, setWorkspace] = useState<{
+    record: PreparedStaffRecord;
+    initialMode: StaffWorkspaceMode;
+  } | null>(null);
+
+  const scope = STAFF_SCOPE_TABS.some((tab) => tab.scope === storedScope) ? storedScope : "teachers";
+
+  useEffect(() => {
+    if (scope !== storedScope) setScope(scope);
+  }, [scope, setScope, storedScope]);
 
   const staffQuery = useQuery({
     queryKey: staffQueryKeys.list,
     queryFn: () => getStaffMembers({ is_active: null }),
     enabled: Boolean(user),
     staleTime: 60_000,
-    refetchOnMount: "always",
-    refetchOnWindowFocus: true,
+    refetchOnMount: true,
   });
 
+  const classesQuery = useQuery({
+    queryKey: classQueryKeys.list("operational"),
+    queryFn: () => getClasses({ scope: "operational" }),
+    enabled: Boolean(user),
+    staleTime: 60_000,
+  });
+
+  const classesById = useMemo(() => {
+    const map = new Map<string, ClassResponse>();
+    for (const item of classesQuery.data ?? []) {
+      map.set(item.id, item);
+    }
+    return map;
+  }, [classesQuery.data]);
+
   function refreshDependencies() {
-    void Promise.all([
-      queryClient.invalidateQueries({ queryKey: staffQueryKeys.root }),
-      queryClient.invalidateQueries({ queryKey: ["classes"] }),
-      queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
-    ]);
+    void invalidateDomainQueries(queryClient, {
+      staff: true,
+      classes: true,
+      dashboard: true,
+    });
   }
 
-  function closeForm() {
-    setIsFormOpen(false);
-    setEditingRecord(null);
+  function closeCreateForm() {
+    setIsCreateOpen(false);
   }
 
   const createMutation = useMutation({
@@ -87,9 +133,14 @@ export default function StaffPage() {
         createdStaff,
         ...items.filter((item) => item.id !== createdStaff.id),
       ]);
-      closeForm();
+      closeCreateForm();
       notify.success("Đã thêm nhân sự.");
       refreshDependencies();
+      if (createdStaff.staff_type === "ASSISTANT") {
+        setScope("assistants");
+      } else {
+        setScope("teachers");
+      }
     },
   });
 
@@ -100,7 +151,17 @@ export default function StaffPage() {
       updateStaffListCache(queryClient, (items) =>
         items.map((item) => (item.id === updatedStaff.id ? updatedStaff : item)),
       );
-      closeForm();
+      setWorkspace((current) =>
+        current
+          ? {
+              ...current,
+              record: {
+                ...current.record,
+                staff: updatedStaff,
+              },
+            }
+          : null,
+      );
       notify.success("Đã cập nhật nhân sự.");
       refreshDependencies();
     },
@@ -113,7 +174,17 @@ export default function StaffPage() {
       updateStaffListCache(queryClient, (items) =>
         items.map((item) => (item.id === updatedStaff.id ? updatedStaff : item)),
       );
-      setStatusTarget(null);
+      setWorkspace((current) =>
+        current
+          ? {
+              ...current,
+              record: {
+                ...current.record,
+                staff: updatedStaff,
+              },
+            }
+          : null,
+      );
       notify.success(updatedStaff.is_active ? "Đã kích hoạt lại nhân sự." : "Đã ngừng hoạt động nhân sự.");
       refreshDependencies();
     },
@@ -128,7 +199,6 @@ export default function StaffPage() {
         ? staff
             .filter(
               (staffMember) =>
-                staffMember.is_active &&
                 Boolean(staffMember.zalo_name?.trim()) &&
                 Boolean(staffMember.phone?.trim()),
             )
@@ -144,108 +214,177 @@ export default function StaffPage() {
     () => prepareStaffRecords(staff, canViewPrivate),
     [canViewPrivate, staff],
   );
-  const filteredStaff = useMemo(
-    () =>
-      filterAndSortStaff(preparedStaff, {
-        search: deferredSearch,
-        staffType,
-        status,
-      }),
-    [deferredSearch, preparedStaff, staffType, status],
-  );
-  const activeStaffTotal = useMemo(() => countActiveStaff(staff), [staff]);
-  const hasData = staffQuery.data !== undefined;
-  const hasBlockingError = staffQuery.isError && !hasData;
-  const hasCachedError = staffQuery.isError && hasData;
-  const isInitialLoading = staffQuery.isPending && !hasData;
-  const hasFilters = Boolean(search.trim() || staffType || status !== "ACTIVE");
-  const isSaving = createMutation.isPending || updateMutation.isPending;
+
+  const scopeCounts = useMemo(() => {
+    let teachers = 0;
+    let assistants = 0;
+    let inactive = 0;
+    for (const item of staff) {
+      if (!item.is_active) {
+        inactive += 1;
+      } else if (item.staff_type === "TEACHER") {
+        teachers += 1;
+      } else if (item.staff_type === "ASSISTANT") {
+        assistants += 1;
+      }
+    }
+    return { teachers, assistants, inactive };
+  }, [staff]);
+
+  const filteredStaff = useMemo(() => {
+    const status: StaffStatusFilter = scope === "inactive" ? "INACTIVE" : "ACTIVE";
+    const typeFilter: StaffType | "" =
+      scope === "teachers"
+        ? "TEACHER"
+        : scope === "assistants"
+          ? "ASSISTANT"
+          : staffType;
+
+    return filterAndSortStaff(preparedStaff, {
+      search: deferredSearch,
+      staffType: typeFilter,
+      status,
+    });
+  }, [deferredSearch, preparedStaff, scope, staffType]);
+
+  const hasStaffData = staffQuery.data !== undefined;
+  const hasClassesData = classesQuery.data !== undefined;
+  const hasData = hasStaffData && hasClassesData;
+  // The table joins staff with their current class assignments. Wait for both
+  // sources on the first load so one column never appears later than the rest.
+  const isInitialLoading =
+    (staffQuery.isPending && !hasStaffData) ||
+    (classesQuery.isPending && !hasClassesData);
+  const hasBlockingError =
+    (staffQuery.isError && !hasStaffData) ||
+    (classesQuery.isError && !hasClassesData);
+  const hasCachedError =
+    (staffQuery.isError && hasStaffData) ||
+    (classesQuery.isError && hasClassesData);
+  const hasFilters = Boolean(search.trim() || (scope === "inactive" && staffType));
+  const currentScope = STAFF_SCOPE_TABS.find((tab) => tab.scope === scope) ?? STAFF_SCOPE_TABS[0];
+
+  function retryStaffData() {
+    void Promise.all([staffQuery.refetch(), classesQuery.refetch()]);
+  }
+
+  async function handleExport() {
+    if (filteredStaff.length === 0 || isExporting) return;
+    setIsExporting(true);
+    try {
+      await exportStaff(filteredStaff, currentScope.label);
+      notify.success(`Đã xuất danh sách ${filteredStaff.length} nhân sự ra file Excel.`);
+    } catch {
+      notify.error("Không thể xuất danh sách nhân sự. Vui lòng thử lại.");
+    } finally {
+      setIsExporting(false);
+    }
+  }
 
   function clearFilters() {
     setSearch("");
     setStaffType("");
-    setStatus("ACTIVE");
+  }
+
+  function selectScope(nextScope: StaffScope) {
+    setScope(nextScope);
+    clearFilters();
   }
 
   function openCreateForm() {
-    setEditingRecord(null);
-    setIsFormOpen(true);
-  }
-
-  function openEditForm(record: PreparedStaffRecord) {
-    setEditingRecord(record);
-    setIsFormOpen(true);
-  }
-
-  function requestStatusChange(record: PreparedStaffRecord) {
-    if (record.staff.staff_type !== "TEACHER") return;
-
-    if (record.staff.is_active && record.activeClasses.length > 0) {
-      notify.error(
-        `Hãy gỡ ${record.staff.full_name} khỏi ${formatClassList(record.activeClasses.map((class_) => class_.name))} trước khi ngừng hoạt động.`,
-      );
-      return;
-    }
-    setStatusTarget(record);
+    setIsCreateOpen(true);
   }
 
   const filterControls = (
     <HeaderFilterControls
       searchPlaceholder={
         canViewPrivate
-          ? "Tìm tên, Zalo, SĐT, lớp..."
+          ? "Tìm tên, email, SĐT, lớp..."
           : "Tìm tên, vai trò, lớp..."
       }
       searchValue={search}
       onSearchChange={setSearch}
       onClear={clearFilters}
-      filters={[
-        {
-          label: "Vai trò",
-          value: staffType,
-          onChange: (value) => setStaffType(value as StaffType | ""),
-          options: [
-            { label: "Giáo viên", value: "TEACHER" },
-            { label: "Trợ giảng", value: "ASSISTANT" },
-          ],
-        },
-        {
-          label: "Trạng thái",
-          value: status,
-          defaultValue: "ACTIVE",
-          allowDeselect: false,
-          onChange: (value) => setStatus(value as StaffStatusFilter),
-          options: [
-            { label: "Đang hoạt động", value: "ACTIVE" },
-            { label: "Đã ngừng", value: "INACTIVE" },
-          ],
-        },
-      ]}
+      filters={
+        scope === "inactive"
+          ? [
+              {
+                label: "Vai trò",
+                value: staffType,
+                onChange: (value) => setStaffType(value as StaffType | ""),
+                options: [
+                  { label: "Giáo viên", value: "TEACHER" },
+                  { label: "Trợ giảng", value: "ASSISTANT" },
+                ],
+              },
+            ]
+          : []
+      }
     />
   );
-  const countStatus = (
-    <StaffListStatus
-      activeCount={activeStaffTotal}
-      isRefreshing={staffQuery.isFetching && hasData}
-    />
-  );
+
   const addButton = canManage ? <AddStaffButton onClick={openCreateForm} /> : null;
+  const exportButton = canManage ? (
+    <ExcelExportButton
+      disabled={filteredStaff.length === 0 || isInitialLoading}
+      isExporting={isExporting}
+      onClick={() => void handleExport()}
+    />
+  ) : null;
 
   return (
     <div className="flex min-h-0 flex-col gap-3 md:h-full md:overflow-hidden">
       <HeaderControlsPortal>
         <div className="flex min-w-0 items-center gap-3">
           {filterControls}
-          {countStatus}
+          {exportButton}
           {addButton}
         </div>
       </HeaderControlsPortal>
 
       <div className="flex min-w-0 flex-wrap items-center gap-2 md:hidden">
         {filterControls}
-        {countStatus}
+        {exportButton}
         {addButton}
       </div>
+
+      <nav
+        aria-label="Phạm vi danh sách nhân sự"
+        className="scrollbar-hidden flex shrink-0 gap-1 overflow-x-auto rounded-xl border border-gray-200 bg-white p-1.5"
+      >
+        {STAFF_SCOPE_TABS.map((tab) => {
+          const isActiveTab = scope === tab.scope;
+          const count = scopeCounts[tab.scope];
+
+          return (
+            <button
+              key={tab.scope}
+              type="button"
+              aria-pressed={isActiveTab}
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={() => selectScope(tab.scope)}
+              className={`font-ui inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 ${
+                isActiveTab
+                  ? "bg-primary-soft font-semibold text-primary ring-1 ring-inset ring-primary/20"
+                  : "font-medium text-gray-600 hover:bg-primary-soft/60 hover:text-primary"
+              }`}
+            >
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${tab.dotClass}`}
+                aria-hidden="true"
+              />
+              {tab.label}
+              <span
+                className={`min-w-4 text-right text-[12px] font-semibold tabular-nums ${
+                  isActiveTab ? "text-primary" : "text-gray-500"
+                }`}
+              >
+                {hasData ? count : "–"}
+              </span>
+            </button>
+          );
+        })}
+      </nav>
 
       {hasCachedError ? (
         <div
@@ -255,11 +394,11 @@ export default function StaffPage() {
           <span>Chưa cập nhật được dữ liệu mới nhất; danh sách đã lưu vẫn đang được hiển thị.</span>
           <button
             type="button"
-            disabled={staffQuery.isFetching}
-            onClick={() => void staffQuery.refetch()}
+            disabled={staffQuery.isFetching || classesQuery.isFetching}
+            onClick={retryStaffData}
             className="shrink-0 font-medium underline underline-offset-2 disabled:opacity-50"
           >
-            {staffQuery.isFetching ? <LoadingLabel label="Đang thử lại" /> : "Thử lại"}
+            {staffQuery.isFetching || classesQuery.isFetching ? <LoadingLabel label="Đang thử lại" /> : "Thử lại"}
           </button>
         </div>
       ) : null}
@@ -274,37 +413,37 @@ export default function StaffPage() {
             className="md:h-full"
             title="Không tải được danh sách nhân sự"
             description={getApiErrorMessage(
-              staffQuery.error,
+              staffQuery.error ?? classesQuery.error,
               "Kết nối dữ liệu đang gián đoạn. Vui lòng thử lại.",
             )}
-            isRetrying={staffQuery.isFetching}
-            onRetry={() => void staffQuery.refetch()}
+            isRetrying={staffQuery.isFetching || classesQuery.isFetching}
+            onRetry={retryStaffData}
           />
         ) : null}
 
-        {!isInitialLoading && !hasBlockingError && staff.length === 0 ? (
+        {!isInitialLoading && !hasBlockingError && filteredStaff.length === 0 && !hasFilters ? (
           <DataSectionEmpty
             className="md:h-full"
             icon={IdCardLanyard}
-            title="Chưa có nhân sự"
+            title={currentScope.emptyTitle}
             description={
               canManage
-                ? "Thêm nhân sự đầu tiên để phân công giáo viên và quản lý liên hệ."
+                ? currentScope.emptyDescription
                 : "Danh sách sẽ xuất hiện khi người quản lý thêm nhân sự."
             }
-            actionLabel={canManage ? "Thêm nhân sự" : undefined}
-            onAction={canManage ? openCreateForm : undefined}
+            actionLabel={canManage && scope !== "inactive" ? "Thêm nhân sự" : undefined}
+            onAction={canManage && scope !== "inactive" ? openCreateForm : undefined}
           />
         ) : null}
 
-        {!isInitialLoading && !hasBlockingError && staff.length > 0 && filteredStaff.length === 0 ? (
+        {!isInitialLoading && !hasBlockingError && filteredStaff.length === 0 && hasFilters ? (
           <DataSectionEmpty
             className="md:h-full"
             icon={SearchX}
             title="Không tìm thấy nhân sự phù hợp"
             description="Thử từ khóa khác hoặc xóa các bộ lọc đang áp dụng."
-            actionLabel={hasFilters ? "Xóa tìm kiếm và bộ lọc" : undefined}
-            onAction={hasFilters ? clearFilters : undefined}
+            actionLabel="Xóa tìm kiếm và bộ lọc"
+            onAction={clearFilters}
           />
         ) : null}
 
@@ -312,80 +451,60 @@ export default function StaffPage() {
           <StaffTable
             canManage={canManage}
             canViewPrivate={canViewPrivate}
+            classesById={classesById}
             records={filteredStaff}
-            onRowClick={setActionTarget}
+            onRowClick={(record) => {
+              if (canManage) {
+                setWorkspace({ record, initialMode: "edit" });
+              }
+            }}
           />
         ) : null}
       </div>
 
-      {isFormOpen && canManage ? (
+      {isCreateOpen && canManage ? (
         <StaffFormDialog
-          assignedClassNames={editingRecord?.assignedClasses.map((class_) => class_.name) ?? []}
+          assignedClassNames={[]}
           contactSuggestionSources={contactSuggestionSources}
-          isSaving={isSaving}
-          staff={editingRecord?.staff ?? null}
-          onClose={closeForm}
+          initialStaffType={scope === "assistants" ? "ASSISTANT" : "TEACHER"}
+          isSaving={createMutation.isPending}
+          staff={null}
+          onClose={closeCreateForm}
           onSubmit={async (payload) => {
-            if (editingRecord) {
-              await updateMutation.mutateAsync({ id: editingRecord.staff.id, values: payload });
-            } else {
-              await createMutation.mutateAsync(payload as StaffCreate);
-            }
+            await createMutation.mutateAsync(payload as StaffCreate);
           }}
         />
       ) : null}
 
-      <ConfirmationDialog
-        open={Boolean(statusTarget)}
-        title={statusTarget?.staff.is_active ? "Ngừng hoạt động nhân sự" : "Kích hoạt lại nhân sự"}
-        description={
-          statusTarget ? (
-            statusTarget.staff.is_active ? (
-              <>
-                Nhân sự <strong className="font-semibold text-gray-800">{statusTarget.staff.full_name}</strong> sẽ được ẩn khỏi danh sách đang hoạt động. Hồ sơ vẫn được giữ và có thể kích hoạt lại.
-              </>
-            ) : (
-              <>
-                Kích hoạt lại <strong className="font-semibold text-gray-800">{statusTarget.staff.full_name}</strong> để tiếp tục phân công vào lớp học.
-              </>
-            )
-          ) : null
-        }
-        confirmLabel={statusTarget?.staff.is_active ? "Ngừng hoạt động" : "Kích hoạt lại"}
-        tone={statusTarget?.staff.is_active ? "danger" : "default"}
-        isPending={statusMutation.isPending}
-        onCancel={() => setStatusTarget(null)}
-        onConfirm={() => {
-          if (statusTarget) {
-            statusMutation.mutate({
-              id: statusTarget.staff.id,
-              isActive: !statusTarget.staff.is_active,
+      {workspace && canManage ? (
+        <StaffWorkspaceDialog
+          record={workspace.record}
+          initialMode={workspace.initialMode}
+          contactSuggestionSources={contactSuggestionSources}
+          isSaving={updateMutation.isPending}
+          isStatusPending={statusMutation.isPending}
+          onClose={() => setWorkspace(null)}
+          onSubmit={async (payload) => {
+            await updateMutation.mutateAsync({
+              id: workspace.record.staff.id,
+              values: payload,
             });
-          }
-        }}
-      />
-      {payrollTarget ? (
-        <StaffPayrollDialog
-          staffId={payrollTarget.staff.id}
-          staffName={payrollTarget.staff.full_name}
-          onClose={() => setPayrollTarget(null)}
+          }}
+          onStatusChange={(rec) => {
+            statusMutation.mutate({
+              id: rec.staff.id,
+              isActive: !rec.staff.is_active,
+            });
+          }}
         />
       ) : null}
-      {actionTarget && !isFormOpen && !statusTarget && !payrollTarget ? (
-        <EntityActionsDialog
-          open
-          title={`Thao tác với nhân sự ${actionTarget.staff.full_name}`}
-          onClose={() => setActionTarget(null)}
-          actions={[
-            { label: "Chỉnh sửa thông tin", icon: <Pencil className="h-4 w-4" aria-hidden="true" />, onClick: () => openEditForm(actionTarget) },
-            { label: "Thù lao & tất toán", icon: <Payroll className="h-4 w-4" aria-hidden="true" />, onClick: () => { setActionTarget(null); setPayrollTarget(actionTarget); } },
-            ...(actionTarget.staff.staff_type === "TEACHER"
-              ? [{ label: actionTarget.staff.is_active ? "Ngừng hoạt động" : "Kích hoạt lại", icon: actionTarget.staff.is_active ? <UserRoundX className="h-4 w-4" aria-hidden="true" /> : <RotateCcw className="h-4 w-4" aria-hidden="true" />, tone: actionTarget.staff.is_active ? "danger" : "default", onClick: () => requestStatusChange(actionTarget) } as EntityActionItem]
-              : []),
-          ]}
+
+      {canManage && scope !== "inactive" ? (
+        <QuickActionFab
+          label={scope === "assistants" ? "Thêm trợ giảng" : "Thêm giáo viên"}
+          onClick={openCreateForm}
         />
       ) : null}
-      {canManage ? <QuickActionFab label="Thêm nhân sự" onClick={openCreateForm} /> : null}
     </div>
   );
 }
@@ -404,39 +523,9 @@ function AddStaffButton({ onClick }: { onClick: () => void }) {
   );
 }
 
-function StaffListStatus({
-  activeCount,
-  isRefreshing,
-}: {
-  activeCount: number;
-  isRefreshing: boolean;
-}) {
-  return (
-    <span
-      aria-live="polite"
-      className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-sm font-medium text-gray-600"
-    >
-      {isRefreshing ? (
-        <LoaderCircle className="h-3.5 w-3.5 animate-spin text-gray-400" aria-hidden="true" />
-      ) : (
-        <span
-          className={`h-2 w-2 rounded-full ${activeCount > 0 ? "bg-emerald-500" : "bg-gray-300"}`}
-          aria-hidden="true"
-        />
-      )}
-      {activeCount} nhân sự hoạt động
-    </span>
-  );
-}
-
 function updateStaffListCache(
   queryClient: QueryClient,
   updater: (items: StaffResponse[]) => StaffResponse[],
 ) {
   queryClient.setQueryData<StaffResponse[]>(staffQueryKeys.list, (current = []) => updater(current));
-}
-
-function formatClassList(classNames: string[]) {
-  if (classNames.length <= 3) return `các lớp ${classNames.join(", ")}`;
-  return `${classNames.slice(0, 3).join(", ")} và ${classNames.length - 3} lớp khác`;
 }

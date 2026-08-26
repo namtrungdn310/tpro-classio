@@ -2,63 +2,60 @@ import { apiClient } from "@/lib/api/client";
 import {
   enrollmentResponseSchema,
   studentIdentityConflictSchema,
-  studentResponseListSchema,
+  studentListPageResponseSchema,
   studentResponseSchema,
+  studentScopeSummarySchema,
 } from "@/lib/schemas/student";
 import axios from "axios";
+import { z } from "zod";
 import type {
-  EnrollmentCreate,
   EnrollmentResponse,
-  EnrollmentUpdate,
   StudentCreate,
   StudentIdentityConflict,
   StudentReactivationRequest,
   StudentResponse,
+  StudentListPageResponse,
+  StudentListState,
+  StudentMembershipCommand,
+  StudentScopeSummary,
   StudentStatus,
-  StudentUpdate,
 } from "@/lib/types";
 
-type GetStudentsParams = {
+export type GetStudentsParams = {
   search?: string;
   class_id?: string;
   status?: StudentStatus | "";
+  list_state?: StudentListState;
+  cursor?: string;
+  limit?: number;
 };
 
-export async function getStudents(params: GetStudentsParams): Promise<StudentResponse[]> {
-  const students: StudentResponse[] = [];
-  const seen = new Set<string>();
-  let cursor: string | undefined;
+export async function getStudentsPage(
+  params: GetStudentsParams,
+  signal?: AbortSignal,
+): Promise<StudentListPageResponse> {
+  const response = await apiClient.get<unknown>("/students/page", {
+    signal,
+    params: {
+      search: params.search || undefined,
+      class_id: params.class_id || undefined,
+      status: params.status || undefined,
+      list_state: params.list_state || undefined,
+      cursor: params.cursor || undefined,
+      limit: params.limit ?? 80,
+    },
+  });
+  return studentListPageResponseSchema.parse(response.data);
+}
 
-  // The API uses keyset pagination. A class normally contains far fewer than
-  // 500 students, but following the cursor prevents silent row loss for large
-  // searches and keeps the existing page contract backwards compatible.
-  for (let page = 0; page < 100; page += 1) {
-    const response = await apiClient.get<unknown>("/students", {
-      params: {
-        search: params.search || undefined,
-        class_id: params.class_id || undefined,
-        status: params.status || undefined,
-        cursor,
-        limit: 500,
-      },
-    });
-    const items = studentResponseListSchema.parse(response.data);
-    for (const item of items) {
-      if (!seen.has(item.id)) {
-        seen.add(item.id);
-        students.push(item);
-      }
-    }
+export async function getStudentScopeSummary(signal?: AbortSignal): Promise<StudentScopeSummary> {
+  const response = await apiClient.get<unknown>("/students/summary", { signal });
+  return studentScopeSummarySchema.parse(response.data);
+}
 
-    const hasMore = response.headers["x-has-more"] === "true";
-    const nextCursor = response.headers["x-next-cursor"] as string | undefined;
-    if (!hasMore || !nextCursor || nextCursor === cursor) {
-      return students;
-    }
-    cursor = nextCursor;
-  }
-
-  throw new Error("Danh sách học viên vượt quá giới hạn tải an toàn.");
+export async function getStudent(id: string, signal?: AbortSignal): Promise<StudentResponse> {
+  const response = await apiClient.get<unknown>(`/students/${id}`, { signal });
+  return studentResponseSchema.parse(response.data);
 }
 
 export async function createStudent(data: StudentCreate): Promise<StudentResponse> {
@@ -87,27 +84,36 @@ export function getStudentIdentityConflict(
   return parsed.success ? parsed.data : null;
 }
 
-export async function updateStudent(
+export async function applyStudentMembershipCommand(
   id: string,
-  data: StudentUpdate,
+  data: StudentMembershipCommand,
 ): Promise<StudentResponse> {
-  const response = await apiClient.patch<unknown>(`/students/${id}`, data);
+  const response = await apiClient.post<unknown>(`/students/${id}/membership-command`, data);
   return studentResponseSchema.parse(response.data);
 }
 
-export async function updateEnrollment(
+export async function archiveStudent(
   id: string,
-  data: EnrollmentUpdate,
-): Promise<EnrollmentResponse> {
-  const response = await apiClient.patch<unknown>(`/enrollments/${id}`, data);
-  return enrollmentResponseSchema.parse(response.data);
+  reason: string,
+): Promise<StudentResponse> {
+  const response = await apiClient.post<unknown>(`/students/${id}/archive`, { reason });
+  return studentResponseSchema.parse(response.data);
 }
 
-export async function createEnrollment(
-  data: EnrollmentCreate,
-): Promise<EnrollmentResponse> {
-  const response = await apiClient.post<unknown>("/enrollments", data);
-  return enrollmentResponseSchema.parse(response.data);
+export async function restoreStudent(
+  id: string,
+  reason: string,
+): Promise<StudentResponse> {
+  const response = await apiClient.post<unknown>(`/students/${id}/restore`, { reason });
+  return studentResponseSchema.parse(response.data);
+}
+
+export async function getStudentEnrollments(
+  id: string,
+  signal?: AbortSignal,
+): Promise<EnrollmentResponse[]> {
+  const response = await apiClient.get<unknown>(`/students/${id}/enrollments`, { signal });
+  return z.array(enrollmentResponseSchema).parse(response.data);
 }
 
 export async function dropEnrollment(id: string): Promise<EnrollmentResponse> {

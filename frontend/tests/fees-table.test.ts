@@ -53,6 +53,7 @@ const courseRecord = {
 } satisfies FeeRecordResponse;
 
 const group = {
+  group_key: "student-long-content",
   student_id: "student-long-content",
   student_name: "Nguyễn Hoàng Anh Minh với tên đầy đủ cần được hiển thị",
   student_zalo: "Nguyễn Hoàng Anh Minh",
@@ -79,7 +80,7 @@ const group = {
   records: [monthlyRecord, courseRecord],
 } satisfies StudentFeeGroup;
 
-function renderFeesTable(isAdmin: boolean) {
+function renderFeesTable(isAdmin: boolean, showPeriod = false) {
   const onGroup = () => undefined;
 
   return renderToStaticMarkup(
@@ -90,14 +91,23 @@ function renderFeesTable(isAdmin: boolean) {
       isAdmin,
       isBusy: false,
       isMessageUnavailable: false,
+      canCreatePaymentRequest: true,
       pendingAction: null,
-      pendingStudentId: null,
+      pendingGroupKey: null,
+      showPeriod,
       onCopy: onGroup,
+      onSaveCopy: onGroup,
+      isSavingCopy: false,
       onNotify: onGroup,
+      onCreatePaymentRequest: onGroup,
       onPay: onGroup,
+      onPrepareRefundHistory: onGroup,
       onRefund: onGroup,
       onUnpay: onGroup,
       onUnnotify: onGroup,
+      getCopyMessage: () => "Nội dung Zalo dành riêng cho học viên",
+      refundPanel: () => null,
+      onCloseRefund: () => undefined,
     }),
   );
 }
@@ -110,6 +120,14 @@ test("fee table keeps its header outside the hidden-scrollbar record list", () =
   assert.match(html, /scrollbar-hidden min-h-0 flex-1/);
   assert.match(html, /overflow-x-hidden overflow-y-auto/);
   assert.doesNotMatch(html, /\bsticky\b/);
+});
+
+test("outstanding table shows the original fee period and due-state label", () => {
+  const html = renderFeesTable(true, true);
+
+  assert.match(html, />Kỳ thu</);
+  assert.match(html, />7\/2026</);
+  assert.match(html, />(?:Quá hạn|Đến hạn hôm nay)</);
 });
 
 test("fee table renders long and multi-date values without truncation", () => {
@@ -132,25 +150,27 @@ test("fee table renders long and multi-date values without truncation", () => {
   assert.doesNotMatch(html, /\(\+\d+\)/);
 });
 
-test("viewer fee table omits the unavailable actions column", () => {
+test("fee table keeps actions out of the permanent column layout", () => {
   const viewerHtml = renderFeesTable(false);
   const adminHtml = renderFeesTable(true);
 
   assert.equal((viewerHtml.match(/role="columnheader"/g) ?? []).length, 7);
-  assert.doesNotMatch(viewerHtml, />Thao tác</);
-  assert.equal((adminHtml.match(/role="columnheader"/g) ?? []).length, 8);
-  assert.match(adminHtml, />Thao tác</);
+  assert.doesNotMatch(viewerHtml, /role="columnheader"[^>]*>Thao tác</);
+  assert.equal((adminHtml.match(/role="columnheader"/g) ?? []).length, 7);
+  assert.doesNotMatch(adminHtml, /role="columnheader"[^>]*>Thao tác</);
+  assert.match(adminHtml, /role="row" tabindex="0"/);
+  assert.match(adminHtml, /cursor-pointer/);
+  assert.doesNotMatch(adminHtml, />Thao tác<\/button>/);
 });
 
 test("unnotified fees can be recorded as paid without a prior notification", () => {
-  const html = renderFeesTable(true);
-  const payButton = html.match(
-    /<button[^>]*title="Ghi nhận đã nộp"[^>]*aria-label="Ghi nhận đã nộp"[^>]*>/,
+  const source = readFileSync(
+    new URL("../src/components/fees/fees-table.tsx", import.meta.url),
+    "utf8",
   );
 
-  assert.ok(payButton);
-  assert.doesNotMatch(payButton[0], /\sdisabled=""/);
-  assert.doesNotMatch(html, /Cần đánh dấu đã báo trước/);
+  assert.match(source, /Ghi nhận đã nộp/);
+  assert.doesNotMatch(source, /Cần đánh dấu đã báo trước/);
 });
 
 test("paid fee actions use the shared refund icon", () => {
@@ -159,17 +179,61 @@ test("paid fee actions use the shared refund icon", () => {
     "utf8",
   );
 
-  assert.match(source, /<RefundIcon className="h-4 w-4"/);
+  assert.match(source, /<RefundIcon className="h-\[18px\] w-\[18px\]"/);
   assert.doesNotMatch(source, /HandCoins/);
 });
 
-test("payment reversal action communicates both possible target states", () => {
+test("opening a paid action workspace prepares refund history in the background", () => {
   const source = readFileSync(
     new URL("../src/components/fees/fees-table.tsx", import.meta.url),
     "utf8",
   );
-  const reportSource = readFileSync(
-    new URL("../src/components/fees/fee-report-panel.tsx", import.meta.url),
+
+  assert.match(source, /onPrepareRefundHistory: \(group: StudentFeeGroup\) => void/);
+  assert.match(source, /if \(activeTab === "paid"\) \{[\s\S]*onPrepareRefundHistory\(group\)/);
+  assert.match(source, /onClick=\{isAdmin \? \(\) => openActionWorkspace\(group\) : undefined\}/);
+});
+
+test("fee workspace previews the exact Zalo message and embeds refund work", () => {
+  const source = readFileSync(
+    new URL("../src/components/fees/fees-table.tsx", import.meta.url),
+    "utf8",
+  );
+  const refundSource = readFileSync(
+    new URL("../src/components/fees/fee-refund-dialog.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /Nội dung Zalo dành cho \{group\.student_name\}/);
+  assert.match(source, /actionProps\.getCopyMessage\(group\)/);
+  assert.match(source, /<FeeMessageCodeEditor/);
+  assert.match(source, /value=\{previewText\}/);
+  assert.match(source, /onChange=\{onChangePreviewText\}/);
+  assert.match(source, /actionProps\.onCopy\(group, canonicalMessage\)/);
+  assert.match(source, /copyDraft !== copyBase/);
+  assert.match(source, /actionProps\.onSaveCopy\(group, copyDraft\)/);
+  assert.match(source, /LoadingLabel label="Đang lưu"/);
+  assert.match(source, /actionProps\.refundPanel\(onClose\)/);
+  assert.doesNotMatch(source, /bg-red-50 text-red-700 hover:bg-red-100/);
+  assert.match(source, /bg-red-600 text-white hover:bg-red-700/);
+  assert.match(refundSource, /export function FeeRefundPanel/);
+  assert.match(refundSource, /without a second modal shell/);
+});
+
+test("fee action footer stays focused on the current action", () => {
+  const source = readFileSync(
+    new URL("../src/components/fees/fees-table.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.doesNotMatch(
+    source,
+    /<FormDialogFooter[\s\S]*?variant="ghost"[\s\S]*?Xem khoản thu[\s\S]*?right=/,
+  );
+});
+
+test("payment reversal remains explicit in the contextual action workspace", () => {
+  const source = readFileSync(
+    new URL("../src/components/fees/fees-table.tsx", import.meta.url),
     "utf8",
   );
   const guardSource = readFileSync(
@@ -177,21 +241,12 @@ test("payment reversal action communicates both possible target states", () => {
     "utf8",
   );
 
-  assert.match(source, /bg-rose-100/);
-  assert.match(source, /bg-amber-100/);
-  assert.match(source, /bg-rose-200/);
-  assert.match(source, /bg-amber-200/);
-  assert.match(source, /border border-transparent/);
-  assert.doesNotMatch(
-    source,
-    /onClick=\{\(\) => \{[\s\S]{0,1200}border-gray-200/,
-  );
-  assert.match(source, /clip-path:polygon\(0_0,100%_0,0_100%\)/);
-  assert.match(source, /const isUnpayDisabled = disabled \|\| group\.refunded_amount > 0/);
-  assert.match(source, /aria-disabled=\{isUnpayDisabled\}/);
-  assert.match(source, /tabIndex=\{isUnpayDisabled \? -1 : undefined\}/);
-  assert.match(source, /if \(!isUnpayDisabled\) onUnpay\(group\)/);
-  assert.match(source, /appearance-none/);
+  assert.match(source, /const isUnpayDisabled = actionProps\.disabled \|\| group\.refunded_amount > 0/);
+  assert.match(source, /disabled: isUnpayDisabled/);
+  assert.match(source, /aria-disabled=\{item\.disabled \|\| undefined\}/);
+  assert.match(source, /tabIndex=\{active \? 0 : -1\}/);
+  assert.match(source, /execute: \(\) => actionProps\.onUnpay\(group\)/);
+  assert.match(source, /Hoàn tác đã nộp/);
   assert.doesNotMatch(source, /onPointerDown=\{\(event\) => \{[\s\S]{0,180}removeAllRanges/);
   assert.match(guardSource, /selectstart/);
   assert.match(guardSource, /dblclick/);
@@ -202,23 +257,33 @@ test("payment reversal action communicates both possible target states", () => {
   assert.match(guardSource, /isSelectionPreservingTarget/);
   assert.doesNotMatch(source, /\sdisabled=\{isUnpayDisabled\}/);
   assert.doesNotMatch(source, /linear-gradient/);
-  assert.doesNotMatch(source, /inset-y-\[-3px\].*-rotate-45/);
-  assert.match(source, /text-gray-600/);
+  assert.match(source, /FeeActionWorkspace/);
+  assert.match(source, /w-\[184px\]/);
+  assert.match(source, /whitespace-nowrap/);
+  assert.match(source, /sm:max-w-\[640px\]/);
+  assert.match(source, /sm:h-\[min\(680px,calc\(100dvh-2rem\)\)\]/);
+  assert.match(source, /workspace-action-rail-in absolute left-full top-0/);
+  assert.match(source, /aria-controls="fee-workspace-panel"/);
+});
+
+test("fee workspace prepares the selected student's Zalo template before opening the editor", () => {
+  const source = readFileSync(
+    new URL("../src/components/fees/fees-table.tsx", import.meta.url),
+    "utf8",
+  );
+
   assert.doesNotMatch(
     source,
-    /onClick=\{\(\) => onUnpay\(group\)\}[\s\S]{0,700}disabled:opacity-50/,
+    /if \(mode === "copy"\) \{\s*try \{\s*copyPreview = actionProps\.getCopyMessage\(group\)/,
   );
-  assert.match(source, /Hoàn tác ghi nhận đã nộp/);
-  assert.match(reportSource, /rose: "border-rose-200 bg-rose-50/);
-  assert.match(reportSource, /amber: "border-amber-200 bg-amber-50/);
-  assert.doesNotMatch(reportSource, /rose: "[^"]*bg-rose-100/);
-  assert.doesNotMatch(reportSource, /amber: "[^"]*bg-amber-100/);
+  assert.match(source, /copyPreview = actionProps\.getCopyMessage\(group\)/);
+  assert.match(source, /if \(nextMode === "copy"\) \{\s*setCopyDraft\(copyPreview \?\? ""\)/);
 });
 
 test("fee table gives the three date and amount columns more breathing room", () => {
   const adminGrid = getFeesTableGridClass({ isAdmin: true });
 
   assert.match(adminGrid, /minmax\(145px,1fr\)/);
-  assert.match(adminGrid, /minmax\(150px,1\.08fr\)_118px_118px_124px_124px/);
+  assert.match(adminGrid, /minmax\(150px,1\.08fr\)_118px_118px_124px/);
   assert.doesNotMatch(adminGrid, /_110px_110px_116px_/);
 });

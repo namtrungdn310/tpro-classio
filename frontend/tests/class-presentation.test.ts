@@ -139,6 +139,46 @@ test("schedule helpers keep valid slots and discard malformed response data", ()
   assert.equal(getClassScheduleSummary(class_, { day: "Thứ 3" }), "Thứ 3 (15:30–17:00)");
 });
 
+test("schedule helpers preserve per-session teacher and assistant assignments", () => {
+  const class_ = {
+    schedule: {
+      slots: [
+        {
+          day: "Thứ 2",
+          start: "13:30",
+          end: "15:00",
+          teacher_ids: ["teacher-1"],
+          assistant_ids: ["assistant-1"],
+        },
+        {
+          day: "Thứ 4",
+          start: "13:30",
+          end: "15:00",
+          teacher_ids: [],
+          assistant_ids: [],
+        },
+      ],
+    },
+  } as unknown as ClassResponse;
+
+  assert.deepEqual(getClassScheduleSlots(class_), [
+    {
+      day: "Thứ 2",
+      start: "13:30",
+      end: "15:00",
+      teacher_ids: ["teacher-1"],
+      assistant_ids: ["assistant-1"],
+    },
+    {
+      day: "Thứ 4",
+      start: "13:30",
+      end: "15:00",
+      teacher_ids: [],
+      assistant_ids: [],
+    },
+  ]);
+});
+
 test("schedule presentation sorts and deduplicates sessions", () => {
   const slots = normalizeClassScheduleSlots([
     { day: "Thứ 4", start: "13:30", end: "15:00" },

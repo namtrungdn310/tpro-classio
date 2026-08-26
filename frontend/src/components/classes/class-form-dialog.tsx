@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import dynamic from "next/dynamic";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { ClassScheduleList } from "@/components/classes/class-schedule-list";
 import {
   createEntityDialogFrameClassName,
+  editEntityDialogFrameClassName,
   FormDialogBody,
   FormDialogFooter,
   FormDialogShell,
@@ -266,6 +267,13 @@ type OccupiedScheduleSlot = ScheduleSlot & {
 
 type ClassFormDialogProps = {
   class_: ClassResponse | null;
+  /** Prefilled create payload used by flows such as "Tạo lớp kế tiếp". */
+  initialValues?: ClassCreate | null;
+  additionalSection?: ReactNode | ((draft: ClassFormDraftContext) => ReactNode);
+  externalDirty?: boolean;
+  externalSubmitDisabled?: boolean;
+  submitLabel?: string;
+  title?: string;
   /** Render without the modal shell so a parent workspace owns the overlay. */
   embedded?: boolean;
   isSaving: boolean;
@@ -281,8 +289,19 @@ type ClassFormDialogProps = {
   teachers: TeacherOptionResponse[];
 };
 
+export type ClassFormDraftContext = {
+  baseFee: number | null;
+  schedule: { text: string; slots: ScheduleSlot[] } | null;
+};
+
 export function ClassFormDialog({
   class_,
+  initialValues = null,
+  additionalSection,
+  externalDirty = false,
+  externalSubmitDisabled = false,
+  submitLabel,
+  title,
   embedded = false,
   isSaving,
   isTeachersError,
@@ -299,6 +318,9 @@ export function ClassFormDialog({
   const [isTeacherSlideOpen, setIsTeacherSlideOpen] = useState(false);
   const [datePickerTarget, setDatePickerTarget] = useState<"start" | "end" | null>(null);
   const [endDateShortcutCount, setEndDateShortcutCount] = useState("");
+  const [lastEndDateChangeSource, setLastEndDateChangeSource] = useState<
+    "shortcut_months" | "shortcut_packages" | "date_picker" | null
+  >(null);
   const [scheduleValue, setScheduleValue] = useState<{ text: string; slots: ScheduleSlot[] } | null>(null);
   const [initialScheduleKey, setInitialScheduleKey] = useState(scheduleKey(null));
   const {
@@ -322,6 +344,7 @@ export function ClassFormDialog({
     shouldShowError,
   } = useFormFieldFeedback(CLASS_FEEDBACK_FIELDS);
   const type = useWatch({ control, name: "type" });
+  const customName = useWatch({ control, name: "name" });
   const identityScheme = useWatch({ control, name: "identity_scheme" });
   const classCategory = useWatch({ control, name: "class_category" });
   const gradeLevel = useWatch({ control, name: "grade_level" });
@@ -334,6 +357,7 @@ export function ClassFormDialog({
   const watchedTeacherIds = useWatch({ control, name: "teacher_ids" });
   const watchedAssistantIds = useWatch({ control, name: "assistant_ids" });
   const watchedFormValues = useWatch({ control });
+  const activeClassLabel = class_?.name || initialValues?.name || customName?.trim() || "Lớp này";
   const teacherIds = useMemo(() => watchedTeacherIds ?? [], [watchedTeacherIds]);
   const assistantIds = useMemo(
     () => watchedAssistantIds ?? [],
@@ -472,88 +496,91 @@ export function ClassFormDialog({
   useEffect(() => setMounted(true), []);
 
   useEffect(() => {
+    const initialRecord = class_ ?? initialValues;
     const normalizedBillingWeeks =
-      class_?.type === "COURSE"
+      initialRecord?.type === "COURSE"
         ? normalizeCourseBillingWeeks(
-            class_.billing_cycle_weeks,
-            class_.billing_cycle_months,
+            initialRecord.billing_cycle_weeks,
+            initialRecord.billing_cycle_months,
           )
         : null;
-    const nextSchedule = class_?.schedule
+    const nextSchedule = initialRecord?.schedule
       ? {
-          text: getClassScheduleText(class_),
-          slots: getClassScheduleSlots(class_),
+          text: initialRecord.schedule?.text ?? "",
+          slots: initialRecord.schedule?.slots ?? [],
         }
       : null;
     reset(
-      class_
+      initialRecord
         ? {
-            name: class_.name,
-            identity_scheme: class_.identity_scheme,
-            class_category: class_.class_category,
-            grade_mode: class_.grade_mode ?? (class_.grade_level ? "GRADE" : "NONE"),
-            grade_level: class_.grade_level,
-            academic_year_start: class_.academic_year_start,
-            start_date: class_.start_date ?? "",
-            end_date: class_.end_date ?? "",
+            name: initialRecord.name,
+            identity_scheme: initialRecord.identity_scheme,
+            class_category: initialRecord.class_category,
+            grade_mode: initialRecord.grade_mode ?? (initialRecord.grade_level ? "GRADE" : "NONE"),
+            grade_level: initialRecord.grade_level ?? null,
+            academic_year_start: initialRecord.academic_year_start ?? null,
+            start_date: initialRecord.start_date ?? "",
+            end_date: initialRecord.end_date ?? "",
             end_date_change_reason: "",
-            type: class_.type,
-            base_fee: class_.base_fee,
+            type: initialRecord.type,
+            base_fee: initialRecord.base_fee,
             billing_cycle_months:
-              class_.type === "COURSE"
-                ? normalizeCourseBillingMonths(class_.billing_cycle_months)
+              initialRecord.type === "COURSE"
+                ? normalizeCourseBillingMonths(initialRecord.billing_cycle_months)
                 : 3,
             billing_cycle_weeks:
-              class_.type === "COURSE" ? normalizedBillingWeeks : null,
-            teacher_ids: getClassTeacherIds(class_),
-            assistant_ids: getClassAssistantIds(class_),
+              initialRecord.type === "COURSE" ? normalizedBillingWeeks : null,
+            teacher_ids: initialRecord.teacher_ids ?? [],
+            assistant_ids: initialRecord.assistant_ids ?? [],
           }
         : DEFAULT_VALUES,
     );
     setScheduleValue(nextSchedule);
-    const shortcutCount = class_?.start_date && class_.end_date
+    const shortcutCount = initialRecord?.start_date && initialRecord.end_date
       ? getExactEndDateShortcutCount({
-          startDate: class_.start_date,
-          endDate: class_.end_date,
-          type: class_.type,
+          startDate: initialRecord.start_date,
+          endDate: initialRecord.end_date,
+          type: initialRecord.type,
           billingCycleWeeks: normalizedBillingWeeks,
         })
       : null;
     setEndDateShortcutCount(shortcutCount ? String(shortcutCount) : "");
     setInitialScheduleKey(scheduleKey(nextSchedule));
     resetFeedback();
-  }, [class_, reset, resetFeedback]);
+  }, [class_, initialValues, reset, resetFeedback]);
 
+  const baselineRecord = class_ ?? initialValues;
   const hasUnsavedChanges = Boolean(
-    class_ &&
+    externalDirty ||
+    (baselineRecord &&
       (normalizedClassFormKey(watchedFormValues) !==
         normalizedClassFormKey({
-          name: class_.name,
-          identity_scheme: class_.identity_scheme,
-          class_category: class_.class_category,
-          grade_mode: class_.grade_mode ?? (class_.grade_level ? "GRADE" : "NONE"),
-          grade_level: class_.grade_level,
-          academic_year_start: class_.academic_year_start,
-          start_date: class_.start_date ?? "",
-          end_date: class_.end_date ?? "",
+          name: baselineRecord.name,
+          identity_scheme: baselineRecord.identity_scheme,
+          class_category: baselineRecord.class_category,
+          grade_mode: baselineRecord.grade_mode ?? (baselineRecord.grade_level ? "GRADE" : "NONE"),
+          grade_level: baselineRecord.grade_level ?? null,
+          academic_year_start: baselineRecord.academic_year_start ?? null,
+          start_date: baselineRecord.start_date ?? "",
+          end_date: baselineRecord.end_date ?? "",
           end_date_change_reason: "",
-          type: class_.type,
-          base_fee: class_.base_fee,
+          type: baselineRecord.type,
+          base_fee: baselineRecord.base_fee,
           billing_cycle_months:
-            class_.type === "COURSE"
-              ? normalizeCourseBillingMonths(class_.billing_cycle_months)
+            baselineRecord.type === "COURSE"
+              ? normalizeCourseBillingMonths(baselineRecord.billing_cycle_months)
               : 3,
           billing_cycle_weeks:
-            class_.type === "COURSE"
+            baselineRecord.type === "COURSE"
               ? normalizeCourseBillingWeeks(
-                  class_.billing_cycle_weeks,
-                  class_.billing_cycle_months,
+                  baselineRecord.billing_cycle_weeks,
+                  baselineRecord.billing_cycle_months,
                 )
               : null,
-          teacher_ids: getClassTeacherIds(class_),
-          assistant_ids: getClassAssistantIds(class_),
+          teacher_ids: baselineRecord.teacher_ids ?? [],
+          assistant_ids: baselineRecord.assistant_ids ?? [],
         }) ||
-        scheduleKey(scheduleValue) !== initialScheduleKey),
+        scheduleKey(scheduleValue) !== initialScheduleKey)),
   );
   const endDateChanged = Boolean(
     class_ && endDate !== (class_.end_date ?? ""),
@@ -577,6 +604,55 @@ export function ClassFormDialog({
   const isEndDatePreviewBlocked = Boolean(
     canPreviewEndDate &&
       (endDatePreviewQuery.isFetching || endDatePreviewQuery.isError),
+  );
+  const isEndDatePreviewError = Boolean(
+    canPreviewEndDate && endDatePreviewQuery.isError,
+  );
+  const rawPreviewError = isEndDatePreviewError
+    ? getApiErrorMessage(
+        endDatePreviewQuery.error,
+        "Không thể áp dụng ngày kết thúc này.",
+      )
+    : null;
+
+  const isEnrollmentHistoryError = Boolean(
+    rawPreviewError &&
+      (rawPreviewError.includes("lịch sử học viên") ||
+        rawPreviewError.includes("ngày bắt đầu gần nhất") ||
+        rawPreviewError.includes("học viên")),
+  );
+
+  const formattedEndDatePreviewError = useMemo(() => {
+    if (!rawPreviewError) return null;
+    if (!isEnrollmentHistoryError) return rawPreviewError;
+
+    const dateText = isIsoDate(endDate) ? formatDate(endDate) : endDate;
+    if (lastEndDateChangeSource === "shortcut_months") {
+      const monthText = endDateShortcutCount ? `${endDateShortcutCount} tháng` : "Số tháng đã chọn";
+      return `${monthText} khiến ngày kết thúc (${dateText}) sớm hơn ngày bắt đầu học gần nhất trong lịch sử học viên của lớp. Vui lòng tăng tổng số tháng hoặc chọn lại ngày kết thúc.`;
+    }
+    if (lastEndDateChangeSource === "shortcut_packages") {
+      const packageText = endDateShortcutCount ? `${endDateShortcutCount} gói` : "Số gói đã chọn";
+      return `${packageText} khiến ngày kết thúc (${dateText}) sớm hơn ngày bắt đầu học gần nhất trong lịch sử học viên của lớp. Vui lòng tăng số gói hoặc chọn lại ngày kết thúc.`;
+    }
+    return `Ngày kết thúc (${dateText}) phải sau ngày bắt đầu gần nhất trong lịch sử học viên của lớp. Vui lòng chọn ngày kết thúc muộn hơn.`;
+  }, [
+    rawPreviewError,
+    isEnrollmentHistoryError,
+    lastEndDateChangeSource,
+    endDateShortcutCount,
+    endDate,
+  ]);
+
+  const monthCountFieldHasError = Boolean(
+    isEndDatePreviewError &&
+      lastEndDateChangeSource === "shortcut_months" &&
+      isEnrollmentHistoryError,
+  );
+  const packageCountFieldHasError = Boolean(
+    isEndDatePreviewError &&
+      lastEndDateChangeSource === "shortcut_packages" &&
+      isEnrollmentHistoryError,
   );
   const hasFormErrors =
     !classFormSchema.safeParse(watchedFormValues).success ||
@@ -668,6 +744,7 @@ export function ClassFormDialog({
   );
 
   function applySelectedEndDate(nextEndDate: string) {
+    setLastEndDateChangeSource("date_picker");
     markInput("end_date", nextEndDate);
     setValue("end_date", nextEndDate, {
       shouldDirty: true,
@@ -682,7 +759,11 @@ export function ClassFormDialog({
     setEndDateShortcutCount(exactCount ? String(exactCount) : "");
   }
 
-  function applyEndDateShortcut(rawValue: string) {
+  function applyEndDateShortcut(
+    rawValue: string,
+    source: "shortcut_months" | "shortcut_packages" = "shortcut_months",
+  ) {
+    setLastEndDateChangeSource(source);
     const normalized = rawValue.replace(/\D/g, "").slice(0, 4);
     setEndDateShortcutCount(normalized);
     const count = normalized ? Number(normalized) : 0;
@@ -713,6 +794,7 @@ export function ClassFormDialog({
         onRetryOccupied={() => void availabilityQuery.refetch()}
         selectedTeachers={selectedTeacherOptions}
         selectedAssistants={selectedAssistantOptions}
+        classLabel={activeClassLabel}
         onClose={() => setIsSchedulePickerOpen(false)}
         onSave={(value) => {
           setScheduleValue(value);
@@ -819,6 +901,9 @@ export function ClassFormDialog({
                           }
                         : {}),
                     }
+                  : {}),
+                ...(!class_ && initialValues?.source_class_id
+                  ? { source_class_id: initialValues.source_class_id }
                   : {}),
               });
             })(event);
@@ -1051,7 +1136,13 @@ export function ClassFormDialog({
             {type === "MONTHLY" && identityScheme !== "LEGACY" && classCategory ? (
               <div className={`grid gap-3 ${CLASS_FORM_COLUMNS}`}>
                 <FormField controlId="class-total-months" label="Tổng số tháng">
-                  <div className="relative h-8 overflow-hidden rounded-md border border-gray-200 bg-white">
+                  <div
+                    className={`relative h-8 overflow-hidden rounded-md border bg-white ${
+                      monthCountFieldHasError
+                        ? "border-destructive ring-1 ring-destructive/40"
+                        : "border-gray-200"
+                    }`}
+                  >
                     <input
                       id="class-total-months"
                       type="text"
@@ -1061,11 +1152,14 @@ export function ClassFormDialog({
                       autoComplete={savedInfoAutocomplete.disabled}
                       disabled={endDateLocked || !isIsoDate(startDate)}
                       onFocus={collapseSelectionOnKeyboardFocus}
-                      onChange={(event) => applyEndDateShortcut(event.target.value)}
+                      onChange={(event) =>
+                        applyEndDateShortcut(event.target.value, "shortcut_months")
+                      }
                       className="form-input-text h-full w-full bg-white px-3 pr-14 opacity-100 outline-none disabled:bg-white disabled:text-gray-400 disabled:opacity-100"
                       data-row={6}
                       data-col={0}
                       data-vertical-arrow-scope="class-primary"
+                      aria-invalid={monthCountFieldHasError ? "true" : undefined}
                     />
                     <span className="pointer-events-none absolute inset-y-0 right-2 flex items-center bg-white form-input-text text-gray-500">tháng</span>
                   </div>
@@ -1076,7 +1170,7 @@ export function ClassFormDialog({
                     type="button"
                     aria-label="Ngày kết thúc"
                     aria-describedby={endDateError ? "class-end-date-error" : undefined}
-                    data-invalid={endDateError ? "true" : undefined}
+                    data-invalid={endDateError || isEndDatePreviewError ? "true" : undefined}
                     onBlur={() => markBlur("end_date")}
                     onClick={() => {
                       if (!endDateLocked) {
@@ -1085,7 +1179,9 @@ export function ClassFormDialog({
                     }}
                     disabled={endDateLocked || !isIsoDate(startDate)}
                     aria-haspopup="dialog"
-                    className={`${formTextControlClassName} select-none text-left ${endDateError ? formTextControlErrorClassName : ""}`}
+                    className={`${formTextControlClassName} select-none text-left ${
+                      endDateError || isEndDatePreviewError ? formTextControlErrorClassName : ""
+                    }`}
                     data-row={6}
                     data-col={1}
                     data-vertical-arrow-scope="class-primary"
@@ -1105,9 +1201,16 @@ export function ClassFormDialog({
               <>
                 <input type="hidden" {...register("billing_cycle_months", { valueAsNumber: true })} />
                 <div className={`grid gap-3 ${CLASS_FORM_COLUMNS}`}>
-                  <FormField label="Thời lượng và tổng số gói" labelId="class-package-settings-label">
+                  <FormField
+                    label="Thời lượng và tổng số gói"
+                    labelId="class-package-settings-label"
+                  >
                     <SplitTextField
-                      className={`h-8 rounded-md border bg-white ${billingCycleError ? "border-destructive" : "border-input"}`}
+                      className={`h-8 rounded-md border bg-white ${
+                        billingCycleError || packageCountFieldHasError
+                          ? "border-destructive ring-1 ring-destructive/40"
+                          : "border-input"
+                      }`}
                       left={
                         <div className="relative h-full">
                           <input
@@ -1127,6 +1230,7 @@ export function ClassFormDialog({
                               const nextValue = rawValue === "" ? null : Number(rawValue);
                               markInput("billing_cycle_weeks", rawValue);
                               setValue("billing_cycle_weeks", nextValue, { shouldDirty: true, shouldValidate: true });
+                              setLastEndDateChangeSource("shortcut_packages");
                               const count = endDateShortcutCount ? Number(endDateShortcutCount) : 0;
                               const suggested = getSuggestedClassEndDate({ startDate, type: "COURSE", count, billingCycleWeeks: nextValue });
                               if (suggested) {
@@ -1155,7 +1259,9 @@ export function ClassFormDialog({
                             autoComplete={savedInfoAutocomplete.disabled}
                             disabled={endDateLocked || !isIsoDate(startDate)}
                             onFocus={collapseSelectionOnKeyboardFocus}
-                            onChange={(event) => applyEndDateShortcut(event.target.value)}
+                            onChange={(event) =>
+                              applyEndDateShortcut(event.target.value, "shortcut_packages")
+                            }
                             className="form-input-text h-full w-full bg-transparent px-3 pr-10 outline-none disabled:bg-transparent disabled:text-gray-400"
                             data-row={6}
                             data-col={1}
@@ -1183,7 +1289,7 @@ export function ClassFormDialog({
                       type="button"
                       aria-label="Ngày kết thúc"
                       aria-describedby={endDateError ? "class-end-date-error" : undefined}
-                      data-invalid={endDateError ? "true" : undefined}
+                      data-invalid={endDateError || isEndDatePreviewError ? "true" : undefined}
                       onBlur={() => markBlur("end_date")}
                       onClick={() => {
                         if (!endDateLocked) {
@@ -1192,7 +1298,9 @@ export function ClassFormDialog({
                       }}
                       disabled={endDateLocked || !isIsoDate(startDate)}
                       aria-haspopup="dialog"
-                      className={`${formTextControlClassName} select-none text-left ${endDateError ? formTextControlErrorClassName : ""}`}
+                      className={`${formTextControlClassName} select-none text-left ${
+                        endDateError || isEndDatePreviewError ? formTextControlErrorClassName : ""
+                      }`}
                       data-row={6}
                       data-col={1}
                       data-vertical-arrow-scope="class-primary"
@@ -1251,10 +1359,7 @@ export function ClassFormDialog({
                       </button>
                     }
                   >
-                    {getApiErrorMessage(
-                      endDatePreviewQuery.error,
-                      "Không thể áp dụng ngày kết thúc này.",
-                    )}
+                    {formattedEndDatePreviewError}
                   </InlineFormError>
                 ) : endDatePreviewQuery.data ? (
                   <FormNotice>
@@ -1362,7 +1467,7 @@ export function ClassFormDialog({
                 className={`form-input-text min-h-8 w-full cursor-pointer rounded-md border bg-white px-1.5 py-1.5 text-left text-gray-700 outline-none transition-colors hover:border-primary/40 focus-visible:ring-2 focus-visible:ring-primary/15 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-400 ${scheduleError ? "border-destructive" : "border-gray-200"}`}
               >
                 {isTeachersLoading ? (
-                  "Đang tải giáo viên…"
+                  <LoadingLabel label="Đang tải giáo viên" />
                 ) : teacherIds.length === 0 ? (
                   "Chọn giáo viên trước"
                 ) : scheduleValue?.slots.length ? (
@@ -1379,6 +1484,9 @@ export function ClassFormDialog({
               </button>
             </FormField>
             </FormSection>
+            {typeof additionalSection === "function"
+              ? additionalSection({ baseFee: baseFee ?? null, schedule: scheduleValue })
+              : additionalSection}
           </FormDialogBody>
 
           <FormDialogFooter
@@ -1399,7 +1507,9 @@ export function ClassFormDialog({
                 <SaveButton
                   type="submit"
                   isSaving={isSaving}
-                  disabled={isTeachersLoading || teachers.length === 0 || Boolean(scheduleConflict) || isEndDatePreviewBlocked || Boolean(class_ && !hasUnsavedChanges)}
+                  idleLabel={submitLabel}
+                  pendingLabel={submitLabel ? `Đang ${submitLabel.toLocaleLowerCase("vi-VN")}` : undefined}
+                  disabled={externalSubmitDisabled || isTeachersLoading || teachers.length === 0 || Boolean(scheduleConflict) || isEndDatePreviewBlocked || Boolean(class_ && !hasUnsavedChanges)}
                 />
               </>
             }
@@ -1418,14 +1528,14 @@ export function ClassFormDialog({
 
   return (
     <FormDialogShell
-      title={class_ ? "Chỉnh sửa lớp học" : "Thêm lớp học"}
+      title={title ?? (class_ ? "Chỉnh sửa lớp học" : "Thêm lớp học")}
       width={class_ ? "lg" : "standard"}
       isBusy={isSaving}
       dirty={hasUnsavedChanges}
       onClose={onClose}
       suspended={isSchedulePickerOpen || datePickerTarget !== null || isTeacherSlideOpen}
       frameProps={{
-        className: class_ ? undefined : createEntityDialogFrameClassName,
+        className: class_ ? editEntityDialogFrameClassName : createEntityDialogFrameClassName,
         inert: isSchedulePickerOpen || datePickerTarget !== null,
         onKeyDown: (event) => {
           const target = event.target;

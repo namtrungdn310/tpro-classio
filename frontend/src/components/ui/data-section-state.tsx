@@ -51,7 +51,7 @@ export function DataSectionError({
 type DataSectionEmptyProps = {
   actionLabel?: string;
   className?: string;
-  description: string;
+  description?: string;
   icon: IconType;
   onAction?: () => void;
   title: string;
@@ -78,7 +78,9 @@ export function DataSectionEmpty({
       <p className="font-ui mt-3.5 text-[15px] font-semibold leading-6 text-gray-900">
         {title}
       </p>
-      <p className="helper-text mt-1 max-w-md text-gray-500">{description}</p>
+      {description ? (
+        <p className="helper-text mt-1 max-w-md text-gray-500">{description}</p>
+      ) : null}
       {actionLabel && onAction ? (
         <Button type="button" variant="outline" size="sm" className="mt-4" onClick={onAction}>
           {actionLabel}

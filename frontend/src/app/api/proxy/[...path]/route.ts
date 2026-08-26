@@ -25,7 +25,7 @@ import {
   type SessionRefreshResult,
 } from "@/lib/server/session-refresh";
 import { readUpstreamFlowCookie } from "@/lib/server/flow-cookie";
-import { buildPrivateAvatarResponse } from "@/lib/server/backend-image-response";
+import { buildPrivateWebpImageResponse } from "@/lib/server/backend-image-response";
 import { prepareBackendRequestBody } from "@/lib/server/backend-request";
 import { applyProxyResponseCookies } from "@/lib/server/proxy-response-cookies";
 import { normalizePublicAppOrigin } from "@/lib/server/public-origin";
@@ -33,6 +33,9 @@ import { normalizePublicAppOrigin } from "@/lib/server/public-origin";
 const JSON_CONTENT_TYPE = "application/json";
 const REFRESH_RESULT_GRACE_MS = 10_000;
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+const DEFAULT_UPSTREAM_TIMEOUT_MS = 15_000;
+const LONG_CLASS_MUTATION_TIMEOUT_MS = 60_000;
+type RawBackendRequestBody = string | ArrayBuffer;
 
 type RouteContext = {
   params: Promise<{
@@ -178,21 +181,35 @@ function buildProxyErrorResponse(error: unknown): NextResponse {
   );
 }
 
+function upstreamTimeoutFor(path: string, method: string): number {
+  if (
+    method === "POST" &&
+    /^classes\/[0-9a-f-]+\/continuation$/i.test(path)
+  ) {
+    return LONG_CLASS_MUTATION_TIMEOUT_MS;
+  }
+  return DEFAULT_UPSTREAM_TIMEOUT_MS;
+}
+
 async function fetchBackend(
   path: string,
   request: NextRequest,
   accessToken: string | null,
-  rawBody: string,
+  rawBody: RawBackendRequestBody,
   refreshToken: string | null,
   passwordResetToken: string | null,
   flowSessionToken: string | null,
 ) {
-  const body = prepareBackendRequestBody(
-    rawBody,
-    path,
-    refreshToken,
-    passwordResetToken,
-  );
+  const body = typeof rawBody === "string"
+    ? prepareBackendRequestBody(
+      rawBody,
+      path,
+      refreshToken,
+      passwordResetToken,
+    )
+    : rawBody.byteLength > 0
+      ? rawBody
+      : undefined;
   const headers = buildForwardHeaders(request, accessToken, flowSessionToken);
   if (body && !headers.has("Content-Type")) {
     headers.set("Content-Type", JSON_CONTENT_TYPE);
@@ -202,7 +219,7 @@ async function fetchBackend(
     headers,
     body,
     cache: "no-store",
-    signal: AbortSignal.timeout(15_000),
+    signal: AbortSignal.timeout(upstreamTimeoutFor(path, request.method)),
   });
 }
 
@@ -294,16 +311,16 @@ async function toNextResponse(
 
   if (options.binaryResponse && !isJsonContentType(contentType)) {
     try {
-      const privateAvatarResponse = buildPrivateAvatarResponse(backendResponse);
-      const response = new NextResponse(privateAvatarResponse.body, {
-        status: privateAvatarResponse.status,
-        headers: privateAvatarResponse.headers,
+      const privateImageResponse = buildPrivateWebpImageResponse(backendResponse);
+      const response = new NextResponse(privateImageResponse.body, {
+        status: privateImageResponse.status,
+        headers: privateImageResponse.headers,
       });
       return finalizeResponse(response);
     } catch {
       return finalizeResponse(
         NextResponse.json(
-          { detail: "Phản hồi avatar không hợp lệ." },
+          { detail: "Phản hồi ảnh riêng tư không hợp lệ." },
           { status: 502, headers: { "Cache-Control": "no-store" } },
         ),
       );
@@ -377,8 +394,12 @@ async function handleProxy(request: NextRequest, context: RouteContext) {
   const isPublicPath = isPublicAuthProxyPath(path);
   const usesFlowSession = usesFlowSessionProxyPath(path);
   const isRefreshRoute = path === "auth/refresh";
-  const rawBody =
-    request.method === "GET" || request.method === "HEAD" ? "" : await request.text();
+  const rawBody: RawBackendRequestBody =
+    request.method === "GET" || request.method === "HEAD"
+      ? ""
+      : request.headers.get("content-type")?.toLowerCase().includes("multipart/form-data")
+        ? await request.arrayBuffer()
+        : await request.text();
   let forwardedRefreshToken = refreshToken;
   if (path === "auth/logout" && refreshToken) {
     const refreshKey = await buildRefreshKey(refreshToken, requestDeviceId ?? "");
@@ -465,7 +486,9 @@ async function handleProxy(request: NextRequest, context: RouteContext) {
   }
 
   return toNextResponse(backendResponse, {
-    binaryResponse: path.startsWith("auth/avatars/"),
+    binaryResponse:
+      path.startsWith("auth/avatars/") ||
+      /^banking\/accounts\/[^/]+\/qr$/.test(path),
     clearCookies,
     clearFlowSession: path === "auth/logout",
     clearPasswordReset:

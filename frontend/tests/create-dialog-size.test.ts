@@ -17,9 +17,15 @@ test("entity creation dialogs share the edit-class desktop frame size", () => {
   );
 
   assert.match(classForm, /width=\{class_ \? "lg" : "standard"\}/);
-  assert.match(classForm, /className: class_ \? undefined : createEntityDialogFrameClassName/);
+  assert.match(
+    classForm,
+    /className: class_ \? editEntityDialogFrameClassName : createEntityDialogFrameClassName/,
+  );
   assert.match(studentForm, /width=\{student \? "lg" : "standard"\}/);
   assert.match(studentForm, /className: student \? undefined : createEntityDialogFrameClassName/);
   assert.match(staffForm, /width=\{staff \? "md" : "standard"\}/);
-  assert.match(staffForm, /className: staff \? undefined : createEntityDialogFrameClassName/);
+  // Staff creation deliberately shrinks to fit content instead of using the
+  // fixed 680px entity frame (R8: co vừa đủ, không cố định như lớp học).
+  assert.doesNotMatch(staffForm, /createEntityDialogFrameClassName/);
+  assert.match(staffForm, /frameProps=\{\{ className: undefined \}\}/);
 });

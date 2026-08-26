@@ -47,3 +47,18 @@ test("header searches use the shared input typography and caret contract", () =>
     /formTextControlHeaderClassName\s*=\s*"form-input-text/,
   );
 });
+
+test("filter trigger stays compact inside the shared header input", () => {
+  assert.match(
+    source,
+    /className=\{`relative inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition/,
+  );
+  assert.match(source, /<SlidersHorizontal className="h-3 w-3" \/>/);
+});
+
+test("filter chips stay compact while retaining their readable label size", () => {
+  assert.match(
+    source,
+    /className=\{`inline-flex h-7 shrink-0 items-center rounded-full border px-2\.5 text-\[12px\] transition/,
+  );
+});
