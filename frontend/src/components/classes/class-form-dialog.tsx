@@ -39,11 +39,7 @@ import {
 } from "@/components/ui/unsaved-changes-notice";
 import type { ScheduleSlot } from "@/components/layout/weekly-schedule-board";
 import {
-  getClassAssistantIds,
-  getClassScheduleSlots,
   getClassScheduleSlotsLabel,
-  getClassScheduleText,
-  getClassTeacherIds,
   getSlotEffectiveAssistantIds,
   getSlotEffectiveTeacherIds,
   normalizeCourseBillingMonths,
@@ -270,6 +266,7 @@ type ClassFormDialogProps = {
   /** Prefilled create payload used by flows such as "Tạo lớp kế tiếp". */
   initialValues?: ClassCreate | null;
   additionalSection?: ReactNode | ((draft: ClassFormDraftContext) => ReactNode);
+  onDraftChange?: (draft: ClassFormDraftContext) => void;
   externalDirty?: boolean;
   externalSubmitDisabled?: boolean;
   submitLabel?: string;
@@ -298,6 +295,7 @@ export function ClassFormDialog({
   class_,
   initialValues = null,
   additionalSection,
+  onDraftChange,
   externalDirty = false,
   externalSubmitDisabled = false,
   submitLabel,
@@ -676,6 +674,10 @@ export function ClassFormDialog({
   useEffect(() => {
     onDirtyChange?.(hasUnsavedChanges);
   }, [hasUnsavedChanges, onDirtyChange]);
+
+  useEffect(() => {
+    onDraftChange?.({ baseFee: baseFee ?? null, schedule: scheduleValue });
+  }, [baseFee, onDraftChange, scheduleValue]);
 
   useEffect(() => {
     onNestedOverlayChange?.(

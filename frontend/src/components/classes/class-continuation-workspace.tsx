@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -11,7 +11,7 @@ import {
   RiSearchLine as Search,
   RiUserAddLine as UserAdd,
 } from "react-icons/ri";
-import { ClassFormDialog } from "@/components/classes/class-form-dialog";
+import { ClassFormDialog, type ClassFormDraftContext } from "@/components/classes/class-form-dialog";
 import { FormSection } from "@/components/ui/form-section";
 import { LoadingLabel } from "@/components/ui/loading-label";
 import { SmartMoneyInput } from "@/components/ui/smart-money-input";
@@ -80,7 +80,10 @@ export function ClassContinuationWorkspace({
   const [search, setSearch] = useState("");
   const [isStudentPickerOpen, setIsStudentPickerOpen] = useState(false);
   const [submitError, setSubmitError] = useState("");
-  const targetDraftRef = useRef<{ baseFee: number | null; slots: ClassContinuationSlotReference[] }>({ baseFee: null, slots: [] });
+  const [targetDraft, setTargetDraft] = useState<{ baseFee: number | null; slots: ClassContinuationSlotReference[] }>({ baseFee: null, slots: [] });
+  const handleDraftChange = useCallback(({ baseFee, schedule }: ClassFormDraftContext) => {
+    setTargetDraft({ baseFee, slots: schedule?.slots ?? [] });
+  }, []);
   const initializedForRef = useRef<string | null>(null);
   const requestIdRef = useRef(crypto.randomUUID());
   const debouncedSearch = useDebouncedValue(search, 200);
@@ -172,6 +175,7 @@ export function ClassContinuationWorkspace({
       onClose={onClose}
       onRetryTeachers={onRetryTeachers}
       onNestedOverlayChange={onNestedOverlayChange}
+      onDraftChange={handleDraftChange}
       onDirtyChange={onDirtyChange}
       onSubmit={(classData) => {
         const classSlots = classData.schedule?.slots ?? [];
@@ -206,8 +210,7 @@ export function ClassContinuationWorkspace({
           preserve_slot_selections: false,
         });
       }}
-      additionalSection={({ baseFee, schedule }) => {
-        targetDraftRef.current = { baseFee, slots: schedule?.slots ?? [] };
+      additionalSection={() => {
         return <FormSection label="Học viên lớp kế tiếp" order={5} summary={`${selected.size} học viên`}>
           <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
             <div className="form-input-text flex h-8 min-w-0 items-center rounded-md border border-gray-200 bg-white px-2.5 font-medium text-gray-900">
@@ -226,12 +229,12 @@ export function ClassContinuationWorkspace({
         sourceStudents={preview.students.map(fromCandidate)}
         matchedStudents={matchedStudents}
         selected={selected}
-        targetSlots={targetDraftRef.current.slots}
-        baseFee={targetDraftRef.current.baseFee}
+        targetSlots={targetDraft.slots}
+        baseFee={targetDraft.baseFee}
         isLoading={searchQuery.isFetching}
         isError={searchQuery.isError}
         onSearchChange={setSearch}
-        onToggle={(student) => toggleStudent(selected, setSelected, student, targetDraftRef.current.slots)}
+        onToggle={(student) => toggleStudent(selected, setSelected, student, targetDraft.slots)}
         onUpdate={(student) => setSelected((current) => new Map(current).set(student.student_id, student))}
         onReset={() => setSelected(new Map(preview.students.map((student) => [student.student_id, fromCandidate(student)])))}
         onClear={() => setSelected(new Map())}
