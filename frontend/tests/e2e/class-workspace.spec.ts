@@ -2,7 +2,8 @@ import { expect, test, type Page } from "@playwright/test";
 
 /**
  * BROWSER COMPONENT HARNESS — ClassWorkspaceDialog: mở thẳng chế độ Sửa,
- * chuyển mode qua rail (tablist), chấm vàng khi dirty, hủy 2 bước, đóng với
+ * chuyển mode qua rail (tablist), chấm vàng khi dirty, hủy 2 bước, tiếp tục
+ * lớp học, đóng với
  * xác nhận bỏ thay đổi. Không đi qua route thật/API/auth.
  */
 
@@ -17,10 +18,10 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator("#class-name")).toBeVisible();
 });
 
-test("opens directly in edit mode with a four-tab rail", async ({ page }) => {
+test("opens directly in edit mode with a five-tab rail", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Sửa lớp học" })).toBeVisible();
   await expect(editTab(page)).toHaveAttribute("aria-selected", "true");
-  await expect(page.locator('[role="tablist"] [role="tab"]:visible')).toHaveCount(4);
+  await expect(page.locator('[role="tablist"] [role="tab"]:visible')).toHaveCount(5);
 });
 
 test("switches to history and back via the rail", async ({ page }) => {

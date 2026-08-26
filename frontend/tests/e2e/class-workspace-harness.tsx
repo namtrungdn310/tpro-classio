@@ -79,6 +79,8 @@ function Harness() {
           class_={mockClass}
           initialMode="edit"
           showModeRail
+          canEdit
+          canContinue
           isSaving={false}
           isDeleting={false}
           isTeachersError={false}

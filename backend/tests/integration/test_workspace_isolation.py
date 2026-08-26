@@ -30,9 +30,17 @@ async def test_runtime_workspace_boundary_blocks_cross_tenant_staff_access() -> 
     workspace_id: UUID | None = None
     staff_id = uuid4()
     try:
+        # The migration owner is intentionally supplied by each disposable
+        # scenario (the main CI chain uses the legacy refund actor, while the
+        # full disposable chain uses its dedicated owner fixture).  The test
+        # only needs a real owner workspace; coupling it to one fixture UUID
+        # made the otherwise valid main-chain setup fail before isolation was
+        # exercised.
         owner_workspace = await admin.fetchval(
-            "select id from public.workspaces "
-            "where owner_user_id = '00000000-0000-0000-0000-000000000082'::uuid"
+            "select w.id from public.workspaces w "
+            "join public.profiles p on p.id = w.owner_user_id "
+            "where p.role = 'admin' and p.account_status <> 'disabled' "
+            "order by w.created_at, w.id limit 1"
         )
         assert owner_workspace is not None
         workspace_id = await admin.fetchval(
