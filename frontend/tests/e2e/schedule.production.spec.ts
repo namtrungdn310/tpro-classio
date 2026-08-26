@@ -278,7 +278,7 @@ test("T-E2E-PROD-001: valid session loads the classes route, opens the form and 
   await page.goto("http://localhost:3100/classes");
   await page.getByRole("button", { name: /Thêm lớp/i }).first().waitFor();
   await openSchedulePicker(page);
-  await expect(page.getByRole("button", { name: /Xác nhận/i })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Áp dụng lịch|Xác nhận/i })).toBeVisible();
   expect(availabilityRequests).toBeGreaterThanOrEqual(1);
 });
 
@@ -296,7 +296,7 @@ test("T-E2E-PROD-002: two adjacent clicks create and save one valid 60-minute se
   await expect(page.locator("[data-click-anchor='true']")).toHaveCount(0);
   await expect(first).toHaveAttribute("aria-pressed", "true");
   await expect(second).toHaveAttribute("aria-pressed", "true");
-  await page.getByRole("button", { name: "Xác nhận", exact: true }).click();
+  await page.getByRole("button", { name: /Áp dụng lịch|Xác nhận/i }).click();
   await page.getByRole("button", { name: /Tạo lớp|Lưu/i }).first().click();
   await page.waitForTimeout(500);
 
@@ -325,7 +325,7 @@ test("T-E2E-PROD-003: availability 500 shows alert, disables confirm; no save is
   await openSchedulePicker(page);
   await expect(page.getByRole("alert").first()).toBeVisible();
   await expect(page.getByRole("button", { name: /Thử lại/i })).toBeVisible();
-  await expect(page.getByRole("button", { name: /Xác nhận/i })).toBeDisabled();
+  await expect(page.getByRole("button", { name: /Áp dụng lịch|Xác nhận/i })).toBeDisabled();
   await dragTwoCells(page);
   await page.waitForTimeout(300);
   expect(saveRequests).toHaveLength(0);
@@ -339,7 +339,7 @@ test("T-E2E-PROD-004: retry after error succeeds; painting and confirm send the 
   await page.getByRole("button", { name: /Thử lại/i }).click();
   await expect(page.getByRole("button", { name: /Thử lại/i })).toHaveCount(0);
   await dragTwoCells(page);
-  await page.getByRole("button", { name: /Xác nhận/i }).click();
+  await page.getByRole("button", { name: /Áp dụng lịch|Xác nhận/i }).click();
   await page.getByRole("button", { name: /Tạo lớp|Lưu/i }).first().click();
   await page.waitForTimeout(500);
   const payload = saveRequests[0] as {
