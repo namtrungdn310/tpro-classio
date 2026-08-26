@@ -40,7 +40,7 @@ from app.services.banking_qr_storage_service import store_bank_qr_image
 from app.services.payment_readiness_service import get_pay2s_readiness
 
 _PAY2S_ACCESS_KEY_PURPOSE = "pay2s-access-key-v1"
-_PAY2S_SECRET_KEY_PURPOSE = "pay2s-secret-key-v1"
+_PAY2S_CREDENTIAL_KEY_PURPOSE = "pay2s-secret-key-v1"
 _PAY2S_WEBHOOK_TOKEN_PURPOSE = "pay2s-webhook-token-v1"
 _PAY2S_WEBHOOK_TOKEN_HASH_PURPOSE = "pay2s-webhook-token-hash-v1"
 _PAY2S_CATALOG_VERIFIED_AT = datetime(2026, 8, 21, tzinfo=timezone.utc)
@@ -314,7 +314,7 @@ async def upsert_pay2s_connection(
         )
     if payload.secret_key is not None:
         provider.secret_key_ciphertext = encrypt_credential(
-            payload.secret_key.get_secret_value(), purpose=_PAY2S_SECRET_KEY_PURPOSE
+            payload.secret_key.get_secret_value(), purpose=_PAY2S_CREDENTIAL_KEY_PURPOSE
         )
     provider.merchant_id = payload.merchant_id
     provider.partner_code = payload.partner_code
