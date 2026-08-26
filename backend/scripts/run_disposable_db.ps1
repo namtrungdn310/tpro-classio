@@ -101,7 +101,7 @@ Write-Host "PostgreSQL ready (pg_isready)." -ForegroundColor Green
 
 try {
   # ================= SCENARIO 1: CLEAN CHAIN =================
-  Write-Host "==== Scenario 1: clean chain (001-050 -> fixture -> 051 -> 052 -> assert -> verify x2) ====" -ForegroundColor Cyan
+  Write-Host "==== Scenario 1: clean chain (001-050 -> fixture -> 051 -> later migrations -> verify x2) ====" -ForegroundColor Cyan
   Invoke-Sql (Join-Path $SqlRoot "supabase_bootstrap.sql") "s1-bootstrap"
   Get-ChildItem $Migrations -Filter "*.sql" | Sort-Object Name | Where-Object { $_.Name -lt "051" } | ForEach-Object {
     Invoke-Sql $_.FullName "s1-migrate"
@@ -140,9 +140,65 @@ try {
   Invoke-Sql (Join-Path $Migrations "071_payroll_rate_and_settlement_invariants.sql") "s1-071"
   Invoke-Sql (Join-Path $Migrations "072_fee_operation_actor_anonymization.sql") "s1-072"
   Invoke-Sql (Join-Path $Migrations "073_staff_payroll_settlement_reversals.sql") "s1-073"
+  Invoke-Sql (Join-Path $Migrations "074_suspension_window_invariants.sql") "s1-074"
+  Invoke-Sql (Join-Path $Migrations "075_early_payment_requests.sql") "s1-075"
+  Invoke-Sql (Join-Path $Migrations "076_slot_teacher_assignment_history.sql") "s1-076"
+  Invoke-Sql (Join-Path $Migrations "077_staff_earning_rate_integrity.sql") "s1-077"
   Invoke-Sql (Join-Path $SqlRoot "migration_051_assert.sql") "s1-assert"
-  Invoke-Sql (Join-Path $SqlRoot "verify_security.sql") "s1-verify-1"
-  Invoke-Sql (Join-Path $SqlRoot "verify_security.sql") "s1-verify-2"
+  # verify_security.sql covers the complete release contract, including the
+  # banking/provenance migrations applied in Scenario 1b below. Run it after
+  # that final schema state instead of against the intentionally pre-086 state.
+
+  # ============ ROUND 8: SCALE DATASET + 078 PROJECTION-INDEX EVIDENCE ============
+  Write-Host "==== Scenario 1b: scale dataset + EXPLAIN before/after 078 ====" -ForegroundColor Cyan
+  Invoke-Sql (Join-Path $SqlRoot "perf_scale_dataset.sql") "s1b-scale-dataset"
+  Invoke-Sql (Join-Path $SqlRoot "perf_scale_assert.sql") "s1b-scale-assert"
+  Invoke-Sql (Join-Path $SqlRoot "perf_scale_analyze.sql") "s1b-scale-analyze"
+  Invoke-Sql (Join-Path $SqlRoot "perf_explain_078.sql") "s1b-explain-before"
+  Invoke-Sql (Join-Path $Migrations "078_class_and_fee_projection_indexes.sql") "s1b-078"
+  Invoke-Sql (Join-Path $SqlRoot "perf_explain_078.sql") "s1b-explain-after"
+  Invoke-Sql (Join-Path $SqlRoot "verify_migration_078.sql") "s1b-verify-078"
+  Invoke-Sql (Join-Path $Migrations "078_class_and_fee_projection_indexes.sql") "s1b-078-idempotent"
+  Invoke-Sql (Join-Path $SqlRoot "verify_migration_078.sql") "s1b-verify-078-after-idempotent"
+  Invoke-Sql (Join-Path $Migrations "079_staff_email.sql") "s1b-079"
+  Invoke-Sql (Join-Path $Migrations "080_staff_checkin_window.sql") "s1b-080"
+  Invoke-Sql (Join-Path $Migrations "081_attendance_reversal.sql") "s1b-081"
+  Invoke-Sql (Join-Path $SqlRoot "migration_082_fixture.sql") "s1b-082-owner-fixture"
+  Invoke-Sql (Join-Path $Migrations "082_admin_workspace_isolation.sql") "s1b-082"
+  Invoke-Sql (Join-Path $Migrations "083_workspace_audit_and_student_code.sql") "s1b-083"
+  Invoke-Sql (Join-Path $Migrations "083_workspace_audit_and_student_code.sql") "s1b-083-idempotent"
+  Invoke-Sql (Join-Path $Migrations "084_admin_invitation_workspace_handoff.sql") "s1b-084"
+  Invoke-Sql (Join-Path $Migrations "084_admin_invitation_workspace_handoff.sql") "s1b-084-idempotent"
+  Invoke-Sql (Join-Path $Migrations "085_runtime_role_and_staff_schema_reconciliation.sql") "s1b-085"
+  Invoke-Sql (Join-Path $Migrations "085_runtime_role_and_staff_schema_reconciliation.sql") "s1b-085-idempotent"
+  Invoke-Sql (Join-Path $Migrations "086_workspace_banking_and_pay2s.sql") "s1b-086"
+  Invoke-Sql (Join-Path $Migrations "087_pay2s_partner_integration.sql") "s1b-087"
+  Invoke-Sql (Join-Path $Migrations "088_payment_request_share_audit.sql") "s1b-088"
+  Invoke-Sql (Join-Path $Migrations "089_dev_operations_control_plane.sql") "s1b-089"
+  Invoke-Sql (Join-Path $Migrations "090_pay2s_plan_label.sql") "s1b-090"
+  Invoke-Sql (Join-Path $Migrations "091_grant_ops_runtime_roles.sql") "s1b-091"
+  Invoke-Sql (Join-Path $Migrations "092_pay2s_collection_ipn.sql") "s1b-092"
+  Invoke-Sql (Join-Path $Migrations "093_payment_settlement_account_provenance.sql") "s1b-093"
+  Invoke-Sql (Join-Path $Migrations "094_private_banking_qr_storage.sql") "s1b-094"
+  Invoke-Sql (Join-Path $Migrations "095_pay2s_platform_operating_mode.sql") "s1b-095"
+  Invoke-Sql (Join-Path $Migrations "096_grant_pay2s_operating_mode_runtime_roles.sql") "s1b-096"
+  Invoke-Sql (Join-Path $Migrations "097_pay2s_central_credentials.sql") "s1b-097"
+  Invoke-Sql (Join-Path $Migrations "098_pay2s_central_credential_rotation.sql") "s1b-098"
+  Invoke-Sql (Join-Path $Migrations "099_workspace_owned_pay2s.sql") "s1b-099"
+  Invoke-Sql (Join-Path $Migrations "100_dev_workspace_ownership.sql") "s1b-100"
+  Invoke-Sql (Join-Path $Migrations "101_payment_reconciliation_workspace.sql") "s1b-101"
+  Invoke-Sql (Join-Path $Migrations "102_fee_outstanding_queue_index.sql") "s1b-102"
+  Invoke-Sql (Join-Path $Migrations "103_fee_message_drafts_and_payroll_account.sql") "s1b-103"
+  Invoke-Sql (Join-Path $Migrations "104_staff_attendance_lookup_indexes.sql") "s1b-104"
+  Invoke-Sql (Join-Path $Migrations "105_fee_message_default_line_layout.sql") "s1b-105"
+  Invoke-Sql (Join-Path $Migrations "106_fee_message_receipt_closing.sql") "s1b-106"
+  Invoke-Sql (Join-Path $Migrations "107_fee_message_workspace_default_layout.sql") "s1b-107"
+  Invoke-Sql (Join-Path $Migrations "108_fee_message_group_drafts.sql") "s1b-108"
+  Invoke-Sql (Join-Path $Migrations "109_remove_legacy_fee_message_drafts.sql") "s1b-109"
+  Invoke-Sql (Join-Path $Migrations "110_grant_fee_message_draft_runtime_roles.sql") "s1b-110"
+  Invoke-Sql (Join-Path $Migrations "111_fee_operation_student_code_snapshot.sql") "s1b-111"
+  Invoke-Sql (Join-Path $Migrations "112_class_continuation_lineage.sql") "s1b-112"
+  Invoke-Sql (Join-Path $SqlRoot "verify_security.sql") "s1b-verify-security-after-tenant-isolation"
 
   # ================= SCENARIO 2: ROLLBACK / REAPPLY =================
   Write-Host "==== Scenario 2: rollback/reapply (T-DB051-043/044 + T-DB053-rollback) ====" -ForegroundColor Cyan
@@ -167,6 +223,11 @@ try {
   Invoke-Sql (Join-Path $SqlRoot "migration_053_assert.sql") "s2-053-assert-reapply"
   Invoke-Sql (Join-Path $Migrations "063_service_credit_ledger.sql") "s2-063-reapply"
   Invoke-Sql (Join-Path $Migrations "069_contract_cleanup.sql") "s2-069-reapply"
+  # 074 is forward hardening on the 053 adjustment tables. The disposable
+  # rollback intentionally removes those tables, so reapply the invariant
+  # before the latest security verification instead of verifying a partial
+  # schema.
+  Invoke-Sql (Join-Path $Migrations "074_suspension_window_invariants.sql") "s2-074-reapply"
   # Reapply the latest forward fee-operation guard after rollback/reapply
   # exercises, keeping the final verification on the production contract.
   Invoke-Sql (Join-Path $Migrations "072_fee_operation_actor_anonymization.sql") "s2-072-reapply"
@@ -246,6 +307,10 @@ try {
   Invoke-Sql (Join-Path $Migrations "062_enrollment_slot_selections.sql") "s4-062-reapply"
   Invoke-Sql (Join-Path $Migrations "063_service_credit_ledger.sql") "s4-063-reapply"
   Invoke-Sql (Join-Path $Migrations "069_contract_cleanup.sql") "s4-069-reapply"
+  Invoke-Sql (Join-Path $Migrations "074_suspension_window_invariants.sql") "s4-074-reapply"
+  Invoke-Sql (Join-Path $Migrations "075_early_payment_requests.sql") "s4-075-reapply"
+  Invoke-Sql (Join-Path $Migrations "076_slot_teacher_assignment_history.sql") "s4-076-reapply"
+  Invoke-Sql (Join-Path $Migrations "077_staff_earning_rate_integrity.sql") "s4-077-reapply"
   Write-Host "==== Scenario 1-4 DB done ====" -ForegroundColor Cyan
 
   # ================= SCENARIO 5: MIGRATION OWNER NON-SUPERUSER =================
@@ -295,6 +360,7 @@ alter table public.account_invitations owner to m051_owner;
 alter function public.block_class_teacher_event_mutation() owner to m051_owner;
 alter function public.enforce_staff_assignment_lifecycle() owner to m051_owner;
 alter function public.enforce_class_package_cycle_integrity() owner to m051_owner;
+alter function public.protect_payment_ledger_entry() owner to m051_owner;
 "@ 2>&1 | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "s5: alter owner failed" }
   Write-Host "OK  [s5]: bảng + hàm append-only giao cho m051_owner (mô phỏng deploy owner)" -ForegroundColor Green
@@ -313,7 +379,7 @@ alter function public.enforce_class_package_cycle_integrity() owner to m051_owne
   Invoke-Sql (Join-Path $SqlRoot "migration_055_fixture.sql") "s5-055-fixture" -db "tpro_r3_owner"
   Invoke-Sql (Join-Path $Migrations "055_student_codes.sql") "s5-055" -db "tpro_r3_owner" -user "m051_owner"
   Invoke-Sql (Join-Path $SqlRoot "migration_055_assert.sql") "s5-055-assert" -db "tpro_r3_owner" -user "m051_owner"
-  Invoke-SqlText "alter type public.fee_status owner to m051_owner; alter type public.student_status owner to m051_owner; alter type public.user_role owner to m051_owner; alter table public.fee_records owner to m051_owner; alter table public.fee_operations owner to m051_owner; alter table public.fee_operation_items owner to m051_owner; alter table public.class_lifecycle_events owner to m051_owner; alter table public.student_lifecycle_events owner to m051_owner; alter table public.students owner to m051_owner; alter table public.enrollments owner to m051_owner; alter table public.payments owner to m051_owner; alter table public.profiles owner to m051_owner; alter table public.account_security_events owner to m051_owner; alter function public.block_fee_operation_mutation() owner to m051_owner;" "s5-fee-status-owner" -db "tpro_r3_owner"
+  Invoke-SqlText "alter type public.fee_status owner to m051_owner; alter type public.student_status owner to m051_owner; alter type public.user_role owner to m051_owner; alter table public.fee_records owner to m051_owner; alter table public.fee_operations owner to m051_owner; alter table public.fee_operation_items owner to m051_owner; alter table public.class_lifecycle_events owner to m051_owner; alter table public.student_lifecycle_events owner to m051_owner; alter table public.students owner to m051_owner; alter table public.enrollments owner to m051_owner; alter table public.payments owner to m051_owner; alter table public.profiles owner to m051_owner; alter table public.account_security_events owner to m051_owner; alter function public.block_fee_operation_mutation() owner to m051_owner; alter function public.protect_payment_ledger_entry() owner to m051_owner;" "s5-fee-status-owner" -db "tpro_r3_owner"
   Invoke-Sql (Join-Path $SqlRoot "migration_056_fixture.sql") "s5-056-fixture" -db "tpro_r3_owner"
   Invoke-Sql (Join-Path $Migrations "056_fee_cycle_identity.sql") "s5-056" -db "tpro_r3_owner" -user "m051_owner"
   Invoke-Sql (Join-Path $SqlRoot "migration_056_assert.sql") "s5-056-assert" -db "tpro_r3_owner" -user "m051_owner"
@@ -334,6 +400,15 @@ alter function public.enforce_class_package_cycle_integrity() owner to m051_owne
   Invoke-Sql (Join-Path $Migrations "071_payroll_rate_and_settlement_invariants.sql") "s5-071" -db "tpro_r3_owner" -user "m051_owner"
   Invoke-Sql (Join-Path $Migrations "072_fee_operation_actor_anonymization.sql") "s5-072" -db "tpro_r3_owner" -user "m051_owner"
   Invoke-Sql (Join-Path $Migrations "073_staff_payroll_settlement_reversals.sql") "s5-073" -db "tpro_r3_owner" -user "m051_owner"
+  Invoke-Sql (Join-Path $Migrations "074_suspension_window_invariants.sql") "s5-074" -db "tpro_r3_owner" -user "m051_owner"
+  Invoke-Sql (Join-Path $Migrations "075_early_payment_requests.sql") "s5-075" -db "tpro_r3_owner" -user "m051_owner"
+  Invoke-Sql (Join-Path $Migrations "076_slot_teacher_assignment_history.sql") "s5-076" -db "tpro_r3_owner" -user "m051_owner"
+  Invoke-Sql (Join-Path $Migrations "077_staff_earning_rate_integrity.sql") "s5-077" -db "tpro_r3_owner" -user "m051_owner"
+  Invoke-Sql (Join-Path $SqlRoot "migration_082_fixture.sql") "s5-082-owner-fixture" -db "tpro_r3_owner"
+  Invoke-Sql (Join-Path $Migrations "082_admin_workspace_isolation.sql") "s5-082" -db "tpro_r3_owner"
+  Invoke-Sql (Join-Path $Migrations "083_workspace_audit_and_student_code.sql") "s5-083" -db "tpro_r3_owner"
+  Invoke-Sql (Join-Path $Migrations "084_admin_invitation_workspace_handoff.sql") "s5-084" -db "tpro_r3_owner"
+  Invoke-Sql (Join-Path $Migrations "085_runtime_role_and_staff_schema_reconciliation.sql") "s5-085" -db "tpro_r3_owner"
   Invoke-Sql (Join-Path $SqlRoot "migration_051_assert.sql") "s5-assert" -db "tpro_r3_owner" -user "m051_owner"
   Invoke-SqlText "grant all on storage.buckets, storage.objects to m051_owner; grant all on all tables in schema auth to m051_owner;" "s5-grants-storage" -db "tpro_r3_owner"
   Invoke-Sql (Join-Path $SqlRoot "verify_security.sql") "s5-verify" -db "tpro_r3_owner" -user "m051_owner"
@@ -393,8 +468,12 @@ alter function public.enforce_class_package_cycle_integrity() owner to m051_owne
   # (NOBYPASSRLS) qua verify_security.sql + deny probes bên dưới.
   Invoke-SqlText 'do $$ begin if not exists (select 1 from pg_roles where rolname = ''tpro_runtime'') then create role tpro_runtime login password ''disposable''; end if; end $$; alter role tpro_runtime nosuperuser nocreaterole nocreatedb bypassrls;' "s6-runtime-role"
   # Grant TỐI THIỂU theo bảng business — KHÔNG chạm backup/mapping (deny).
-  Invoke-SqlText "grant usage on schema public, auth, storage to tpro_runtime; grant all on public.classes, public.class_teachers, public.class_teacher_events, public.staff_members, public.profiles, public.students, public.enrollments, public.payments, public.fee_records, public.fee_operations, public.fee_operation_items, public.fee_message_templates, public.class_lifecycle_events, public.student_lifecycle_events, public.account_invitations, public.account_security_events, public.auth_flow_sessions, public.auth_google_identities, public.auth_rate_limits, public.auth_recovery_codes, public.auth_totp_factors, public.password_reset_sessions, public.user_device_sessions, public.class_schedule_adjustments, public.class_session_exceptions, public.class_session_staff_snapshots, public.class_session_student_snapshots, public.class_schedule_adjustment_events, public.class_schedule_slots, public.class_schedule_slot_staff, public.enrollment_slot_selections, public.enrollment_service_credit_events, public.service_credit_allocations, public.staff_account_links, public.staff_account_link_events, public.staff_compensation_rates, public.staff_compensation_rate_events, public.staff_attendance_entries, public.staff_earning_ledger, public.staff_payroll_settlements, public.staff_payroll_settlement_items, public.payment_requests, public.payment_request_events, public.payment_provider_deliveries, public.payment_provider_attempts, public.payment_posting_queue to tpro_runtime; grant select, insert on public.student_code_registry to tpro_runtime; grant usage on sequence public.student_code_serial_seq to tpro_runtime; grant all on all sequences in schema public to tpro_runtime; grant execute on function public.student_code_luhn_check(text) to tpro_runtime; grant execute on function public.student_code_from_serial(bigint) to tpro_runtime; grant execute on function public.student_code_valid(text) to tpro_runtime;" "s6-runtime-grants"
+  Invoke-SqlText "grant usage on schema public, auth, storage to tpro_runtime; grant all on public.classes, public.class_teachers, public.class_teacher_events, public.staff_members, public.profiles, public.students, public.enrollments, public.payments, public.fee_records, public.fee_operations, public.fee_operation_items, public.fee_message_templates, public.class_lifecycle_events, public.student_lifecycle_events, public.account_invitations, public.account_security_events, public.auth_flow_sessions, public.auth_google_identities, public.auth_rate_limits, public.auth_recovery_codes, public.auth_totp_factors, public.password_reset_sessions, public.user_device_sessions, public.class_schedule_adjustments, public.class_session_exceptions, public.class_session_staff_snapshots, public.class_session_student_snapshots, public.class_schedule_adjustment_events, public.class_schedule_slots, public.class_schedule_slot_staff, public.enrollment_slot_selections, public.enrollment_service_credit_events, public.service_credit_allocations, public.staff_account_links, public.staff_account_link_events, public.staff_compensation_rates, public.staff_compensation_rate_events, public.staff_attendance_entries, public.staff_earning_ledger, public.staff_payroll_settlements, public.staff_payroll_settlement_items, public.payment_requests, public.payment_request_items, public.payment_request_events, public.payment_provider_deliveries, public.payment_provider_attempts, public.payment_posting_queue to tpro_runtime; grant select, insert on public.student_code_registry to tpro_runtime; grant usage on sequence public.student_code_serial_seq to tpro_runtime; grant all on all sequences in schema public to tpro_runtime; grant execute on function public.student_code_luhn_check(text) to tpro_runtime; grant execute on function public.student_code_from_serial(bigint) to tpro_runtime; grant execute on function public.student_code_valid(text) to tpro_runtime;" "s6-runtime-grants"
   Invoke-SqlText "grant all on public.staff_payroll_settlement_reversals to tpro_runtime;" "s6-runtime-grants-073"
+  # Integration tests open direct runtime sessions without an HTTP principal.
+  # Give only this disposable role a database-local owner workspace default;
+  # production roles have no default and the trigger remains fail-closed.
+  Invoke-SqlText 'do $$ declare v uuid; begin select id into v from public.workspaces where owner_user_id = ''00000000-0000-0000-0000-000000000082''::uuid; if v is null then raise exception ''workspace owner fixture missing''; end if; execute format(''alter role tpro_runtime set app.workspace_id = %L'', v); end $$;' "s6-runtime-workspace"
   Write-Host "OK  [s6]: tpro_runtime NOSUPERUSER/BYPASSRLS (service_role-equivalent)" -ForegroundColor Green
 
   # backup table deny: browser roles NOBYPASSRLS không đọc được (RLS FORCE + revoke)
@@ -423,10 +502,12 @@ alter function public.enforce_class_package_cycle_integrity() owner to m051_owne
   # ================= SCENARIO 7: VERIFY SAU INTEGRATION + PERF =================
   Write-Host "==== Scenario 7: verify sau integration + perf ====" -ForegroundColor Cyan
   Invoke-Sql (Join-Path $SqlRoot "verify_security.sql") "s7-verify-after-integration"
-  Invoke-Sql (Join-Path $SqlRoot "perf_dataset.sql") "s7-perf-dataset"
-  Invoke-Sql (Join-Path $SqlRoot "perf_explain.sql") "s7-perf-explain"
   & $venv (Join-Path $SqlRoot "perf_measure.py")
   if ($LASTEXITCODE -ne 0) { throw "s7: p95 measurement failed" }
+  # Phase 9: endpoint query-count + bounded-concurrency gate on the scale DB.
+  $env:RUN_DB_INTEGRATION = "1"
+  & $venv -m pytest (Join-Path $Root "tests\integration") -q -m performance 2>&1 | Select-String -Pattern "passed|failed" | Select-Object -Last 1
+  if ($LASTEXITCODE -ne 0) { throw "s7: Phase 9 performance gate failed" }
 
   # ================= SCENARIO 8: ACCEPTANCE / FINALIZATION =================
   Write-Host "==== Scenario 8: acceptance/finalization (T-DB051-049) ====" -ForegroundColor Cyan
@@ -480,6 +561,14 @@ alter function public.enforce_class_package_cycle_integrity() owner to m051_owne
   Invoke-Sql (Join-Path $Migrations "071_payroll_rate_and_settlement_invariants.sql") "s8-071" -db "tpro_r3_acc"
   Invoke-Sql (Join-Path $Migrations "072_fee_operation_actor_anonymization.sql") "s8-072" -db "tpro_r3_acc"
   Invoke-Sql (Join-Path $Migrations "073_staff_payroll_settlement_reversals.sql") "s8-073" -db "tpro_r3_acc"
+  Invoke-Sql (Join-Path $Migrations "074_suspension_window_invariants.sql") "s8-074" -db "tpro_r3_acc"
+  Invoke-Sql (Join-Path $Migrations "075_early_payment_requests.sql") "s8-075" -db "tpro_r3_acc"
+  Invoke-Sql (Join-Path $Migrations "076_slot_teacher_assignment_history.sql") "s8-076" -db "tpro_r3_acc"
+  Invoke-Sql (Join-Path $Migrations "077_staff_earning_rate_integrity.sql") "s8-077" -db "tpro_r3_acc"
+  Invoke-Sql (Join-Path $Migrations "078_class_and_fee_projection_indexes.sql") "s8-078" -db "tpro_r3_acc"
+  Invoke-Sql (Join-Path $Migrations "079_staff_email.sql") "s8-079" -db "tpro_r3_acc"
+  Invoke-Sql (Join-Path $Migrations "080_staff_checkin_window.sql") "s8-080" -db "tpro_r3_acc"
+  Invoke-Sql (Join-Path $Migrations "081_attendance_reversal.sql") "s8-081" -db "tpro_r3_acc"
   Invoke-SqlText "insert into public.classes (id, name, type, base_fee, billing_cycle_months, teacher_id, identity_scheme, is_active) values ('40000000-0000-0000-0000-000000000001', 'ACCEPTANCE', 'MONTHLY', 750000, 1, '10000000-0000-0000-0000-000000000001', 'LEGACY', true);" "s8-insert-class" -db "tpro_r3_acc"
   $delOut = & $PsqlBin -h 127.0.0.1 -p $Port -U postgres -d tpro_r3_acc -v ON_ERROR_STOP=1 -c "delete from public.classes where id = '40000000-0000-0000-0000-000000000001';" 2>&1
   if ($delOut -match "migration_051|foreign key") { throw "s8: delete-class vẫn bị FK backup chặn sau acceptance" }

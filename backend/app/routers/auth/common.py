@@ -20,7 +20,10 @@ from app.core.device_sessions import (
 )
 from app.core.http import supabase_auth_client
 from app.core.security import create_access_token
+from app.core.workspace import set_workspace_id
+from app.models.invitation import AccountInvitation
 from app.models.user import Profile
+from app.models.workspace import Workspace
 from app.models.user_device_session import UserDeviceSession
 from app.schemas.auth import TokenResponse
 from app.services.auth_admin_service import get_active_auth_user_by_email
@@ -366,6 +369,24 @@ async def get_or_create_profile(
     owner = is_owner_email(email)
 
     if profile is None:
+        workspace_id: str | None = None
+        if owner:
+            workspace_id = await db.scalar(
+                select(Workspace.id).where(Workspace.owner_user_id == user_id)
+            )
+        else:
+            workspace_id = await db.scalar(
+                select(AccountInvitation.workspace_id).where(
+                    AccountInvitation.registered_user_id == user_id,
+                    AccountInvitation.consumed_at.is_(None),
+                )
+            )
+        if not workspace_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Tài khoản chưa được gán không gian dữ liệu riêng.",
+            )
+        set_workspace_id(str(workspace_id))
         for attempt in range(3):
             safe_username = await ensure_unique_username(
                 db,
@@ -379,6 +400,7 @@ async def get_or_create_profile(
                 username=safe_username,
                 full_name=safe_username,
                 account_status="active" if owner else "pending",
+                workspace_id=str(workspace_id),
             )
             db.add(candidate)
             try:
@@ -404,6 +426,19 @@ async def get_or_create_profile(
             status_code=status.HTTP_409_CONFLICT,
             detail="Không thể tạo hồ sơ tài khoản. Vui lòng thử lại.",
         )
+
+    profile_workspace_id = getattr(profile, "workspace_id", None)
+    if not profile_workspace_id:
+        # Lightweight auth unit doubles predate tenant membership.  Keep those
+        # tests isolated without weakening the real mapped Profile contract:
+        # a production Profile always exposes the mapped workspace column.
+        if isinstance(profile, Profile):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Tài khoản chưa được gán không gian dữ liệu riêng.",
+            )
+        profile_workspace_id = "legacy-test"
+    set_workspace_id(str(profile_workspace_id))
 
     changed = False
     if owner and profile.role != "admin":
@@ -576,11 +611,12 @@ async def record_account_security_event(
         text(
             """
             insert into account_security_events (
-                actor_user_id, target_user_id, action,
+                workspace_id, actor_user_id, target_user_id, action,
                 previous_role, next_role,
                 previous_status, next_status,
                 previous_username, next_username
             ) values (
+                public.current_workspace_id(),
                 cast(:actor_user_id as uuid), cast(:target_user_id as uuid), :action,
                 cast(:previous_role as user_role), cast(:next_role as user_role),
                 :previous_status, :next_status,

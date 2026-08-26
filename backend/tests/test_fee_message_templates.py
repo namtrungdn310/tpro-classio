@@ -22,6 +22,33 @@ from app.services.fee_template_service import (
 )
 
 
+@pytest.fixture(autouse=True)
+def workspace_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "app.services.fee_template_service.get_workspace_id",
+        lambda: "10000000-0000-0000-0000-000000000001",
+    )
+
+
+def test_default_fee_message_templates_keep_business_fields_on_the_intended_lines() -> (
+    None
+):
+    assert DEFAULT_FEE_REMINDER_TEMPLATE.splitlines() == [
+        "TPRO English xin thông báo học phí {{ky_hoc_phi}} của em {{ten_hoc_vien}}:",
+        "{{chi_tiet_hoc_phi}}",
+        "Ngày đến hạn: {{ngay_den_han}}.",
+        "Tổng học phí cần thanh toán: {{tong_tien}}.",
+        "Phụ huynh vui lòng thanh toán giúp trung tâm. Cảm ơn phụ huynh.",
+    ]
+    assert DEFAULT_FEE_RECEIPT_TEMPLATE.splitlines() == [
+        "TPRO English xác nhận đã nhận học phí {{ky_hoc_phi}} của em {{ten_hoc_vien}}:",
+        "{{chi_tiet_hoc_phi}}",
+        "Ngày đến hạn: {{ngay_den_han}}.",
+        "Tổng học phí đã nhận: {{tong_tien}}.",
+        "TPRO English cảm ơn phụ huynh.",
+    ]
+
+
 def test_fee_message_template_endpoints_are_management_only() -> None:
     routes = [
         route
@@ -37,15 +64,34 @@ def test_fee_message_template_endpoints_are_management_only() -> None:
     )
 
 
-def test_fee_message_template_update_normalizes_complete_templates() -> None:
+def test_fee_message_template_update_normalizes_line_endings_without_trimming() -> None:
     payload = FeeMessageTemplatesUpdate(
-        payment_reminder_template=f"  {DEFAULT_FEE_REMINDER_TEMPLATE}\r\n",
+        payment_reminder_template=f"{DEFAULT_FEE_REMINDER_TEMPLATE}\r\n",
         payment_received_template=DEFAULT_FEE_RECEIPT_TEMPLATE,
         version=3,
     )
 
-    assert payload.payment_reminder_template == DEFAULT_FEE_REMINDER_TEMPLATE
+    assert payload.payment_reminder_template == f"{DEFAULT_FEE_REMINDER_TEMPLATE}\n"
     assert payload.version == 3
+
+
+def test_fee_message_template_update_preserves_authored_editor_rows() -> None:
+    reminder_template = DEFAULT_FEE_REMINDER_TEMPLATE.replace(
+        "Tổng học phí cần thanh toán: {{tong_tien}}.\n",
+        "Tổng học phí cần thanh toán: {{tong_tien}}.\n\n",
+    )
+    receipt_template = f"{DEFAULT_FEE_RECEIPT_TEMPLATE}\n"
+
+    payload = FeeMessageTemplatesUpdate(
+        payment_reminder_template=reminder_template,
+        payment_received_template=receipt_template,
+        version=3,
+    )
+
+    assert payload.payment_reminder_template == reminder_template
+    assert payload.payment_received_template == receipt_template
+    assert len(payload.payment_reminder_template.split("\n")) == 6
+    assert len(payload.payment_received_template.split("\n")) == 6
 
 
 @pytest.mark.parametrize(
@@ -88,8 +134,15 @@ def test_fee_message_template_update_rejects_missing_or_unknown_tokens(
 
 def test_fee_message_template_response_accepts_versioned_singleton_shape() -> None:
     response = FeeMessageTemplatesResponse(
-        payment_reminder_template=DEFAULT_FEE_REMINDER_TEMPLATE,
-        payment_received_template=DEFAULT_FEE_RECEIPT_TEMPLATE,
+        active={
+            "payment_reminder_template": DEFAULT_FEE_REMINDER_TEMPLATE,
+            "payment_received_template": DEFAULT_FEE_RECEIPT_TEMPLATE,
+        },
+        defaults={
+            "payment_reminder_template": DEFAULT_FEE_REMINDER_TEMPLATE,
+            "payment_received_template": DEFAULT_FEE_RECEIPT_TEMPLATE,
+        },
+        is_customized=True,
         version=2,
         updated_at=datetime(2026, 7, 15, tzinfo=timezone.utc),
     )
@@ -128,7 +181,7 @@ async def test_fee_message_template_update_commits_incremented_version() -> None
     result = Mock()
     result.scalar_one_or_none.return_value = updated
     db = SimpleNamespace(
-        get=AsyncMock(return_value=updated),
+        scalar=AsyncMock(return_value=updated),
         execute=AsyncMock(return_value=result),
         commit=AsyncMock(),
         rollback=AsyncMock(),
@@ -146,11 +199,51 @@ async def test_fee_message_template_update_commits_incremented_version() -> None
         response = await update_fee_message_templates(db, payload, actor_id=actor_id)
 
     assert response.version == 4
-    assert response.payment_reminder_template == reminder_template
-    assert response.payment_received_template == receipt_template
+    assert response.active.payment_reminder_template == reminder_template
+    assert response.active.payment_received_template == receipt_template
     db.execute.assert_awaited_once()
     db.commit.assert_awaited_once()
     db.rollback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_fee_message_template_update_response_preserves_line_structure() -> None:
+    actor_id = str(uuid4())
+    reminder_template = DEFAULT_FEE_REMINDER_TEMPLATE.replace(
+        "Tổng học phí cần thanh toán: {{tong_tien}}.\n",
+        "Tổng học phí cần thanh toán: {{tong_tien}}.\n\n",
+    )
+    receipt_template = f"{DEFAULT_FEE_RECEIPT_TEMPLATE}\n"
+    updated = FeeMessageTemplate(
+        id=1,
+        payment_reminder_template=reminder_template,
+        payment_received_template=receipt_template,
+        version=4,
+        updated_by=actor_id,
+        updated_at=datetime(2026, 7, 15, tzinfo=timezone.utc),
+    )
+    result = Mock()
+    result.scalar_one_or_none.return_value = updated
+    db = SimpleNamespace(
+        scalar=AsyncMock(return_value=updated),
+        execute=AsyncMock(return_value=result),
+        commit=AsyncMock(),
+        rollback=AsyncMock(),
+    )
+    payload = FeeMessageTemplatesUpdate(
+        payment_reminder_template=reminder_template,
+        payment_received_template=receipt_template,
+        version=3,
+    )
+
+    with patch(
+        "app.services.fee_template_service.append_fee_operation",
+        new=AsyncMock(),
+    ):
+        response = await update_fee_message_templates(db, payload, actor_id=actor_id)
+
+    assert response.active.payment_reminder_template == reminder_template
+    assert response.active.payment_received_template == receipt_template
 
 
 @pytest.mark.asyncio
@@ -170,14 +263,14 @@ async def test_fee_message_template_read_upgrades_legacy_row_without_changing_ve
         updated_by=None,
         updated_at=datetime(2026, 7, 15, tzinfo=timezone.utc),
     )
-    db = SimpleNamespace(get=AsyncMock(return_value=legacy))
+    db = SimpleNamespace(scalar=AsyncMock(return_value=legacy))
 
     response = await get_fee_message_templates(db)
 
     assert response.version == 7
-    assert "{{nhac_qua_han}}" not in response.payment_reminder_template
-    assert "{{ngay_den_han}}" in response.payment_reminder_template
-    assert "{{ngay_den_han}}" in response.payment_received_template
+    assert "{{nhac_qua_han}}" not in response.active.payment_reminder_template
+    assert "{{ngay_den_han}}" in response.active.payment_reminder_template
+    assert "{{ngay_den_han}}" in response.active.payment_received_template
 
 
 @pytest.mark.asyncio
@@ -193,7 +286,7 @@ async def test_fee_message_template_initial_insert_commits_version_one() -> None
     result = Mock()
     result.scalar_one_or_none.return_value = created
     db = SimpleNamespace(
-        get=AsyncMock(return_value=None),
+        scalar=AsyncMock(return_value=None),
         execute=AsyncMock(return_value=result),
         commit=AsyncMock(),
         rollback=AsyncMock(),
@@ -220,7 +313,7 @@ async def test_fee_message_template_stale_update_rolls_back_with_conflict() -> N
     result = Mock()
     result.scalar_one_or_none.return_value = None
     db = SimpleNamespace(
-        get=AsyncMock(return_value=None),
+        scalar=AsyncMock(return_value=None),
         execute=AsyncMock(return_value=result),
         commit=AsyncMock(),
         rollback=AsyncMock(),

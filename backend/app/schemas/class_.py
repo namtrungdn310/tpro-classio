@@ -15,6 +15,7 @@ ClassEffectiveStatus = Literal[
     "LEGACY", "SCHEDULED", "ACTIVE", "COMPLETED", "CANCELLED"
 ]
 ClassNextFeeDueState = Literal["OVERDUE", "UPCOMING", "NONE"]
+ScheduleAvailabilityScope = Literal["selected_staff", "all_classes"]
 ClassScope = Literal[
     "operational",
     "active",
@@ -301,6 +302,7 @@ class ScheduleAvailabilityRequest(BaseModel):
     class_id: UUID | None = None
     start_date: date
     end_date: date
+    scope: ScheduleAvailabilityScope = "selected_staff"
     teacher_ids: list[UUID] = Field(default_factory=list, max_length=10)
     assistant_ids: list[UUID] = Field(default_factory=list, max_length=10)
 
@@ -308,7 +310,11 @@ class ScheduleAvailabilityRequest(BaseModel):
     def validate_availability_request(self) -> "ScheduleAvailabilityRequest":
         if self.end_date <= self.start_date:
             raise ValueError("Ngày kết thúc phải sau ngày bắt đầu")
-        if not self.teacher_ids and not self.assistant_ids:
+        if (
+            self.scope == "selected_staff"
+            and not self.teacher_ids
+            and not self.assistant_ids
+        ):
             raise ValueError("Vui lòng chọn ít nhất một giáo viên hoặc trợ giảng")
         overlap = set(self.teacher_ids) & set(self.assistant_ids)
         if overlap:
@@ -378,6 +384,21 @@ class ClassHistoryAdjustment(BaseModel):
     version: int
 
 
+class ClassHistorySlotTeacher(BaseModel):
+    staff_id: UUID
+    staff_name: str
+
+
+class ClassHistoryScheduleSlot(BaseModel):
+    slot_id: UUID
+    day: ClassDay
+    start: str
+    end: str
+    effective_from: date
+    effective_until: date | None = None
+    teachers: list[ClassHistorySlotTeacher] = Field(default_factory=list)
+
+
 class ClassHistoryResponse(BaseModel):
     id: UUID
     name: str
@@ -388,6 +409,7 @@ class ClassHistoryResponse(BaseModel):
     start_date: date | None
     end_date: date | None
     schedule: ClassSchedule | None
+    schedule_slots: list[ClassHistoryScheduleSlot] = Field(default_factory=list)
     teachers: list[ClassHistoryTeacherEvent]
     enrollments: list[ClassHistoryEnrollment]
     lifecycle_events: list[ClassHistoryEvent]
@@ -469,6 +491,15 @@ def education_level_for_grade(grade_level: int) -> ClassEducationLevel:
     raise ValueError("Khối lớp không hợp lệ")
 
 
+class ClassActiveSuspension(BaseModel):
+    """Compact read-only status for an open suspension active today."""
+
+    id: UUID
+    suspended_from: date
+    resume_on: date
+    reason_code: str
+
+
 class ClassResponse(ClassBase):
     id: UUID
     is_active: bool
@@ -493,6 +524,8 @@ class ClassResponse(ClassBase):
     next_fee_due_state: ClassNextFeeDueState = "NONE"
     cancelled_at: datetime | None = None
     unresolved_makeup_count: int = 0
+    active_suspension: ClassActiveSuspension | None = None
+    previous_class_id: UUID | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -513,3 +546,106 @@ class ClassCopyTemplateResponse(BaseModel):
     teacher_ids: list[UUID] = Field(default_factory=list)
     assistant_ids: list[UUID] = Field(default_factory=list)
     source_class_id: UUID
+
+
+class ClassContinuationSlotReference(BaseModel):
+    """Stable client/server reference for a not-yet-created target slot."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    day: ClassDay
+    start: str = Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    end: str = Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+
+    @model_validator(mode="after")
+    def validate_time_range(self) -> "ClassContinuationSlotReference":
+        # Reuse the canonical class-slot rules (30-minute boundaries, centre
+        # hours and minimum duration) without accepting staff/id fields here.
+        ClassScheduleSlot(day=self.day, start=self.start, end=self.end)
+        return self
+
+
+class ClassContinuationStudentCandidate(BaseModel):
+    student_id: UUID
+    student_code: str | None = None
+    full_name: str
+    source_enrollment_id: UUID
+    custom_fee: int | None = None
+    selected_slot_count: int = Field(ge=0)
+    selected_slots: list[ClassContinuationSlotReference] = Field(
+        default_factory=list,
+        max_length=4,
+    )
+
+
+class ClassContinuationPreviewResponse(BaseModel):
+    source_class_id: UUID
+    source_version: int = Field(ge=1)
+    suggested_start_date: date
+    suggested_end_date: date
+    template: ClassCopyTemplateResponse
+    students: list[ClassContinuationStudentCandidate]
+
+
+class ClassContinuationStudentSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    student_id: UUID
+    source_enrollment_id: UUID | None = None
+    selected_slots: list[ClassContinuationSlotReference] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=4,
+    )
+    custom_fee: int | None = Field(default=None, ge=0, le=999_999_999_999)
+    partial_fee_reviewed: bool = False
+
+    @field_validator("selected_slots")
+    @classmethod
+    def reject_duplicate_slots(
+        cls,
+        value: list[ClassContinuationSlotReference] | None,
+    ) -> list[ClassContinuationSlotReference] | None:
+        if value is None:
+            return None
+        keys = [(item.day, item.start, item.end) for item in value]
+        if len(keys) != len(set(keys)):
+            raise ValueError("Danh sách buổi học không được trùng lặp")
+        return value
+
+
+class ClassContinuationCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: UUID
+    expected_source_version: int = Field(ge=1)
+    class_data: ClassCreate
+    students: list[ClassContinuationStudentSelection] = Field(
+        default_factory=list,
+        max_length=500,
+    )
+    preserve_custom_fees: bool = True
+    preserve_slot_selections: bool = True
+
+    @field_validator("students")
+    @classmethod
+    def reject_duplicate_students(
+        cls,
+        value: list[ClassContinuationStudentSelection],
+    ) -> list[ClassContinuationStudentSelection]:
+        student_ids = [item.student_id for item in value]
+        if len(student_ids) != len(set(student_ids)):
+            raise ValueError("Danh sách lớp kế tiếp không được trùng học viên")
+        source_ids = [
+            item.source_enrollment_id
+            for item in value
+            if item.source_enrollment_id is not None
+        ]
+        if len(source_ids) != len(set(source_ids)):
+            raise ValueError("Một ghi danh cũ không thể được sử dụng nhiều lần")
+        return value
+
+
+class ClassContinuationCreateResponse(BaseModel):
+    created_class: ClassResponse
+    enrolled_student_count: int = Field(ge=0)

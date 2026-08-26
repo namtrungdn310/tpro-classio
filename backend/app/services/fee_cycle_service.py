@@ -46,6 +46,8 @@ def _enrollment_cycle_weeks(enrollment: Enrollment) -> int | None:
 async def create_cycle_zero(
     db: AsyncSession,
     enrollment: Enrollment,
+    *,
+    assume_new: bool = False,
 ) -> FeeRecord:
     """Create cycle 0 exactly once inside the enrollment transaction.
 
@@ -53,15 +55,16 @@ async def create_cycle_zero(
     exactly one row even under concurrent retries; the advisory lock keeps
     the read-then-write race closed.
     """
-    await lock_enrollment_cycle_identity(db, enrollment.id)
-    existing = await db.scalar(
-        select(FeeRecord).where(
-            FeeRecord.enrollment_id == enrollment.id,
-            FeeRecord.cycle_no == 0,
+    if not assume_new:
+        await lock_enrollment_cycle_identity(db, enrollment.id)
+        existing = await db.scalar(
+            select(FeeRecord).where(
+                FeeRecord.enrollment_id == enrollment.id,
+                FeeRecord.cycle_no == 0,
+            )
         )
-    )
-    if existing is not None:
-        return existing
+        if existing is not None:
+            return existing
 
     enrollment_date = enrollment.enrollment_date or date.today()
     amount = int(enrollment.custom_fee) if enrollment.custom_fee is not None else 0
@@ -103,6 +106,7 @@ async def ensure_enrollment_cycles(
     enrollment: Enrollment,
     *,
     up_to: date,
+    known_max_cycle: int | None = None,
 ) -> list[FeeRecord]:
     """Materialize missing future cycles whose coverage starts <= `up_to`.
 
@@ -118,14 +122,17 @@ async def ensure_enrollment_cycles(
     if not bool(getattr(class_, "is_active", True)) or class_.cancelled_at is not None:
         return []
 
-    await lock_enrollment_cycle_identity(db, enrollment.id)
-    max_cycle = await db.scalar(
-        select(func.max(FeeRecord.cycle_no)).where(
-            FeeRecord.enrollment_id == enrollment.id,
-            FeeRecord.cycle_no.is_not(None),
+    if known_max_cycle is None:
+        await lock_enrollment_cycle_identity(db, enrollment.id)
+        max_cycle = await db.scalar(
+            select(func.max(FeeRecord.cycle_no)).where(
+                FeeRecord.enrollment_id == enrollment.id,
+                FeeRecord.cycle_no.is_not(None),
+            )
         )
-    )
-    next_cycle = (max_cycle if max_cycle is not None else 0) + 1
+        next_cycle = (max_cycle if max_cycle is not None else 0) + 1
+    else:
+        next_cycle = known_max_cycle + 1
 
     billing_type = class_.type
     cycle_weeks = _enrollment_cycle_weeks(enrollment)

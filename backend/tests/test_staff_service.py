@@ -4,7 +4,9 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy.exc import DBAPIError, IntegrityError
+from sqlalchemy.dialects.postgresql import ENUM
 
+from app.models.invitation import AccountInvitation
 from app.models.staff import StaffMember
 from app.schemas.staff import StaffClassResponse, StaffUpdate
 from app.services.staff_service import (
@@ -37,6 +39,13 @@ def test_staff_relationships_never_implicitly_load_business_graph() -> None:
     assert StaffMember.teaching_classes.property.lazy == "raise"
 
 
+def test_invitation_role_uses_the_database_user_role_enum() -> None:
+    role_type = AccountInvitation.__table__.c.role.type
+
+    assert isinstance(role_type, ENUM)
+    assert role_type.name == "user_role"
+
+
 def test_staff_projection_redacts_viewer_contact_details() -> None:
     staff_id = uuid4()
     rows = [
@@ -46,6 +55,10 @@ def test_staff_projection_redacts_viewer_contact_details() -> None:
             "staff_type": "TEACHER",
             "zalo_name": "Cô Hạnh",
             "phone": "0912345678",
+            "email": "cohanh@tpro.test",
+            "checkin_window_after_hours": 24,
+            "current_rate": 100000,
+            "attendance_account_status": "connected",
             "is_active": True,
             "created_at": datetime.now(timezone.utc),
             "updated_at": datetime.now(timezone.utc),
@@ -70,6 +83,10 @@ def test_staff_projection_includes_owner_contact_details() -> None:
             "staff_type": "TEACHER",
             "zalo_name": "Cô Hạnh",
             "phone": "0912345678",
+            "email": "cohanh@tpro.test",
+            "checkin_window_after_hours": 24,
+            "current_rate": 100000,
+            "attendance_account_status": "invited",
             "is_active": True,
             "created_at": datetime.now(timezone.utc),
             "updated_at": datetime.now(timezone.utc),
@@ -83,6 +100,9 @@ def test_staff_projection_includes_owner_contact_details() -> None:
 
     assert response.zalo_name == "Cô Hạnh"
     assert response.phone == "0912345678"
+    assert response.email == "cohanh@tpro.test"
+    assert response.current_rate == 100000
+    assert response.attendance_account_status == "invited"
 
 
 @pytest.mark.asyncio

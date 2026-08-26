@@ -30,6 +30,7 @@ _DASHBOARD_METRICS_SQL = text(
       left join public.payments payment
         on payment.payment_date >= month.month_start
        and payment.payment_date < month.month_start + interval '1 month'
+       and payment.workspace_id = public.current_workspace_id()
       group by month.month_start
     ),
     revenue_trend as (
@@ -89,6 +90,7 @@ _DASHBOARD_METRICS_SQL = text(
         count(*) as record_count
       from public.fee_records fee
       where fee.period = :period
+        and fee.workspace_id = public.current_workspace_id()
     )
     select
       (
@@ -97,6 +99,9 @@ _DASHBOARD_METRICS_SQL = text(
         join public.students student on student.id = enrollment.student_id
         join public.classes class_ on class_.id = enrollment.class_id
         where enrollment.status = 'active'
+          and enrollment.workspace_id = public.current_workspace_id()
+          and student.workspace_id = public.current_workspace_id()
+          and class_.workspace_id = public.current_workspace_id()
           and enrollment.enrollment_date <= :today
           and student.status = 'active'
           and class_.is_active = true
@@ -110,6 +115,7 @@ _DASHBOARD_METRICS_SQL = text(
         select count(*)
         from public.classes class_
         where class_.is_active = true
+          and class_.workspace_id = public.current_workspace_id()
           and class_.cancelled_at is null
           and (
             class_.identity_scheme = 'LEGACY'
@@ -128,6 +134,7 @@ _DASHBOARD_METRICS_SQL = text(
           end
         ) as schedule_slot(value)
         where class_.is_active = true
+          and class_.workspace_id = public.current_workspace_id()
           and class_.cancelled_at is null
           and (
             class_.identity_scheme = 'LEGACY'
@@ -142,12 +149,14 @@ _DASHBOARD_METRICS_SQL = text(
         select count(*)
         from public.staff_members staff
         where staff.is_active = true
+          and staff.workspace_id = public.current_workspace_id()
           and staff.staff_type = 'TEACHER'
       ) as active_teacher_count,
       (
         select count(*)
         from public.staff_members staff
         where staff.is_active = true
+          and staff.workspace_id = public.current_workspace_id()
           and staff.staff_type = 'ASSISTANT'
       ) as active_assistant_count,
       fee_summary.total_amount,

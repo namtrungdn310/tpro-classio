@@ -5,9 +5,10 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
+from app.core.workspace import WorkspaceScoped
 
 
-class StudentLifecycleEvent(Base):
+class StudentLifecycleEvent(WorkspaceScoped, Base):
     __tablename__ = "student_lifecycle_events"
 
     id: Mapped[str] = mapped_column(

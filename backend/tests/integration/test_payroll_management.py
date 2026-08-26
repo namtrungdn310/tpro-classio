@@ -126,10 +126,31 @@ async def test_rate_overlap_balance_and_settlement_replay() -> None:
         summary = await get_staff_payroll_summary(db, staff_id)
         assert summary.balance == 250_000
 
+        settlement_account_id = (
+            await db.execute(
+                text(
+                    """
+                    insert into public.workspace_payment_accounts (
+                      workspace_id, label, bank_code, bank_name,
+                      account_number, account_name, is_default
+                    )
+                    select workspace_id, 'Tài khoản tất toán', 'VCB',
+                           'Vietcombank', '0123456789', 'TPRO TEST', false
+                      from public.staff_members
+                     where id = cast(:staff_id as uuid)
+                    returning id
+                    """
+                ),
+                {"staff_id": str(staff_id)},
+            )
+        ).scalar_one()
+        await db.commit()
+
         request_id = uuid4()
         payload = StaffPayrollSettlementCreate(
             request_id=request_id,
             method="bank_transfer",
+            settlement_account_id=settlement_account_id,
             reference="TEST-R7",
         )
         settlement = await settle_staff_payroll(

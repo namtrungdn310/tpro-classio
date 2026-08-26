@@ -156,10 +156,11 @@ def migrate_range(db, lower, upper):
 
 
 def migrate_round7_after_053(db, user="postgres"):
-    """Apply the fixture-sensitive 054..073 chain in canonical order.
+    """Apply the fixture-sensitive 054..078 chain in canonical order.
 
     055/056 intentionally require evidence fixtures before the migration, so a
-    plain numeric glob is not an equivalent production-path test.
+    plain numeric glob is not an equivalent production-path test.  078 is
+    plain-index and auto-included in the numeric range 57..78.
     """
     steps = [
         (SQL / "migration_054_fixture.sql", "054 fixture"),
@@ -174,7 +175,7 @@ def migrate_round7_after_053(db, user="postgres"):
     steps.extend(
         (migration, migration.stem)
         for migration in sorted(MIGRATIONS.glob("*.sql"))
-        if 57 <= int(migration.name.split("_")[0]) <= 73
+        if 57 <= int(migration.name.split("_")[0]) <= 81
     )
     for path, label in steps:
         code, _ = psql_file(db, path, user=user)
@@ -226,12 +227,106 @@ def scenario_clean_chain():
     code, _ = psql_file(DB, SQL / "migration_053_assert.sql")
     check_ok(code, "053 assert failed")
     migrate_round7_after_053(DB)
+    # M082/M083 require an explicit disposable owner fixture.  The production
+    # migration intentionally aborts when it cannot prove legacy ownership.
+    code, _ = psql_file(DB, SQL / "migration_082_fixture.sql")
+    check_ok(code, "082 owner fixture failed")
+    code, _ = psql_file(DB, MIGRATIONS / "082_admin_workspace_isolation.sql")
+    check_ok(code, "082 failed")
+    code, _ = psql_file(DB, MIGRATIONS / "083_workspace_audit_and_student_code.sql")
+    check_ok(code, "083 failed")
+    code, _ = psql_file(DB, MIGRATIONS / "083_workspace_audit_and_student_code.sql")
+    check_ok(code, "083 idempotency re-run failed")
+    code, _ = psql_file(DB, MIGRATIONS / "084_admin_invitation_workspace_handoff.sql")
+    check_ok(code, "084 failed")
+    code, _ = psql_file(DB, MIGRATIONS / "084_admin_invitation_workspace_handoff.sql")
+    check_ok(code, "084 idempotency re-run failed")
+    code, _ = psql_file(
+        DB, MIGRATIONS / "085_runtime_role_and_staff_schema_reconciliation.sql"
+    )
+    check_ok(code, "085 failed")
+    code, _ = psql_file(
+        DB, MIGRATIONS / "085_runtime_role_and_staff_schema_reconciliation.sql"
+    )
+    check_ok(code, "085 idempotency re-run failed")
+    code, _ = psql_file(DB, MIGRATIONS / "086_workspace_banking_and_pay2s.sql")
+    check_ok(code, "086 banking schema failed")
+    code, _ = psql_file(DB, MIGRATIONS / "087_pay2s_partner_integration.sql")
+    check_ok(code, "087 Pay2S Partner schema failed")
+    # The migration owner must be able to replay the forward integration
+    # safely before the security verifier inspects the final schema.
+    code, _ = psql_file(DB, MIGRATIONS / "087_pay2s_partner_integration.sql")
+    check_ok(code, "087 Pay2S idempotency re-run failed")
+    code, _ = psql_file(DB, MIGRATIONS / "088_payment_request_share_audit.sql")
+    check_ok(code, "088 payment-request share audit failed")
+    code, _ = psql_file(DB, MIGRATIONS / "089_dev_operations_control_plane.sql")
+    check_ok(code, "089 Dev operations control plane failed")
+    code, _ = psql_file(DB, MIGRATIONS / "090_pay2s_plan_label.sql")
+    check_ok(code, "090 Pay2S plan label failed")
+    code, _ = psql_file(DB, MIGRATIONS / "091_grant_ops_runtime_roles.sql")
+    check_ok(code, "091 ops runtime grants failed")
+    code, _ = psql_file(DB, MIGRATIONS / "092_pay2s_collection_ipn.sql")
+    check_ok(code, "092 Pay2S collection IPN failed")
+    code, _ = psql_file(DB, MIGRATIONS / "093_payment_settlement_account_provenance.sql")
+    check_ok(code, "093 payment settlement provenance failed")
+    code, _ = psql_file(DB, MIGRATIONS / "093_payment_settlement_account_provenance.sql")
+    check_ok(code, "093 payment settlement provenance idempotency re-run failed")
+    for number, filename in (
+        (94, "094_private_banking_qr_storage.sql"),
+        (95, "095_pay2s_platform_operating_mode.sql"),
+        (96, "096_grant_pay2s_operating_mode_runtime_roles.sql"),
+        (97, "097_pay2s_central_credentials.sql"),
+        (98, "098_pay2s_central_credential_rotation.sql"),
+        (99, "099_workspace_owned_pay2s.sql"),
+        (100, "100_dev_workspace_ownership.sql"),
+        (101, "101_payment_reconciliation_workspace.sql"),
+        (102, "102_fee_outstanding_queue_index.sql"),
+        (103, "103_fee_message_drafts_and_payroll_account.sql"),
+        (104, "104_staff_attendance_lookup_indexes.sql"),
+        (105, "105_fee_message_default_line_layout.sql"),
+        (106, "106_fee_message_receipt_closing.sql"),
+        (107, "107_fee_message_workspace_default_layout.sql"),
+        (108, "108_fee_message_group_drafts.sql"),
+        (109, "109_remove_legacy_fee_message_drafts.sql"),
+        (110, "110_grant_fee_message_draft_runtime_roles.sql"),
+        (111, "111_fee_operation_student_code_snapshot.sql"),
+        (112, "112_class_continuation_lineage.sql"),
+    ):
+        code, _ = psql_file(DB, MIGRATIONS / filename)
+        check_ok(code, f"{number:03d} migration failed")
     code, _ = psql_file(DB, SQL / "migration_051_assert.sql")
     check_ok(code, "assert failed")
     code, _ = psql_file(DB, SQL / "verify_security.sql")
     check_ok(code, "verify 1 failed")
     code, _ = psql_file(DB, SQL / "verify_security.sql")
     check_ok(code, "verify 2 failed")
+
+    # ---- Round 8: scale dataset + 078 projection-index evidence ----
+    # Order: schema 001..077 -> scale seed -> analyze -> EXPLAIN before -> 078
+    # -> EXPLAIN after -> verify 078 -> idempotency re-run -> verify_security.
+    code, _ = psql_file(DB, SQL / "perf_scale_dataset.sql")
+    check_ok(code, "perf scale dataset failed")
+    code, _ = psql_file(DB, SQL / "perf_scale_assert.sql")
+    check_ok(code, "perf scale assert failed")
+    code, _ = psql_file(DB, SQL / "perf_scale_analyze.sql")
+    check_ok(code, "perf scale analyze failed")
+    # EXPLAIN before 078: the scope/UNPAID queries currently rely on older
+    # indexes or seq scans — captured as the baseline.
+    code, _ = psql_file(DB, SQL / "perf_explain_078.sql")
+    check_ok(code, "perf explain before 078 failed")
+    code, _ = psql_file(DB, MIGRATIONS / "078_class_and_fee_projection_indexes.sql")
+    check_ok(code, "078 failed")
+    code, _ = psql_file(DB, SQL / "perf_explain_078.sql")
+    check_ok(code, "perf explain after 078 failed")
+    code, _ = psql_file(DB, SQL / "verify_migration_078.sql")
+    check_ok(code, "verify 078 failed")
+    # Idempotency: re-running 078 must be a safe no-op.
+    code, _ = psql_file(DB, MIGRATIONS / "078_class_and_fee_projection_indexes.sql")
+    check_ok(code, "078 idempotency re-run failed")
+    code, _ = psql_file(DB, SQL / "verify_migration_078.sql")
+    check_ok(code, "verify 078 after idempotency failed")
+    code, _ = psql_file(DB, SQL / "verify_security.sql")
+    check_ok(code, "verify security after 078 failed")
 
 
 def scenario_rollback_reapply():
@@ -265,6 +360,10 @@ def scenario_rollback_reapply():
     check_ok(code, "053 reapply failed")
     code, _ = psql_file(DB, SQL / "migration_053_assert.sql")
     check_ok(code, "053 assert-reapply failed")
+    # 074 hardens the tables recreated by the 053 rollback/reapply. Reapply
+    # it before verify so this scenario validates the complete current schema.
+    code, _ = psql_file(DB, MIGRATIONS / "074_suspension_window_invariants.sql")
+    check_ok(code, "074 reapply failed")
     # Keep rollback/reapply verification on the latest forward fee-operation
     # actor-anonymization guard, matching the production schema contract.
     code, _ = psql_file(DB, MIGRATIONS / "072_fee_operation_actor_anonymization.sql")
@@ -493,6 +592,12 @@ grant all on all sequences in schema public to m051_owner;
         "alter table public.class_teachers owner to m051_owner; "
         "alter table public.class_teacher_events owner to m051_owner; "
         "alter table public.staff_members owner to m051_owner; "
+        "alter table public.payments owner to m051_owner; "
+        "alter table public.payment_requests owner to m051_owner; "
+        "alter table public.workspace_payment_accounts owner to m051_owner; "
+        "alter table public.workspace_payment_providers owner to m051_owner; "
+        "alter table public.workspace_payment_webhooks owner to m051_owner; "
+        "alter function public.protect_payment_ledger_entry() owner to m051_owner; "
         "alter function public.block_class_teacher_event_mutation() owner to m051_owner; "
         "alter function public.enforce_staff_assignment_lifecycle() owner to m051_owner;",
     )
@@ -591,6 +696,59 @@ grant all on all sequences in schema public to m051_owner;
     # the remaining forward chain as the disposable DB owner before running the
     # latest security contract; otherwise CI was verifying an obsolete schema.
     migrate_round7_after_053(owner_db)
+    code, _ = psql_file(owner_db, SQL / "migration_082_fixture.sql")
+    check_ok(code, "owner 082 fixture failed")
+    code, _ = psql_file(owner_db, MIGRATIONS / "082_admin_workspace_isolation.sql")
+    check_ok(code, "owner 082 failed")
+    code, _ = psql_file(
+        owner_db, MIGRATIONS / "083_workspace_audit_and_student_code.sql"
+    )
+    check_ok(code, "owner 083 failed")
+    code, _ = psql_file(
+        owner_db, MIGRATIONS / "084_admin_invitation_workspace_handoff.sql"
+    )
+    check_ok(code, "owner 084 failed")
+    code, _ = psql_file(
+        owner_db, MIGRATIONS / "085_runtime_role_and_staff_schema_reconciliation.sql"
+    )
+    check_ok(code, "owner 085 failed")
+    code, _ = psql_file(owner_db, MIGRATIONS / "086_workspace_banking_and_pay2s.sql")
+    check_ok(code, "owner 086 banking schema failed")
+    code, _ = psql_file(owner_db, MIGRATIONS / "087_pay2s_partner_integration.sql")
+    check_ok(code, "owner 087 Pay2S Partner schema failed")
+    code, _ = psql_file(owner_db, MIGRATIONS / "088_payment_request_share_audit.sql")
+    check_ok(code, "owner 088 payment-request share audit failed")
+    code, _ = psql_file(owner_db, MIGRATIONS / "089_dev_operations_control_plane.sql")
+    check_ok(code, "owner 089 Dev operations control plane failed")
+    code, _ = psql_file(owner_db, MIGRATIONS / "090_pay2s_plan_label.sql")
+    check_ok(code, "owner 090 Pay2S plan label failed")
+    code, _ = psql_file(owner_db, MIGRATIONS / "091_grant_ops_runtime_roles.sql")
+    check_ok(code, "owner 091 ops runtime grants failed")
+    code, _ = psql_file(owner_db, MIGRATIONS / "092_pay2s_collection_ipn.sql")
+    check_ok(code, "owner 092 Pay2S collection IPN failed")
+    code, _ = psql_file(owner_db, MIGRATIONS / "093_payment_settlement_account_provenance.sql")
+    check_ok(code, "owner 093 payment settlement provenance failed")
+    for number, filename in (
+        (94, "094_private_banking_qr_storage.sql"),
+        (95, "095_pay2s_platform_operating_mode.sql"),
+        (96, "096_grant_pay2s_operating_mode_runtime_roles.sql"),
+        (97, "097_pay2s_central_credentials.sql"),
+        (98, "098_pay2s_central_credential_rotation.sql"),
+        (99, "099_workspace_owned_pay2s.sql"),
+        (100, "100_dev_workspace_ownership.sql"),
+        (101, "101_payment_reconciliation_workspace.sql"),
+        (102, "102_fee_outstanding_queue_index.sql"),
+        (103, "103_fee_message_drafts_and_payroll_account.sql"),
+        (104, "104_staff_attendance_lookup_indexes.sql"),
+        (105, "105_fee_message_default_line_layout.sql"),
+        (106, "106_fee_message_receipt_closing.sql"),
+        (107, "107_fee_message_workspace_default_layout.sql"),
+        (108, "108_fee_message_group_drafts.sql"),
+        (109, "109_remove_legacy_fee_message_drafts.sql"),
+        (110, "110_grant_fee_message_draft_runtime_roles.sql"),
+    ):
+        code, _ = psql_file(owner_db, MIGRATIONS / filename)
+        check_ok(code, f"owner {number:03d} migration failed")
     code, _ = run(
         [
             PSQL,
@@ -614,7 +772,10 @@ grant all on all sequences in schema public to m051_owner;
         owner_db,
         "-c",
         "grant all on storage.buckets, storage.objects to m051_owner; "
-        "grant all on all tables in schema auth to m051_owner;",
+        "grant all on all tables in schema auth to m051_owner; "
+        "grant all on public.workspace_payment_accounts, "
+        "public.workspace_payment_providers, "
+        "public.workspace_payment_webhooks to m051_owner;",
     )
     check_ok(code, "storage grants failed")
     code, _ = run(
@@ -653,13 +814,41 @@ def scenario_runtime():
         "public.auth_totp_factors, public.password_reset_sessions, public.user_device_sessions, "
         "public.class_schedule_adjustments, public.class_session_exceptions, "
         "public.class_session_staff_snapshots, public.class_session_student_snapshots, "
-        "public.class_schedule_adjustment_events "
+        "public.class_schedule_adjustment_events, public.payment_request_events, "
+        "public.payment_provider_deliveries, public.payment_provider_attempts, "
+        "public.payment_posting_queue "
         "to tpro_runtime; grant all on all tables in schema public to tpro_runtime; "
         "grant all on all sequences in schema public to tpro_runtime; "
-        "grant execute on all functions in schema public to tpro_runtime;"
+        "grant execute on all functions in schema public to tpro_runtime; "
+        "grant usage on schema ops to tpro_runtime; "
+        "grant execute on function ops.platform_overview() to tpro_runtime; "
+        "grant execute on function ops.disable_workspace_pay2s(uuid, uuid, text) to tpro_runtime;"
     )
     code, _ = psql(DB, "-c", runtime_sql)
     check_ok(code, "runtime role failed")
+
+    # Direct integration tests open AsyncSessionLocal without an HTTP
+    # principal.  Keep the database guard fail-closed in production, but give
+    # this disposable owner fixture an explicit role-local workspace context so
+    # every test connection exercises the same tenant boundary instead of
+    # failing with "workspace context is required".  This setting exists only
+    # inside the throw-away container and is never copied to Supabase.
+    code, workspace_out = psql(
+        DB,
+        "-Atc",
+        "select id::text from public.workspaces "
+        "where owner_user_id = '00000000-0000-0000-0000-000000000082'::uuid",
+    )
+    check_ok(code, "workspace owner fixture lookup failed")
+    workspace_id = workspace_out.strip().splitlines()[-1].strip()
+    if not workspace_id:
+        raise SystemExit("workspace owner fixture did not create a workspace")
+    code, _ = psql(
+        DB,
+        "-c",
+        f"alter role tpro_runtime set app.workspace_id = '{workspace_id}'",
+    )
+    check_ok(code, "runtime workspace context failed")
 
     for role in ("anon", "authenticated"):
         code, out = psql(
@@ -679,6 +868,13 @@ def scenario_runtime():
             "DATABASE_URL": f"postgresql+asyncpg://tpro_runtime:disposable@127.0.0.1:{PORT}/{DB}",
             "DATABASE_SSL_MODE": "disable",
             "DB_TEST_ADMIN_DSN": f"postgresql://postgres:disposable@127.0.0.1:{PORT}/{DB}",
+            # The integration suite intentionally opens 100 independent
+            # sessions to prove DB-authoritative student-code idempotency.
+            # Keep this stress-test capacity local to the disposable runner;
+            # deployed defaults remain bounded in Settings.
+            "DB_POOL_SIZE": "20",
+            "DB_MAX_OVERFLOW": "50",
+            "DB_POOL_TIMEOUT": "30",
         }
     )
     code, out = run([str(VENV_PY), "-m", "pytest", str(ROOT / "tests"), "-q"], env=env)
@@ -689,20 +885,32 @@ def scenario_runtime():
 def scenario_verify_after_and_perf():
     code, _ = psql_file(DB, SQL / "verify_security.sql")
     check_ok(code, "verify after integration failed")
-    code, _ = psql_file(DB, SQL / "perf_dataset.sql")
-    check_ok(code, "perf dataset failed")
-    code, _ = psql_file(DB, SQL / "perf_explain.sql")
-    check_ok(code, "perf explain failed")
     env = dict(os.environ)
     env["PYTHONPATH"] = str(ROOT)
     env["DATABASE_URL"] = (
         f"postgresql+asyncpg://tpro_runtime:disposable@127.0.0.1:{PORT}/{DB}"
     )
     env["DATABASE_SSL_MODE"] = "disable"
+    env["RUN_DB_INTEGRATION"] = "1"
     code, out = run([str(VENV_PY), str(SQL / "perf_measure.py")], env=env)
     check_ok(code, "p95 measurement failed")
     if "p95" not in out:
         raise SystemExit("p95 output missing")
+    # Phase 9: endpoint query-count + bounded-concurrency gate on the scale DB.
+    code, out = run(
+        [
+            str(VENV_PY),
+            "-m",
+            "pytest",
+            str(ROOT / "tests" / "integration"),
+            "-q",
+            "-m",
+            "performance",
+        ],
+        env=env,
+    )
+    if code != 0:
+        raise SystemExit("Phase 9 performance gate failed")
 
 
 def scenario_acceptance():
@@ -825,7 +1033,7 @@ def main():
     }
     try:
         wait_ready()
-        phase("Scenario 1: clean chain 001..073", scenario_clean_chain)
+        phase("Scenario 1: clean chain 001..087 + scale + EXPLAIN before/after", scenario_clean_chain)
         # Legacy 051/053 rollback/drift probes cannot run against the latest
         # schema: later forward migrations intentionally own objects that those
         # historical rollback scripts remove. Acceptance below exercises them

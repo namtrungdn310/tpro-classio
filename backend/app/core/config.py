@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Literal, Self
 from urllib.parse import parse_qsl, unquote, urlparse
 
-from pydantic import EmailStr, Field, SecretStr
+from pydantic import AliasChoices, EmailStr, Field, SecretStr
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -17,6 +17,28 @@ class Settings(BaseSettings):
     database_url: str
     database_ssl_mode: Literal["disable", "require", "verify-full"] = "require"
     database_ssl_root_cert: str = ""
+    # Keep the runtime pool below the small shared Supavisor session-mode
+    # allowance. Disposable integration runs may opt into a larger pool
+    # through DB_POOL_SIZE and DB_MAX_OVERFLOW; those overrides are explicit so
+    # a local stress test cannot accidentally change deployment defaults.
+    database_pool_size: int = Field(
+        default=5,
+        ge=1,
+        le=100,
+        validation_alias=AliasChoices("DB_POOL_SIZE", "DATABASE_POOL_SIZE"),
+    )
+    database_max_overflow: int = Field(
+        default=2,
+        ge=0,
+        le=200,
+        validation_alias=AliasChoices("DB_MAX_OVERFLOW", "DATABASE_MAX_OVERFLOW"),
+    )
+    database_pool_timeout: int = Field(
+        default=10,
+        ge=1,
+        le=120,
+        validation_alias=AliasChoices("DB_POOL_TIMEOUT", "DATABASE_POOL_TIMEOUT"),
+    )
     # Operator-only credential used by local backup/migration tooling. Runtime
     # business code must never consume or serialize it.
     supabase_db_owner_password: SecretStr | None = Field(
@@ -44,8 +66,23 @@ class Settings(BaseSettings):
     staff_payroll_enabled: bool = False
     # R6-D17: payment automation — provider-neutral, mặc định OFF.
     payment_provider: str = "disabled"
+    # QR creation is deliberately independent from webhook ingestion.  A
+    # manager may prepare a request early, while the Pay2S adapter remains
+    # disabled until its credentials and matching rules are verified.
+    payment_qr_enabled: bool = False
+    payment_qr_expire_hours: int = Field(default=72, ge=1, le=168)
+    payment_early_window_days: int = Field(default=62, ge=1, le=180)
     payment_webhook_ingress_enabled: bool = False
     payment_auto_post_enabled: bool = False
+    # Pay2S Partner API. Each workspace stores its own encrypted credentials in
+    # workspace_payment_providers; server settings only contain shared callback
+    # addresses and provider endpoints.
+    pay2s_api_base_url: str = "https://api-partner.pay2s.vn"
+    pay2s_collection_base_url: str = "https://payment.pay2s.vn"
+    pay2s_webhook_url: str = ""
+    pay2s_redirect_url: str = ""
+    pay2s_ipn_url: str = ""
+    pay2s_http_timeout_seconds: float = Field(default=15.0, ge=3.0, le=60.0)
     # Google OAuth — cần thiết lập trong Google Cloud Console
     google_client_id: str = ""
     google_client_secret: str = ""
@@ -65,6 +102,13 @@ class Settings(BaseSettings):
     )
     avatar_max_dimension: int = Field(default=512, ge=64, le=2048)
     avatar_sync_hours: int = Field(default=12, ge=1, le=168)
+    # Manual receiving-account QR images use their own private bucket. This is
+    # intentionally not operator-configurable, for the same reason as avatars.
+    banking_qr_storage_bucket: Literal["banking-qr"] = "banking-qr"
+    banking_qr_max_bytes: int = Field(
+        default=2 * 1024 * 1024, ge=64 * 1024, le=5 * 1024 * 1024
+    )
+    banking_qr_max_dimension: int = Field(default=2048, ge=256, le=4096)
     # Invitation settings
     invitation_expire_hours: int = Field(default=24, ge=1, le=168)
     onboarding_session_minutes: int = Field(default=15, ge=5, le=30)
@@ -184,6 +228,16 @@ class Settings(BaseSettings):
             raise ValueError(
                 "PAYMENT_AUTO_POST_ENABLED requires ingress enabled and a valid provider"
             )
+        if self.payment_provider == "pay2s" and self.payment_qr_enabled:
+            if not self.pay2s_ipn_url.strip():
+                raise ValueError(
+                    "PAY2S_IPN_URL is required when Pay2S QR creation is enabled"
+                )
+            if self.pay2s_ipn_url.rstrip("/") == self.pay2s_webhook_url.rstrip("/"):
+                raise ValueError(
+                    "PAY2S_IPN_URL must be separate from PAY2S_WEBHOOK_URL; "
+                    "Collection Link IPN and Partner webhooks have different payloads"
+                )
         if not self.auth_cookie_secure:
             raise ValueError("AUTH_COOKIE_SECURE must be true outside local/test")
         if self.database_ssl_mode != "verify-full":

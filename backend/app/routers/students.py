@@ -13,10 +13,13 @@ from app.schemas.enrollment import (
 from app.schemas.student import (
     StudentArchiveRequest,
     StudentCreateCommand,
+    StudentListPageResponse,
     StudentListState,
+    StudentMembershipCommand,
     StudentReactivationRequest,
     StudentResponse,
     StudentRestoreRequest,
+    StudentScopeSummary,
     StudentStatus,
     StudentUpdate,
 )
@@ -28,8 +31,11 @@ from app.services.enrollment_service import (
 )
 from app.services.student_service import (
     archive_student,
+    apply_student_membership_command,
     create_student,
+    get_student,
     get_students,
+    get_student_scope_summary,
     redact_student_hidden_fields,
     restore_student,
     update_student,
@@ -84,6 +90,56 @@ async def create_student_route(
     )
 
 
+@students_router.get("/page", response_model=StudentListPageResponse)
+async def list_students_page(
+    search: str | None = Query(default=None, max_length=120),
+    class_id: UUID | None = Query(default=None),
+    status: StudentStatus | None = Query(default=None),
+    list_state: StudentListState | None = Query(default=None),
+    cursor: UUID | None = Query(default=None),
+    limit: int = Query(default=80, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> StudentListPageResponse:
+    items, has_more = await get_students(
+        db,
+        search=search,
+        class_id=class_id,
+        status=status,
+        list_state=list_state,
+        cursor=cursor,
+        limit=limit,
+    )
+    return StudentListPageResponse(
+        items=items,
+        next_cursor=items[-1].id if has_more and items else None,
+        has_more=has_more,
+    )
+
+
+@students_router.get("/summary", response_model=StudentScopeSummary)
+async def get_students_summary(
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> StudentScopeSummary:
+    return await get_student_scope_summary(db)
+
+
+@students_router.get("/{id}", response_model=StudentResponse)
+async def get_student_route(
+    id: UUID,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> StudentResponse:
+    student = await get_student(db, id)
+    if student is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Không tìm thấy học viên",
+        )
+    return student
+
+
 @students_router.post("/{id}/reactivate", response_model=StudentResponse)
 async def reactivate_student_route(
     id: UUID,
@@ -113,6 +169,24 @@ async def update_student_route(
             detail="Không tìm thấy học viên",
         )
 
+    return student
+
+
+@students_router.post("/{id}/membership-command", response_model=StudentResponse)
+async def student_membership_command_route(
+    id: UUID,
+    payload: StudentMembershipCommand,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> StudentResponse:
+    student = await apply_student_membership_command(
+        db,
+        id,
+        payload,
+        actor_user_id=principal.user_id,
+    )
+    if student is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy học viên")
     return student
 
 

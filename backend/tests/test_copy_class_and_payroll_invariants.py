@@ -102,6 +102,49 @@ async def test_payroll_rate_half_open_interval():
 
 
 @pytest.mark.asyncio
+async def test_shared_session_resolves_each_teachers_personal_rate():
+    """A shared slot never divides a class amount: each staff rate is independent."""
+    rates = {
+        "teacher-a": StaffCompensationRate(
+            id=str(uuid4()),
+            staff_id="teacher-a",
+            rate_amount=250_000,
+            effective_from=date(2026, 1, 1),
+            effective_to=None,
+            version=1,
+        ),
+        "teacher-b": StaffCompensationRate(
+            id=str(uuid4()),
+            staff_id="teacher-b",
+            rate_amount=325_000,
+            effective_from=date(2026, 1, 1),
+            effective_to=None,
+            version=2,
+        ),
+    }
+
+    class QueryMock:
+        def __init__(self, item):
+            self.item = item
+
+        def scalar_one_or_none(self):
+            return self.item
+
+    db = AsyncMock()
+    db.execute.side_effect = [
+        QueryMock(rates["teacher-a"]),
+        QueryMock(rates["teacher-b"]),
+    ]
+
+    first = await _resolve_rate(db, "teacher-a", date(2026, 8, 17))
+    second = await _resolve_rate(db, "teacher-b", date(2026, 8, 17))
+
+    assert first is not None and first.rate_amount == 250_000
+    assert second is not None and second.rate_amount == 325_000
+    assert first.rate_amount != second.rate_amount
+
+
+@pytest.mark.asyncio
 async def test_attendance_checkin_requires_linked_staff():
     """Principal without linked staff_id cannot check in."""
     unlinked_principal = Principal(

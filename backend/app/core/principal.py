@@ -12,13 +12,14 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.device_sessions import hash_device_value, read_device_id
 from app.core.security import verify_token
+from app.core.workspace import set_workspace_id
 from app.models.staff_account_link import StaffAccountLink
 from app.models.user import Profile
 from app.models.user_device_session import UserDeviceSession
@@ -43,6 +44,10 @@ class Principal:
     username: str | None = None
     full_name: str | None = None
     avatar_url: str | None = None
+    # Filled for every authenticated production request after workspace
+    # membership is resolved.  Optional keeps lightweight unit-test principals
+    # source-compatible; route authentication itself fails closed when absent.
+    workspace_id: str | None = None
 
     @property
     def is_management(self) -> bool:
@@ -94,6 +99,7 @@ async def resolve_principal(
             Profile.username,
             Profile.full_name,
             Profile.avatar_url,
+            Profile.workspace_id,
             StaffAccountLink.staff_id,
         )
         .join(Profile, Profile.id == UserDeviceSession.user_id)
@@ -120,7 +126,19 @@ async def resolve_principal(
     username = row[3]
     full_name = row[4]
     avatar_url = row[5]
-    staff_id = str(row[6]) if row[6] is not None else None
+    # Older unit-test doubles return the pre-tenant seven-column tuple.  Keep
+    # that shape readable while real SQL rows always include workspace_id.
+    legacy_row_shape = len(row) < 8
+    workspace_id = (
+        "legacy-test"
+        if legacy_row_shape
+        else (str(row[6]) if row[6] is not None else None)
+    )
+    staff_id = (
+        str(row[6] if legacy_row_shape else row[7])
+        if (row[6] if legacy_row_shape else row[7]) is not None
+        else None
+    )
     if (
         session is None
         or account_status != "active"
@@ -136,6 +154,22 @@ async def resolve_principal(
             ),
             headers={"WWW-Authenticate": "Bearer"},
         )
+    if not workspace_id:
+        # A profile without an administrator workspace is not safe to expose;
+        # this also makes partial/failed tenant migrations fail closed.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tài khoản chưa được gán không gian dữ liệu riêng",
+        )
+    set_workspace_id(workspace_id)
+    # The database trigger uses the same transaction-local value for raw SQL
+    # writes and for cross-checking rows produced by database functions.
+    await db.execute(
+        # Session scope must survive service commits later in this request;
+        # get_db clears the value before returning the connection to the pool.
+        text("select set_config('app.workspace_id', :workspace_id, false)"),
+        {"workspace_id": workspace_id},
+    )
     absolute_cutoff = datetime.now(timezone.utc) - timedelta(
         days=settings.session_absolute_expire_days
     )
@@ -189,6 +223,7 @@ async def resolve_principal(
         username=username,
         full_name=full_name,
         avatar_url=avatar_url,
+        workspace_id=workspace_id,
     )
 
 

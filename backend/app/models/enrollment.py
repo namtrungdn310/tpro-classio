@@ -6,9 +6,10 @@ from sqlalchemy.dialects.postgresql import ENUM, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+from app.core.workspace import WorkspaceScoped
 
 
-class Enrollment(Base):
+class Enrollment(WorkspaceScoped, Base):
     __tablename__ = "enrollments"
 
     id: Mapped[str] = mapped_column(

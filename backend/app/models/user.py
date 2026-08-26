@@ -5,9 +5,10 @@ from sqlalchemy.dialects.postgresql import ENUM, UUID  # UUUI: set khoá chính
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
+from app.core.workspace import WorkspaceScoped
 
 
-class Profile(Base):
+class Profile(WorkspaceScoped, Base):
     __tablename__ = "profiles"
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True)

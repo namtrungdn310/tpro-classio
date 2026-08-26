@@ -170,6 +170,7 @@ async def test_archive_student_requires_reason_and_preserves_profile() -> None:
     db = AsyncMock()
     db.add = Mock()
     db.execute.side_effect = [ScalarResult([student]), ScalarResult([enrollment])]
+    db.scalars.return_value = ScalarResult([])
     db.commit = AsyncMock()
 
     with (

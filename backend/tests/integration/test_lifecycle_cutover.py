@@ -258,7 +258,7 @@ async def test_cancel_class_keeps_profile_active() -> None:
                   id, student_id, class_id, enrollment_date, status
                 ) values (
                   cast(:id as uuid), cast(:sid as uuid), cast(:cid as uuid),
-                  date '2026-08-20', 'active'
+                  cast(:enrollment_date as date), 'active'
                 )
                 """
             ),
@@ -266,6 +266,7 @@ async def test_cancel_class_keeps_profile_active() -> None:
                 "id": str(uuid4()),
                 "sid": student_id,
                 "cid": str(created.id),
+                "enrollment_date": created.start_date,
             },
         )
         await db.commit()

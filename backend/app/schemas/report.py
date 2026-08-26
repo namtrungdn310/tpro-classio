@@ -17,6 +17,7 @@ FeeOperationAction = Literal[
 ]
 
 FeePaidPaymentMethod = Literal["bank_transfer", "cash"]
+FeePaidPaymentOrigin = Literal["manual", "manual_early", "pay2s"]
 FeePaidRefundState = Literal["NONE", "PARTIAL", "FULL", "REVERSED"]
 FeePaidTimelineEvent = Literal[
     "payment",
@@ -32,6 +33,7 @@ class FeeOperationItemResponse(BaseModel):
     fee_record_id: UUID | None
     enrollment_id: UUID | None
     student_id: UUID | None
+    student_code: str | None
     student_name: str | None
     class_id: UUID | None
     class_name: str | None
@@ -88,11 +90,17 @@ class FeePaidReceiptSummaryResponse(BaseModel):
     receipt_id: str
     payment_operation_id: UUID
     student_id: UUID | None
+    student_code: str | None = None
     student_name: str
     period: str | None
     paid_date: date
     paid_at: datetime
     payment_method: FeePaidPaymentMethod
+    payment_origin: FeePaidPaymentOrigin
+    settlement_account_id: UUID | None
+    settlement_bank_name: str | None
+    settlement_account_number: str | None
+    settlement_account_name: str | None
     gross_amount: int = Field(ge=0)
     refunded_amount: int = Field(ge=0)
     net_amount: int = Field(ge=0)
@@ -138,6 +146,10 @@ class FeePaidTimelineEntryResponse(BaseModel):
     occurred_at: datetime
     amount_delta: int
     payment_method: FeePaidPaymentMethod
+    payment_origin: FeePaidPaymentOrigin
+    settlement_account_id: UUID | None
+    settlement_bank_name: str | None
+    settlement_account_number: str | None
     actor_name: str | None
     actor_username: str | None
     actor_role: str | None
@@ -147,3 +159,36 @@ class FeePaidTimelineEntryResponse(BaseModel):
 class FeePaidReceiptDetailResponse(FeePaidReceiptSummaryResponse):
     allocations: list[FeePaidAllocationResponse]
     timeline: list[FeePaidTimelineEntryResponse]
+
+
+class PaymentReconciliationItemResponse(BaseModel):
+    id: UUID
+    delivery_id: UUID
+    status: Literal["PENDING", "PROCESSING", "POSTED", "REVIEW", "DEAD"]
+    review_reason: str | None
+    resolution: str | None
+    payment_request_id: UUID | None
+    provider_transaction_id: str | None
+    source: str | None
+    bank_account_id: UUID | None
+    bank_name: str | None
+    account_number: str | None
+    transfer_type: str | None
+    amount: int | None
+    content: str | None
+    transaction_date: str | None
+    result_code: str | None
+    provider_message: str | None
+    received_at: datetime
+    resolved_at: datetime | None
+
+
+class PaymentReconciliationListResponse(BaseModel):
+    items: list[PaymentReconciliationItemResponse]
+    review_count: int = Field(ge=0)
+
+
+class PaymentReconciliationResolveRequest(BaseModel):
+    action: Literal["retry", "manual_match", "ignore"]
+    payment_request_id: UUID | None = None
+    reason: str = Field(min_length=3, max_length=240)

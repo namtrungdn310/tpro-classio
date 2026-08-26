@@ -14,6 +14,7 @@ from app.services.student_service import redact_student_hidden_fields
 def _student_response() -> StudentResponse:
     return StudentResponse(
         id=uuid4(),
+        student_code="TP000000018",
         full_name="Nguyễn Minh Anh",
         birth_date=date(2012, 4, 3),
         school="THCS Trưng Vương",
@@ -30,6 +31,7 @@ def _student_response() -> StudentResponse:
             "custom_fee",
         ],
         status="active",
+        list_state="CURRENT",
         classes=[],
         active_enrollments=[
             StudentEnrollmentInfo(
@@ -43,6 +45,7 @@ def _student_response() -> StudentResponse:
             )
         ],
         created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
     )
 
 

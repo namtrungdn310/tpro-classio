@@ -22,7 +22,6 @@ ExceptionStatus = Literal[
 DerivedStatus = Literal[
     "MAKEUP_PENDING",
     "MAKEUP_SCHEDULED",
-    "AWAITING_CONFIRMATION",
     "MAKEUP_COMPLETED",
     "RESTORED",
     "CANCELLED",

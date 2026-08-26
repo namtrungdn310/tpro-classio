@@ -17,9 +17,10 @@ from sqlalchemy.dialects.postgresql import ENUM, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+from app.core.workspace import WorkspaceScoped
 
 
-class FeeRecord(Base):
+class FeeRecord(WorkspaceScoped, Base):
     __tablename__ = "fee_records"
     __table_args__ = (
         Index(

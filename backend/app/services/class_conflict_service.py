@@ -81,14 +81,16 @@ def _slot_effective_teacher_ids(
     slot: ClassScheduleSlot,
     class_teacher_pool: list[str],
 ) -> list[str]:
-    """Teacher effective cho một slot: explicit non-empty thì dùng đúng danh
-    sách đó; thiếu/rỗng (legacy) fallback sang pool giáo viên cấp lớp."""
+    """Resolve teacher assignment without silently bleeding the class pool.
+
+    Canonical slots always carry an explicit list.  The pool fallback is kept
+    only for an old payload that literally omits the field; an explicit empty
+    list remains empty and is rejected by the class command before persist.
+    """
     explicit = slot.teacher_ids
-    return (
-        [str(teacher_id) for teacher_id in explicit]
-        if explicit
-        else list(class_teacher_pool)
-    )
+    if explicit is None:
+        return list(class_teacher_pool)
+    return [str(teacher_id) for teacher_id in explicit]
 
 
 def _slot_effective_assistant_ids(slot: ClassScheduleSlot) -> list[str]:
@@ -102,13 +104,14 @@ async def _load_overlapping_class_memberships(
     db: AsyncSession,
     *,
     class_id: str,
-    requested_ids: list[str],
+    requested_ids: list[str] | None,
     requested_start_date: date | None = None,
     requested_end_date: date | None = None,
 ) -> dict[str, dict]:
     """Nạp mọi lớp HOẠT ĐỘNG có ít nhất một nhân sự thuộc tập yêu cầu và khoảng
     ngày giao với khoảng yêu cầu. Loại completed/cancelled và class đang sửa
-    ngay trong SQL; membership kèm role nhân sự."""
+    ngay trong SQL; membership kèm role nhân sự được LEFT JOIN trong cùng một
+    round-trip (không cần query membership riêng)."""
     date_filters = []
     if requested_start_date is not None:
         date_filters.append(
@@ -120,7 +123,8 @@ async def _load_overlapping_class_memberships(
         )
     if class_id:
         date_filters.append(Class.id != class_id)
-    result = await db.execute(
+
+    statement = (
         select(
             Class.id,
             Class.name,
@@ -129,19 +133,30 @@ async def _load_overlapping_class_memberships(
             Class.schedule,
             Class.start_date,
             Class.end_date,
-            ClassTeacher.teacher_id,
-            StaffMember.staff_type,
+            ClassTeacher.teacher_id.label("member_id"),
+            StaffMember.staff_type.label("member_role"),
         )
-        .join(ClassTeacher, ClassTeacher.class_id == Class.id)
-        .join(StaffMember, StaffMember.id == ClassTeacher.teacher_id)
+        .outerjoin(ClassTeacher, ClassTeacher.class_id == Class.id)
+        .outerjoin(StaffMember, StaffMember.id == ClassTeacher.teacher_id)
         .where(
             Class.is_active.is_(True),
             Class.cancelled_at.is_(None),
             Class.completed_at.is_(None),
-            ClassTeacher.teacher_id.in_(requested_ids),
             *date_filters,
         )
     )
+    if requested_ids is not None:
+        # Giữ toàn bộ lớp có ít nhất một nhân sự yêu cầu trong junction, nhưng
+        # vẫn trả đủ membership của lớp đó (dùng EXISTS, không lọc member).
+        statement = statement.where(
+            Class.id.in_(
+                select(ClassTeacher.class_id).where(
+                    ClassTeacher.teacher_id.in_(requested_ids)
+                )
+            )
+        )
+
+    result = await db.execute(statement)
     rows_by_class: dict[str, dict] = {}
     for (
         class_row_id,
@@ -168,27 +183,16 @@ async def _load_overlapping_class_memberships(
                 "members": [],
             },
         )
-        entry["members"].append((str(member_id), member_role))
+        if member_id is not None and member_role is not None:
+            entry["members"].append((str(member_id), member_role))
     return rows_by_class
 
 
-async def _load_class_full_membership(
-    db: AsyncSession,
-    class_ids: list[str],
+def _membership_from_entries(
+    rows_by_class: dict[str, dict],
 ) -> dict[str, dict[str, str]]:
-    """Toàn bộ junction membership (role-correct) của các lớp — một query duy
-    nhất (không N+1) dùng để fail-closed assignment explicit lệch pool/role."""
-    if not class_ids:
-        return {}
-    result = await db.execute(
-        select(ClassTeacher.class_id, ClassTeacher.teacher_id, StaffMember.staff_type)
-        .join(StaffMember, StaffMember.id == ClassTeacher.teacher_id)
-        .where(ClassTeacher.class_id.in_(class_ids))
-    )
-    memberships: dict[str, dict[str, str]] = {class_id: {} for class_id in class_ids}
-    for class_row_id, member_id, member_role in result.all():
-        memberships[str(class_row_id)][str(member_id)] = member_role
-    return memberships
+    """Derive full role-correct membership from the merged class rows."""
+    return {entry["id"]: dict(entry["members"]) for entry in rows_by_class.values()}
 
 
 async def _class_has_relational_slots(db: AsyncSession, class_: Class) -> bool:
@@ -238,6 +242,61 @@ async def _resolve_class_schedule_slots(
             "Vui lòng chỉnh sửa lớp này trước"
         ) from exc
     return schedule.slots
+
+
+def _slot_models_from_relational_projection(
+    projection: list[dict],
+) -> list[ClassScheduleSlot]:
+    """Convert the canonical relational projection to the API/domain model."""
+    return [
+        ClassScheduleSlot(
+            day=item["day"],
+            start=item["start"],
+            end=item["end"],
+            teacher_ids=[UUID(value) for value in item["teacher_ids"]],
+            assistant_ids=[UUID(value) for value in item["assistant_ids"]],
+        )
+        for item in projection
+    ]
+
+
+async def _resolve_class_schedule_slots_bulk(
+    db: AsyncSession,
+    entries: list[dict],
+) -> dict[str, list[ClassScheduleSlot] | None]:
+    """Resolve schedules for all conflict candidates without N+1 queries.
+
+    Relational slots are canonical.  For legacy rows that have not yet been
+    dual-written, parse the JSON projection already selected by the membership
+    query instead of issuing one relational lookup per class.
+    """
+    if not entries:
+        return {}
+
+    from app.services.schedule_slot_service import load_class_slots_bulk
+
+    class_ids = [entry["id"] for entry in entries]
+    relational_by_class = await load_class_slots_bulk(db, class_ids)
+    resolved: dict[str, list[ClassScheduleSlot] | None] = {}
+    for entry in entries:
+        class_id = entry["id"]
+        relational = relational_by_class.get(class_id)
+        if relational:
+            resolved[class_id] = _slot_models_from_relational_projection(relational)
+            continue
+
+        payload = entry["payload"]
+        if payload is None:
+            resolved[class_id] = None
+            continue
+        try:
+            resolved[class_id] = ClassSchedule.model_validate(payload).slots
+        except ValueError as exc:
+            raise ScheduleDataInvalidError(
+                f"Lịch học đã lưu của lớp {entry['name']} không hợp lệ. "
+                "Vui lòng chỉnh sửa lớp này trước"
+            ) from exc
+    return resolved
 
 
 def _validate_slot_explicit_against_membership(
@@ -297,15 +356,13 @@ async def _collect_schedule_conflicts(
         requested_start_date=start_date,
         requested_end_date=end_date,
     )
-    full_membership = await _load_class_full_membership(
-        db, [entry["id"] for entry in rows_by_class.values()]
-    )
+    full_membership = _membership_from_entries(rows_by_class)
 
     conflicts: list[dict] = []
-    for entry in rows_by_class.values():
-        existing_slots = await _resolve_class_schedule_slots(
-            db, entry["id"], entry["payload"], class_name=entry["name"]
-        )
+    entries = list(rows_by_class.values())
+    slots_by_class = await _resolve_class_schedule_slots_bulk(db, entries)
+    for entry in entries:
+        existing_slots = slots_by_class.get(entry["id"])
         if existing_slots is None:
             continue
         membership = full_membership.get(entry["id"], {})
@@ -412,6 +469,7 @@ async def validate_availability_request_staff(
     teacher_ids: list[str],
     assistant_ids: list[str],
     class_id: str | None,
+    scope: str = "selected_staff",
 ) -> None:
     """Validate read-only cho endpoint availability. Không khóa row."""
     if class_id is not None:
@@ -428,8 +486,12 @@ async def validate_availability_request_staff(
         raise ValueError("Một nhân sự không thể vừa là giáo viên vừa là trợ giảng")
 
     all_ids = list(dict.fromkeys([*teacher_ids, *assistant_ids]))
-    if not all_ids:
+    if scope not in {"selected_staff", "all_classes"}:
+        raise ValueError("Phạm vi lịch không hợp lệ")
+    if scope == "selected_staff" and not all_ids:
         raise ValueError("Vui lòng chọn ít nhất một giáo viên hoặc trợ giảng")
+    if scope == "all_classes" and not all_ids:
+        return
     result = await db.execute(select(StaffMember).where(StaffMember.id.in_(all_ids)))
     staff_by_id = {str(staff.id): staff for staff in result.scalars().all()}
     missing = [staff_id for staff_id in all_ids if staff_id not in staff_by_id]
@@ -453,29 +515,36 @@ async def get_class_schedule_availability(
     assistant_ids: list[str],
     start_date: date,
     end_date: date,
+    scope: str = "selected_staff",
 ) -> list[ScheduleAvailabilityConflict]:
-    """Mọi slot bận của nhân sự đã chọn trong khoảng ngày — CANONICAL contract:
+    """Return occupied recurring class slots in the requested date range.
+
+    ``selected_staff`` preserves the legacy availability query.  The class
+    picker uses ``all_classes``: the grid is class-centric and must lock every
+    other class block before per-session teacher assignment is made.
+
+    CANONICAL contract:
     MỘT block cho mỗi class+day+start+end, giữ đồng thời busy_teacher_ids và
     busy_assistant_ids. Không chứa thông tin liên hệ nhân sự."""
     requested_ids = list(dict.fromkeys([*teacher_ids, *assistant_ids]))
-    if not requested_ids:
+    if scope not in {"selected_staff", "all_classes"}:
+        raise ValueError("Phạm vi lịch không hợp lệ")
+    if scope == "selected_staff" and not requested_ids:
         return []
     rows_by_class = await _load_overlapping_class_memberships(
         db,
         class_id=class_id or "",
-        requested_ids=requested_ids,
+        requested_ids=requested_ids if scope == "selected_staff" else None,
         requested_start_date=start_date,
         requested_end_date=end_date,
     )
-    full_membership = await _load_class_full_membership(
-        db, [entry["id"] for entry in rows_by_class.values()]
-    )
+    full_membership = _membership_from_entries(rows_by_class)
 
     blocks: list[ScheduleAvailabilityConflict] = []
-    for entry in rows_by_class.values():
-        existing_slots = await _resolve_class_schedule_slots(
-            db, entry["id"], entry["payload"], class_name=entry["name"]
-        )
+    entries = list(rows_by_class.values())
+    slots_by_class = await _resolve_class_schedule_slots_bulk(db, entries)
+    for entry in entries:
+        existing_slots = slots_by_class.get(entry["id"])
         if existing_slots is None:
             continue
         membership = full_membership.get(entry["id"], {})
@@ -498,9 +567,18 @@ async def get_class_schedule_availability(
                 continue
             effective_teachers = _slot_effective_teacher_ids(existing, pool_teachers)
             effective_assistants = _slot_effective_assistant_ids(existing)
-            busy_teachers = sorted(set(effective_teachers) & set(teacher_ids))
-            busy_assistants = sorted(set(effective_assistants) & set(assistant_ids))
-            if not busy_teachers and not busy_assistants:
+            if scope == "all_classes":
+                busy_teachers = sorted(set(effective_teachers))
+                busy_assistants = sorted(set(effective_assistants))
+            else:
+                busy_teachers = sorted(set(effective_teachers) & set(teacher_ids))
+                busy_assistants = sorted(set(effective_assistants) & set(assistant_ids))
+            # In the class-centric picker every occupied slot is a hard
+            # exclusion, even when the legacy/class record has no explicit
+            # staff assignment.  Staff IDs are only metadata for the
+            # selected-staff compatibility scope; they must never decide
+            # whether another class blocks the new class.
+            if scope == "selected_staff" and not busy_teachers and not busy_assistants:
                 continue
             blocks.append(
                 ScheduleAvailabilityConflict(

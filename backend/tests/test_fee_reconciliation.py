@@ -68,6 +68,13 @@ def test_zalo_message_uses_immutable_due_date_snapshot() -> None:
     assert message.startswith("TPRO English")
     assert "05/07/2026" in message
     assert "20/07/2026" not in message
+    assert message.splitlines() == [
+        "TPRO English xin thông báo học phí tháng 7/2026 của em Nguyễn Minh An:",
+        "6C1: 750.000đ",
+        "Ngày đến hạn: 05/07/2026.",
+        "Tổng học phí cần thanh toán: 750.000đ.",
+        "Phụ huynh vui lòng thanh toán giúp trung tâm. Cảm ơn phụ huynh.",
+    ]
 
 
 @pytest.mark.asyncio

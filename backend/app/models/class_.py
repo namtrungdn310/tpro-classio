@@ -8,10 +8,12 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Integer,
     Numeric,
     SmallInteger,
     Text,
+    UniqueConstraint,
     func,
     text,
 )
@@ -19,9 +21,10 @@ from sqlalchemy.dialects.postgresql import ENUM, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+from app.core.workspace import WorkspaceScoped
 
 
-class Class(Base):
+class Class(WorkspaceScoped, Base):
     __tablename__ = "classes"
     __table_args__ = (
         CheckConstraint(
@@ -47,6 +50,17 @@ class Class(Base):
         CheckConstraint(
             "start_date is null or end_date is null or end_date >= start_date",
             name="classes_date_range_check",
+        ),
+        UniqueConstraint(
+            "workspace_id",
+            "id",
+            name="classes_workspace_id_id_unique",
+        ),
+        ForeignKeyConstraint(
+            ["workspace_id", "previous_class_id"],
+            ["classes.workspace_id", "classes.id"],
+            name="classes_previous_class_workspace_fkey",
+            ondelete="RESTRICT",
         ),
     )
 
@@ -111,6 +125,10 @@ class Class(Base):
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     cancelled_reason: Mapped[str | None] = mapped_column(Text)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    previous_class_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False),
+    )
+    continuation_request_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False))
     schedule: Mapped[dict | None] = mapped_column(JSONB)
     teacher_id: Mapped[str | None] = mapped_column(
         UUID(as_uuid=False),

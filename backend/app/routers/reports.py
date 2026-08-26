@@ -12,12 +12,19 @@ from app.schemas.report import (
     FeeOperationResponse,
     FeePaidReceiptDetailResponse,
     FeePaidReceiptListResponse,
+    PaymentReconciliationListResponse,
+    PaymentReconciliationResolveRequest,
+    PaymentReconciliationItemResponse,
 )
 from app.services.paid_report_service import (
     get_paid_fee_receipt,
     get_paid_fee_receipts,
 )
 from app.services.report_service import get_fee_operation, get_fee_operations
+from app.services.payment_reconciliation_service import (
+    list_payment_reconciliation,
+    resolve_payment_reconciliation,
+)
 
 router = APIRouter(tags=["reports"])
 
@@ -29,6 +36,7 @@ async def list_paid_fee_receipts(
     date_from: date | None = None,
     date_to: date | None = None,
     payment_method: Literal["bank_transfer", "cash"] | None = None,
+    payment_origin: Literal["manual", "manual_early", "pay2s"] | None = None,
     refund_state: Literal["NONE", "PARTIAL", "FULL", "REVERSED"] | None = None,
     cursor: str | None = Query(default=None, max_length=500),
     limit: int = Query(default=30, ge=10, le=100),
@@ -42,6 +50,7 @@ async def list_paid_fee_receipts(
         date_from=date_from,
         date_to=date_to,
         payment_method=payment_method,
+        payment_origin=payment_origin,
         refund_state=refund_state,
         cursor=cursor,
         limit=limit,
@@ -110,3 +119,42 @@ async def read_fee_operation(
             detail="Không tìm thấy hoạt động học phí",
         )
     return operation
+
+
+@router.get(
+    "/fees/reconciliation",
+    response_model=PaymentReconciliationListResponse,
+)
+async def list_fee_reconciliation(
+    queue_status: Literal["PENDING", "PROCESSING", "POSTED", "REVIEW", "DEAD"] = Query(
+        default="REVIEW", alias="status"
+    ),
+    limit: int = Query(default=100, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> PaymentReconciliationListResponse:
+    return await list_payment_reconciliation(db, queue_status=queue_status, limit=limit)
+
+
+@router.post(
+    "/fees/reconciliation/{queue_id}/resolve",
+    response_model=PaymentReconciliationItemResponse,
+)
+async def resolve_fee_reconciliation(
+    queue_id: UUID,
+    payload: PaymentReconciliationResolveRequest,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> PaymentReconciliationItemResponse:
+    try:
+        response = await resolve_payment_reconciliation(
+            db,
+            queue_id=queue_id,
+            payload=payload,
+            actor_id=principal.user_id,
+        )
+        await db.commit()
+        return response
+    except HTTPException:
+        await db.rollback()
+        raise

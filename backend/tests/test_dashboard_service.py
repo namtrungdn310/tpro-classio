@@ -96,3 +96,16 @@ def test_dashboard_revenue_trend_uses_signed_payment_ledger() -> None:
     assert "payment.payment_date" in sql
     assert "sum(payment.amount)" in sql
     assert "interval '5 months'" in sql
+
+
+def test_dashboard_metrics_are_workspace_scoped_in_raw_sql() -> None:
+    sql = str(dashboard_service._DASHBOARD_METRICS_SQL)
+
+    # Dashboard uses one optimized text query, so it does not benefit from
+    # SQLAlchemy's ORM loader criteria.  Every business aggregate must carry
+    # the same server-side workspace predicate explicitly.
+    assert sql.count("public.current_workspace_id()") >= 8
+    assert "payment.workspace_id" in sql
+    assert "fee.workspace_id" in sql
+    assert "class_.workspace_id" in sql
+    assert "staff.workspace_id" in sql

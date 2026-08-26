@@ -1,17 +1,22 @@
 from datetime import datetime
 from sqlalchemy import DateTime, ForeignKey, Text, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import ENUM, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from app.core.database import Base
+from app.core.workspace import WorkspaceScoped
 
 
-class AccountInvitation(Base):
+class AccountInvitation(WorkspaceScoped, Base):
     __tablename__ = "account_invitations"
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True)
     email: Mapped[str] = mapped_column(Text, nullable=False)
     token_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
-    role: Mapped[str] = mapped_column(Text, nullable=False, default="teacher")
+    role: Mapped[str] = mapped_column(
+        ENUM("admin", "teacher", "viewer", name="user_role", create_type=False),
+        nullable=False,
+        default="teacher",
+    )
     staff_id: Mapped[str | None] = mapped_column(
         UUID(as_uuid=False),
         ForeignKey("staff_members.id", ondelete="RESTRICT"),

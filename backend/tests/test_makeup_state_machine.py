@@ -84,7 +84,7 @@ def test_future_scheduled_makeup_displays_scheduled() -> None:
     )
 
 
-def test_past_scheduled_makeup_displays_awaiting_confirmation_without_persist() -> None:
+def test_past_scheduled_makeup_displays_completed_without_persisted_mutation() -> None:
     exception = _exception(
         "MAKEUP_SCHEDULED",
         replacement_end_at=datetime(2026, 9, 10, 12, 30, tzinfo=timezone.utc),
@@ -93,7 +93,7 @@ def test_past_scheduled_makeup_displays_awaiting_confirmation_without_persist() 
         derived_display_status(
             exception, now=datetime(2026, 9, 11, tzinfo=timezone.utc)
         )
-        == "AWAITING_CONFIRMATION"
+        == "MAKEUP_COMPLETED"
     )
     # Trạng thái persisted KHÔNG đổi (derived-only).
     assert exception.status == "MAKEUP_SCHEDULED"

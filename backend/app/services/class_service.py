@@ -6,7 +6,7 @@ from uuid import UUID
 from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import noload, selectinload
 
 from app.core.billing import (
     NEXT_FEE_DUE_NONE,
@@ -29,14 +29,23 @@ from app.models.class_ import Class
 from app.models.class_lifecycle_event import ClassLifecycleEvent
 from app.models.class_teacher import ClassTeacher
 from app.models.class_teacher_event import ClassTeacherEvent
+from app.models.class_schedule_slot import (
+    ClassScheduleSlot as ClassScheduleSlotModel,
+    ClassScheduleSlotStaff,
+)
 from app.models.enrollment import Enrollment
+from app.models.enrollment_slot_selection import EnrollmentSlotSelection
 from app.models.fee_record import FeeRecord
-from app.models.makeup import ClassSessionException
+from app.models.makeup import ClassScheduleAdjustment, ClassSessionException
 from app.models.staff import StaffMember
 from app.models.student import Student
 from app.schemas.class_ import (
     ClassCategory,
     ClassCopyTemplateResponse,
+    ClassContinuationCreate,
+    ClassContinuationPreviewResponse,
+    ClassContinuationStudentCandidate,
+    ClassContinuationSlotReference,
     ClassCreate,
     ClassEndDatePreviewRequest,
     ClassEndDatePreviewResponse,
@@ -44,10 +53,13 @@ from app.schemas.class_ import (
     ClassHistoryAdjustment,
     ClassHistoryEnrollment,
     ClassHistoryEvent,
+    ClassHistoryScheduleSlot,
+    ClassHistorySlotTeacher,
     ClassHistoryResponse,
     ClassHistoryTeacherEvent,
     ClassIdentityScheme,
     ClassResponse,
+    ClassActiveSuspension,
     ClassSchedule,
     ClassScheduleSlot,
     ClassScope,
@@ -63,7 +75,8 @@ from app.services.class_conflict_service import (
 from app.services.fee_cycle_service import (
     ensure_enrollment_cycles,
 )
-from app.services.schedule_slot_service import sync_class_slots
+from app.services.enrollment_service import enroll_locked_student
+from app.services.schedule_slot_service import load_class_slots, sync_class_slots
 
 
 def _clear_dependent_caches() -> None:
@@ -271,6 +284,7 @@ def _to_response(
     student_count: int = 0,
     next_fee_due: tuple[date | None, str] | None = None,
     unresolved_makeup_count: int = 0,
+    active_suspension: ClassActiveSuspension | None = None,
 ) -> ClassResponse:
     today = business_today()
     schedule = _schedule_projection_with_slot_identity(class_)
@@ -336,6 +350,8 @@ def _to_response(
         next_fee_due_state=next_fee_due_state,
         cancelled_at=class_.cancelled_at,
         unresolved_makeup_count=unresolved_makeup_count,
+        active_suspension=active_suspension,
+        previous_class_id=class_.previous_class_id,
     )
 
 
@@ -344,7 +360,14 @@ async def _load_next_fee_due_map(
     classes: list[Class],
     today: date,
 ) -> dict[str, tuple[date | None, str]]:
-    """Một truy vấn batch cho toàn bộ class_id, tránh N+1 theo số lớp."""
+    """One batched query set cho toàn bộ class_id, tránh N+1 theo số lớp.
+
+    Không load toàn bộ fee_records: chỉ lấy (a) enrollment đang hoạt động,
+    (b) aggregate max cycle_no / max deferral trên toàn bộ record và (c) các
+    record UNPAID (thành phần duy nhất ảnh hưởng overdue/upcoming). Các giá
+    trị được dựng lại thành projection nhẹ tương đương hành vi
+    ``get_class_next_fee_due`` — không thay đổi kết quả hiển thị.
+    """
 
     due_map: dict[str, tuple[date | None, str]] = {
         class_.id: (None, NEXT_FEE_DUE_NONE) for class_ in classes
@@ -352,25 +375,145 @@ async def _load_next_fee_due_map(
     class_ids = [class_.id for class_ in classes]
     if not class_ids:
         return due_map
+    class_by_id = {class_.id: class_ for class_ in classes}
 
-    statement = (
-        select(Enrollment)
-        .where(Enrollment.class_id.in_(class_ids), Enrollment.status == "active")
-        .options(
-            selectinload(Enrollment.fee_records),
-            selectinload(Enrollment.class_),
+    enrollment_result = await db.execute(
+        select(
+            Enrollment.id,
+            Enrollment.class_id,
+            Enrollment.enrollment_date,
+        ).where(
+            Enrollment.class_id.in_(class_ids),
+            Enrollment.status == "active",
         )
     )
-    result = await db.execute(statement)
-    enrollments_by_class: dict[str, list[Enrollment]] = {}
-    for enrollment in result.scalars():
-        enrollments_by_class.setdefault(enrollment.class_id, []).append(enrollment)
+    enrollments = [
+        (str(row.id), str(row.class_id), row.enrollment_date)
+        for row in enrollment_result.all()
+    ]
+    enrollment_ids = [enrollment_id for enrollment_id, _class_id, _date in enrollments]
+    if not enrollment_ids:
+        return due_map
 
-    for class_id, enrollments in enrollments_by_class.items():
+    aggregate_result = await db.execute(
+        select(
+            FeeRecord.enrollment_id,
+            func.max(FeeRecord.cycle_no).label("max_cycle"),
+            func.max(
+                func.greatest(0, FeeRecord.adjusted_due_date - FeeRecord.base_due_date)
+            ).label("max_deferral"),
+        )
+        .where(FeeRecord.enrollment_id.in_(enrollment_ids))
+        .group_by(FeeRecord.enrollment_id)
+    )
+    aggregates = {
+        str(row.enrollment_id): (row.max_cycle, row.max_deferral)
+        for row in aggregate_result.all()
+    }
+
+    unpaid_result = await db.execute(
+        select(
+            FeeRecord.enrollment_id,
+            FeeRecord.adjusted_due_date,
+            FeeRecord.due_date,
+        ).where(
+            FeeRecord.enrollment_id.in_(enrollment_ids),
+            FeeRecord.status == "UNPAID",
+        )
+    )
+    unpaid_by_enrollment: dict[str, list[tuple[date | None, date | None]]] = {}
+    for row in unpaid_result.all():
+        unpaid_by_enrollment.setdefault(str(row.enrollment_id), []).append(
+            (row.adjusted_due_date, row.due_date)
+        )
+
+    enrollments_by_class: dict[str, list[_ProjectedEnrollment]] = {}
+    deferral_anchor = date(2000, 1, 1)
+    for enrollment_id, class_id, enrollment_date in enrollments:
+        max_cycle, max_deferral = aggregates.get(enrollment_id, (None, None))
+        records: list[_ProjectedFeeRecord] = [
+            _ProjectedFeeRecord(
+                cycle_no=int(max_cycle) if max_cycle is not None else None,
+                base_due_date=None,
+                adjusted_due_date=None,
+                due_date=None,
+                status="PAID",
+            )
+        ]
+        if max_deferral:
+            records.append(
+                _ProjectedFeeRecord(
+                    cycle_no=None,
+                    base_due_date=deferral_anchor,
+                    adjusted_due_date=deferral_anchor
+                    + timedelta(days=int(max_deferral)),
+                    due_date=None,
+                    status="PAID",
+                )
+            )
+        for adjusted_due_date, due_date in unpaid_by_enrollment.get(enrollment_id, []):
+            records.append(
+                _ProjectedFeeRecord(
+                    cycle_no=None,
+                    base_due_date=None,
+                    adjusted_due_date=adjusted_due_date,
+                    due_date=due_date,
+                    status="UNPAID",
+                )
+            )
+        projected = _ProjectedEnrollment(
+            status="active",
+            class_=class_by_id[class_id],
+            enrollment_date=enrollment_date,
+            fee_records=records,
+        )
+        enrollments_by_class.setdefault(class_id, []).append(projected)
+
+    for class_id, projected_enrollments in enrollments_by_class.items():
         due_map[class_id] = get_class_next_fee_due(
-            enrollments[0].class_, enrollments, today
+            class_by_id[class_id], projected_enrollments, today
         )
     return due_map
+
+
+class _ProjectedFeeRecord:
+    """Lightweight stand-in for ``FeeRecord`` consumed by fee-due projection."""
+
+    __slots__ = ("cycle_no", "base_due_date", "adjusted_due_date", "due_date", "status")
+
+    def __init__(
+        self,
+        *,
+        cycle_no: int | None,
+        base_due_date: date | None,
+        adjusted_due_date: date | None,
+        due_date: date | None,
+        status: str,
+    ) -> None:
+        self.cycle_no = cycle_no
+        self.base_due_date = base_due_date
+        self.adjusted_due_date = adjusted_due_date
+        self.due_date = due_date
+        self.status = status
+
+
+class _ProjectedEnrollment:
+    """Minimal enrollment view exposing exactly the fields the fee-due logic reads."""
+
+    __slots__ = ("status", "class_", "enrollment_date", "fee_records")
+
+    def __init__(
+        self,
+        *,
+        status: str,
+        class_: Class,
+        enrollment_date: date | None,
+        fee_records: list[_ProjectedFeeRecord],
+    ) -> None:
+        self.status = status
+        self.class_ = class_
+        self.enrollment_date = enrollment_date
+        self.fee_records = fee_records
 
 
 def _normalize_teacher_ids(
@@ -577,7 +720,9 @@ def normalize_schedule_assignments(
 ) -> ClassSchedule | None:
     """Canonicalize assignment cho từng slot trước conflict-check và persist:
     1. dedupe ID theo thứ tự ổn định;
-    2. teacher: explicit non-empty giữ nguyên; thiếu/rỗng materialize từ pool;
+    2. teacher: mỗi slot phải khai báo rõ ít nhất một giáo viên; không tự
+       materialize từ pool cấp lớp (tránh gán nhầm toàn bộ giáo viên cho mọi
+       buổi);
     3. assistant: explicit non-empty giữ nguyên; thiếu/rỗng → [] (không fallback);
     4. validate subset của pool lớp (teacher pool / assistant pool riêng);
     5. reject slot không còn giáo viên hợp lệ.
@@ -593,11 +738,7 @@ def normalize_schedule_assignments(
     assistant_set = set(assistant_ids)
     canonical_slots: list[ClassScheduleSlot] = []
     for slot in normalized.slots:
-        teachers = (
-            [str(teacher_id) for teacher_id in slot.teacher_ids]
-            if slot.teacher_ids
-            else teacher_ids
-        )
+        teachers = [str(teacher_id) for teacher_id in slot.teacher_ids]
         assistants = (
             [str(assistant_id) for assistant_id in slot.assistant_ids]
             if slot.assistant_ids
@@ -622,7 +763,9 @@ def normalize_schedule_assignments(
                 "Trợ giảng của từng buổi phải nằm trong danh sách trợ giảng của lớp"
             )
         if not teachers:
-            raise ValueError("Mỗi buổi học phải có ít nhất một giáo viên")
+            raise ValueError(
+                f"Buổi {slot.day} {slot.start}–{slot.end} phải có ít nhất một giáo viên"
+            )
         canonical_slots.append(
             ClassScheduleSlot(
                 day=slot.day,
@@ -633,6 +776,19 @@ def normalize_schedule_assignments(
             )
         )
     return ClassSchedule(text=normalized.text, slots=canonical_slots)
+
+
+def _schedule_teacher_ids(schedule: ClassSchedule | None) -> list[str]:
+    """Return the distinct teacher union used by the class-level summary."""
+    if schedule is None:
+        return []
+    return list(
+        dict.fromkeys(
+            str(teacher_id)
+            for slot in schedule.slots
+            for teacher_id in slot.teacher_ids
+        )
+    )
 
 
 def _date_ranges_overlap(
@@ -656,12 +812,48 @@ def _date_ranges_overlap(
     return True
 
 
+def _searchable_class_values(class_: Class, today: date) -> list[str | None]:
+    """Searchable projection từ ORM Class — khớp đúng danh sách giá trị mà
+    phiên bản cũ feed cho ``matches_smart_search`` sau khi build ClassResponse.
+
+    Giữ helper tách riêng để lọc ngay sau query chính (trước pagination và
+    trước khi load fee/adjustment projection), không cần dựng toàn bộ response.
+    """
+    teacher_names = [
+        link.teacher.full_name
+        for link in sorted(
+            class_.teacher_links,
+            key=lambda item: item.teacher.full_name if item.teacher else "",
+        )
+        if link.teacher is not None
+    ]
+    schedule = class_.schedule if isinstance(class_.schedule, dict) else {}
+    slots = schedule.get("slots", []) if isinstance(schedule, dict) else []
+    return [
+        class_.name,
+        class_.program_name,
+        _category_label(class_.class_category),
+        f"Khối {class_.grade_level}" if class_.grade_level else None,
+        _education_level_label(class_.education_level),
+        get_class_labels(class_)[2],
+        class_.start_date.isoformat() if class_.start_date else None,
+        class_.end_date.isoformat() if class_.end_date else None,
+        effective_class_status(class_, today=today),
+        str(class_.academic_year_start) if class_.academic_year_start else None,
+        *teacher_names,
+        schedule.get("text"),
+        *(slot.get("day") for slot in slots),
+    ]
+
+
 async def get_classes(
     db: AsyncSession,
     search: str | None = None,
     type: str | None = None,
     is_active: bool | None = None,
     scope: ClassScope = "operational",
+    limit: int | None = None,
+    offset: int | None = None,
 ) -> list[ClassResponse]:
     today = business_today()
     with log_timing(
@@ -671,6 +863,8 @@ async def get_classes(
         type=type,
         is_active=is_active,
         scope=scope,
+        limit=limit,
+        offset=offset,
     ):
         normalized_search = search.strip() if search else None
         enrollment_count_filter = (
@@ -709,9 +903,23 @@ async def get_classes(
             .outerjoin(enrollment_count, enrollment_count.c.class_id == Class.id)
             .outerjoin(unresolved_count, unresolved_count.c.class_id == Class.id)
             .options(
-                selectinload(Class.teacher_links).selectinload(ClassTeacher.teacher)
+                selectinload(Class.teacher_links).selectinload(ClassTeacher.teacher),
+                selectinload(Class.schedule_slots).selectinload(
+                    ClassScheduleSlotModel.staff_links
+                ),
+                # `Class` declares seven lazy="selectin" relationships that fire
+                # as eager post-loads whenever entities are materialized.  The
+                # list endpoint does not need enrollments/teacher/teachers/
+                # adjustments/exceptions on the entities — counts and the active
+                # suspension come from explicit projections — so suppress them
+                # to avoid the N+1 cascade on scale datasets.
+                noload(Class.enrollments),
+                noload(Class.teachers),
+                noload(Class.teacher),
+                noload(Class.schedule_adjustments),
+                noload(Class.session_exceptions),
             )
-            .order_by(Class.created_at.desc())
+            .order_by(Class.created_at.desc(), Class.id.desc())
         )
 
         if type:
@@ -731,51 +939,81 @@ async def get_classes(
             result = await db.execute(statement)
 
         rows = result.all()
+        matched_rows = [
+            (class_, student_count, unresolved_count)
+            for class_, student_count, unresolved_count in rows
+            if not normalized_search
+            or matches_smart_search(
+                normalized_search,
+                _searchable_class_values(class_, today),
+            )
+        ]
+        if offset:
+            matched_rows = matched_rows[offset:]
+        if limit is not None:
+            matched_rows = matched_rows[:limit]
+
+        adjustment_map: dict[str, ClassActiveSuspension] = {}
+        class_ids = [
+            str(class_.id) for class_, _student_count, _unresolved in matched_rows
+        ]
+        # A suspension is only actionable for operational/enrollable classes.
+        # Historical and scheduled scopes cannot have an active suspension in
+        # the list projection, so avoid an unnecessary round-trip for those
+        # views (and keep the bounded list query budget stable on scale data).
+        if class_ids and scope in {"operational", "active", "enrollable"}:
+            adjustment_result = await db.execute(
+                select(
+                    ClassScheduleAdjustment.class_id,
+                    ClassScheduleAdjustment.id,
+                    ClassScheduleAdjustment.affected_from,
+                    ClassScheduleAdjustment.affected_through,
+                    ClassScheduleAdjustment.reason_code,
+                )
+                .where(
+                    ClassScheduleAdjustment.class_id.in_(class_ids),
+                    ClassScheduleAdjustment.status == "OPEN",
+                    ClassScheduleAdjustment.affected_from <= today,
+                    ClassScheduleAdjustment.affected_through >= today,
+                )
+                .order_by(
+                    ClassScheduleAdjustment.created_at.desc(),
+                    ClassScheduleAdjustment.id.desc(),
+                )
+            )
+            # Column projection (no ORM entity) để tránh lazy relationship
+            # cascade (exceptions -> staff/student snapshots) khi dataset lớn.
+            for (
+                class_id,
+                adj_id,
+                affected_from,
+                affected_through,
+                reason_code,
+            ) in adjustment_result.all():
+                adjustment_map.setdefault(
+                    str(class_id),
+                    ClassActiveSuspension(
+                        id=adj_id,
+                        suspended_from=affected_from,
+                        resume_on=affected_through + timedelta(days=1),
+                        reason_code=reason_code,
+                    ),
+                )
         due_map = await _load_next_fee_due_map(
-            db, [class_ for class_, _student_count, _unresolved in rows], today
+            db,
+            [class_ for class_, _student_count, _unresolved in matched_rows],
+            today,
         )
-        classes = [
+        return [
             _to_response(
                 class_,
                 student_count,
                 next_fee_due=due_map.get(class_.id),
                 unresolved_makeup_count=int(unresolved_count or 0),
+                active_suspension=adjustment_map.get(str(class_.id)),
             )
-            for class_, student_count, unresolved_count in rows
+            for class_, student_count, unresolved_count in matched_rows
         ]
-        if normalized_search:
-            classes = [
-                class_
-                for class_ in classes
-                if matches_smart_search(
-                    normalized_search,
-                    [
-                        class_.name,
-                        class_.program_name,
-                        _category_label(class_.class_category),
-                        f"Khối {class_.grade_level}" if class_.grade_level else None,
-                        _education_level_label(class_.education_level),
-                        class_.display_name,
-                        class_.start_date.isoformat() if class_.start_date else None,
-                        class_.end_date.isoformat() if class_.end_date else None,
-                        class_.effective_status,
-                        f"Khối {class_.grade_level}" if class_.grade_level else None,
-                        str(class_.academic_year_start)
-                        if class_.academic_year_start
-                        else None,
-                        *class_.teacher_names,
-                        class_.schedule.text if class_.schedule else None,
-                        *(
-                            slot.day
-                            for slot in (
-                                class_.schedule.slots if class_.schedule else []
-                            )
-                        ),
-                    ],
-                )
-            ]
-
-        return classes
 
 
 async def get_class_scope_summary(db: AsyncSession) -> ClassScopeSummary:
@@ -806,8 +1044,19 @@ async def get_class(
     id: UUID,
     *,
     for_update: bool = False,
+    suppress_eager: bool = False,
 ) -> Class | None:
     statement = select(Class).where(Class.id == str(id))
+    if suppress_eager:
+        from sqlalchemy.orm import noload
+
+        statement = statement.options(
+            noload(Class.enrollments),
+            noload(Class.teacher),
+            noload(Class.teacher_links),
+            noload(Class.schedule_adjustments),
+            noload(Class.session_exceptions),
+        )
     if for_update:
         statement = statement.with_for_update()
     result = await db.execute(statement)
@@ -886,7 +1135,17 @@ async def get_class_response(db: AsyncSession, id: UUID) -> ClassResponse | None
             active_enrollment_count, active_enrollment_count.c.class_id == Class.id
         )
         .outerjoin(unresolved_count, unresolved_count.c.class_id == Class.id)
-        .options(selectinload(Class.teacher_links).selectinload(ClassTeacher.teacher))
+        .options(
+            selectinload(Class.teacher_links).selectinload(ClassTeacher.teacher),
+            selectinload(Class.schedule_slots).selectinload(
+                ClassScheduleSlotModel.staff_links
+            ),
+            noload(Class.enrollments),
+            noload(Class.teachers),
+            noload(Class.teacher),
+            noload(Class.schedule_adjustments),
+            noload(Class.session_exceptions),
+        )
         .where(Class.id == str(id))
     )
     row = result.one_or_none()
@@ -894,11 +1153,39 @@ async def get_class_response(db: AsyncSession, id: UUID) -> ClassResponse | None
         return None
     class_, student_count, unresolved_count = row
     due_map = await _load_next_fee_due_map(db, [class_], business_today())
+    today = business_today()
+    active_adjustment = await db.scalar(
+        select(
+            ClassScheduleAdjustment.id,
+            ClassScheduleAdjustment.affected_from,
+            ClassScheduleAdjustment.affected_through,
+            ClassScheduleAdjustment.reason_code,
+        )
+        .where(
+            ClassScheduleAdjustment.class_id == str(class_.id),
+            ClassScheduleAdjustment.status == "OPEN",
+            ClassScheduleAdjustment.affected_from <= today,
+            ClassScheduleAdjustment.affected_through >= today,
+        )
+        .order_by(ClassScheduleAdjustment.created_at.desc())
+        .limit(1)
+    )
+    active_suspension = (
+        ClassActiveSuspension(
+            id=active_adjustment.id,
+            suspended_from=active_adjustment.affected_from,
+            resume_on=active_adjustment.affected_through + timedelta(days=1),
+            reason_code=active_adjustment.reason_code,
+        )
+        if active_adjustment is not None
+        else None
+    )
     return _to_response(
         class_,
         student_count,
         next_fee_due=due_map.get(class_.id),
         unresolved_makeup_count=int(unresolved_count or 0),
+        active_suspension=active_suspension,
     )
 
 
@@ -908,7 +1195,7 @@ async def get_class_history(
 ) -> ClassHistoryResponse | None:
     """Return educational history only; fee ledger is deliberately excluded."""
 
-    class_ = await get_class(db, id)
+    class_ = await get_class(db, id, suppress_eager=True)
     if class_ is None:
         return None
 
@@ -933,12 +1220,51 @@ async def get_class_history(
     )
     adjustment_result = await db.execute(
         select(ClassSessionException)
+        .options(selectinload(ClassSessionException.adjustment))
         .where(ClassSessionException.class_id == class_.id)
         .order_by(
             ClassSessionException.original_start_at.asc(),
             ClassSessionException.id.asc(),
         )
     )
+    slot_result = await db.execute(
+        select(
+            ClassScheduleSlotModel,
+            ClassScheduleSlotStaff.staff_id,
+            StaffMember.full_name,
+        )
+        .outerjoin(
+            ClassScheduleSlotStaff,
+            (ClassScheduleSlotStaff.slot_id == ClassScheduleSlotModel.id)
+            & (ClassScheduleSlotStaff.role == "TEACHER"),
+        )
+        .outerjoin(StaffMember, StaffMember.id == ClassScheduleSlotStaff.staff_id)
+        .where(ClassScheduleSlotModel.class_id == class_.id)
+        .order_by(
+            ClassScheduleSlotModel.effective_from.asc(),
+            ClassScheduleSlotModel.weekday.asc(),
+            ClassScheduleSlotModel.local_start.asc(),
+            ClassScheduleSlotModel.id.asc(),
+        )
+    )
+    slots_by_id: dict[str, ClassHistoryScheduleSlot] = {}
+    for slot, staff_id, full_name in slot_result.all():
+        key = str(slot.id)
+        current = slots_by_id.get(key)
+        if current is None:
+            current = ClassHistoryScheduleSlot(
+                slot_id=slot.id,
+                day=slot.weekday,
+                start=slot.local_start.strftime("%H:%M"),
+                end=slot.local_end.strftime("%H:%M"),
+                effective_from=slot.effective_from,
+                effective_until=slot.effective_until,
+            )
+            slots_by_id[key] = current
+        if staff_id is not None and full_name is not None:
+            current.teachers.append(
+                ClassHistorySlotTeacher(staff_id=staff_id, staff_name=full_name)
+            )
 
     return ClassHistoryResponse(
         id=class_.id,
@@ -950,6 +1276,7 @@ async def get_class_history(
         start_date=class_.start_date,
         end_date=class_.end_date,
         schedule=class_.schedule,
+        schedule_slots=list(slots_by_id.values()),
         teachers=[
             ClassHistoryTeacherEvent(
                 teacher_id=event.teacher_id,
@@ -1170,14 +1497,19 @@ async def _validate_end_date_against_enrollments(
         )
 
 
-async def create_class(
+async def _create_class_without_commit(
     db: AsyncSession,
     data: ClassCreate,
     *,
     actor_user_id: str | None = None,
+    continuation_request_id: UUID | None = None,
 ) -> Class:
     payload = data.model_dump()
     source_class_id = payload.pop("source_class_id", None)
+    if source_class_id is not None:
+        source_class = await db.get(Class, str(source_class_id))
+        if source_class is None:
+            raise ValueError("Không tìm thấy lớp nguồn trong workspace này")
     teacher_ids = _normalize_teacher_ids(
         payload.pop("teacher_ids", None),
         payload.pop("teacher_id", None),
@@ -1196,10 +1528,20 @@ async def create_class(
         teacher_ids,
         assistant_ids,
     )
+    if canonical_schedule and canonical_schedule.slots:
+        teacher_ids = _schedule_teacher_ids(canonical_schedule)
+        if not teacher_ids:
+            raise ValueError("Mỗi buổi học phải có ít nhất một giáo viên")
     payload["schedule"] = (
         canonical_schedule.model_dump(mode="json") if canonical_schedule else None
     )
-    class_ = Class(**payload)
+    class_ = Class(
+        **payload,
+        previous_class_id=str(source_class_id) if source_class_id else None,
+        continuation_request_id=(
+            str(continuation_request_id) if continuation_request_id else None
+        ),
+    )
     _synchronize_identity_metadata(class_)
     _validate_effective_identity(class_)
     await _ensure_unique_class_identity(
@@ -1235,13 +1577,33 @@ async def create_class(
         actor_user_id=actor_user_id,
     )
     if payload.get("schedule"):
-        await sync_class_slots(db, class_, payload.get("schedule"))
+        await sync_class_slots(
+            db,
+            class_,
+            payload.get("schedule"),
+            actor_user_id=actor_user_id,
+            reason="Phân công giáo viên theo từng buổi khi tạo lớp",
+        )
     _append_lifecycle_event(
         db,
         class_id=class_.id,
         event_type="created",
         next_end_date=class_.end_date,
-        reason=f"Tạo từ bản sao của lớp {source_class_id}" if source_class_id else None,
+        reason=f"Tạo lớp kế tiếp từ lớp {source_class_id}" if source_class_id else None,
+        actor_user_id=actor_user_id,
+    )
+    return class_
+
+
+async def create_class(
+    db: AsyncSession,
+    data: ClassCreate,
+    *,
+    actor_user_id: str | None = None,
+) -> Class:
+    class_ = await _create_class_without_commit(
+        db,
+        data,
         actor_user_id=actor_user_id,
     )
     await _commit_class_changes(db)
@@ -1282,6 +1644,471 @@ async def get_class_copy_template(
         assistant_ids=[UUID(aid) for aid in assistant_ids],
         source_class_id=id,
     )
+
+
+async def _continuation_source_enrollments(
+    db: AsyncSession,
+    class_: Class,
+) -> list[Enrollment]:
+    """Return the latest membership per active student that may continue.
+
+    Looking at the latest membership first prevents a learner who left and was
+    later re-enrolled from appearing twice, and prevents an older completed
+    period from reviving a more recent dropped/cancelled membership.
+    """
+
+    result = await db.execute(
+        select(Enrollment)
+        .join(Student, Student.id == Enrollment.student_id)
+        .where(
+            Enrollment.class_id == class_.id,
+            Student.status == "active",
+        )
+        .options(
+            selectinload(Enrollment.student),
+            selectinload(Enrollment.slot_selections),
+        )
+        .order_by(
+            Enrollment.student_id.asc(),
+            Enrollment.created_at.desc(),
+            Enrollment.id.desc(),
+        )
+    )
+    latest_by_student: dict[str, Enrollment] = {}
+    for enrollment in result.scalars().unique().all():
+        latest_by_student.setdefault(str(enrollment.student_id), enrollment)
+
+    source_status = effective_class_status(class_)
+    eligible: list[Enrollment] = []
+    for enrollment in latest_by_student.values():
+        if enrollment.status == "active":
+            eligible.append(enrollment)
+            continue
+        if (
+            source_status == "COMPLETED"
+            and enrollment.status == "completed"
+            and enrollment.end_reason == "Lớp hoàn tất theo ngày học cuối cùng"
+        ):
+            eligible.append(enrollment)
+    return sorted(
+        eligible,
+        key=lambda item: (
+            item.student.full_name.casefold() if item.student else "",
+            item.student_id,
+        ),
+    )
+
+
+def _continuation_reference_date(class_: Class) -> date:
+    return class_.end_date or business_today()
+
+
+def _active_selection_ids(enrollment: Enrollment, reference: date) -> list[str]:
+    return [
+        str(selection.slot_id)
+        for selection in enrollment.slot_selections
+        if selection.effective_from <= reference
+        and (selection.effective_until is None or selection.effective_until > reference)
+    ]
+
+
+async def preview_class_continuation(
+    db: AsyncSession,
+    id: UUID,
+) -> ClassContinuationPreviewResponse | None:
+    class_ = await db.get(Class, str(id))
+    if class_ is None:
+        return None
+    if class_.cancelled_at is not None:
+        raise ValueError("Không thể tạo lớp kế tiếp từ lớp đã hủy")
+    if (
+        class_.identity_scheme == "LEGACY"
+        or class_.start_date is None
+        or class_.end_date is None
+    ):
+        raise ValueError("Lớp nguồn cần hoàn tất thông tin trước khi tạo lớp kế tiếp")
+
+    duration_days = max(1, (class_.end_date - class_.start_date).days)
+    suggested_start = max(
+        business_today(),
+        class_.end_date + timedelta(days=1),
+    )
+    suggested_end = suggested_start + timedelta(days=duration_days)
+    template = await get_class_copy_template(db, id)
+    if template is None:  # defensive: the class was loaded in this transaction
+        return None
+    template.name = class_.name
+    if (
+        template.identity_scheme == "ACADEMIC_YEAR"
+        and template.academic_year_start is not None
+    ):
+        inferred_year = (
+            suggested_start.year
+            if suggested_start.month >= 8
+            else suggested_start.year - 1
+        )
+        template.academic_year_start = max(
+            template.academic_year_start + 1,
+            inferred_year,
+        )
+
+    reference = _continuation_reference_date(class_)
+    enrollments = await _continuation_source_enrollments(db, class_)
+    source_slots = await load_class_slots(db, class_.id, effective_at=reference)
+    source_slot_by_id = {
+        str(slot["slot_id"]): ClassContinuationSlotReference(
+            day=slot["day"],
+            start=slot["start"],
+            end=slot["end"],
+        )
+        for slot in source_slots
+    }
+    return ClassContinuationPreviewResponse(
+        source_class_id=id,
+        source_version=class_.version,
+        suggested_start_date=suggested_start,
+        suggested_end_date=suggested_end,
+        template=template,
+        students=[
+            ClassContinuationStudentCandidate(
+                student_id=UUID(str(enrollment.student_id)),
+                student_code=enrollment.student.student_code,
+                full_name=enrollment.student.full_name,
+                source_enrollment_id=UUID(str(enrollment.id)),
+                custom_fee=(
+                    int(enrollment.custom_fee)
+                    if enrollment.custom_fee is not None
+                    else None
+                ),
+                selected_slot_count=len(_active_selection_ids(enrollment, reference)),
+                selected_slots=[
+                    source_slot_by_id[slot_id]
+                    for slot_id in _active_selection_ids(enrollment, reference)
+                    if slot_id in source_slot_by_id
+                ],
+            )
+            for enrollment in enrollments
+            if enrollment.student is not None
+        ],
+    )
+
+
+def _slot_key(slot: dict) -> tuple[str, str, str]:
+    return (str(slot["day"]), str(slot["start"]), str(slot["end"]))
+
+
+def _clock_ranges_overlap(
+    left_start: str,
+    left_end: str,
+    right_start: str,
+    right_end: str,
+) -> bool:
+    return left_start < right_end and right_start < left_end
+
+
+async def _student_schedule_rows_for_continuation(
+    db: AsyncSession,
+    *,
+    student_ids: list[str],
+    target_start: date,
+    target_end: date,
+) -> dict[str, list[tuple[str, str, str, str]]]:
+    """Load existing selected sessions in one query for conflict checks."""
+
+    if not student_ids:
+        return {}
+    rows = await db.execute(
+        select(
+            Enrollment.student_id,
+            Class.name,
+            ClassScheduleSlotModel.weekday,
+            ClassScheduleSlotModel.local_start,
+            ClassScheduleSlotModel.local_end,
+        )
+        .join(Class, Class.id == Enrollment.class_id)
+        .join(
+            EnrollmentSlotSelection,
+            EnrollmentSlotSelection.enrollment_id == Enrollment.id,
+        )
+        .join(
+            ClassScheduleSlotModel,
+            ClassScheduleSlotModel.id == EnrollmentSlotSelection.slot_id,
+        )
+        .where(
+            Enrollment.student_id.in_(student_ids),
+            Enrollment.status == "active",
+            Class.cancelled_at.is_(None),
+            Class.start_date < target_end,
+            Class.end_date > target_start,
+            EnrollmentSlotSelection.effective_from < target_end,
+            (EnrollmentSlotSelection.effective_until.is_(None))
+            | (EnrollmentSlotSelection.effective_until > target_start),
+            ClassScheduleSlotModel.effective_from < target_end,
+            (ClassScheduleSlotModel.effective_until.is_(None))
+            | (ClassScheduleSlotModel.effective_until > target_start),
+        )
+        .order_by(Enrollment.student_id, Class.name)
+    )
+    result: dict[str, list[tuple[str, str, str, str]]] = {}
+    for student_id, class_name, weekday, local_start, local_end in rows.all():
+        result.setdefault(str(student_id), []).append(
+            (
+                str(class_name),
+                str(weekday),
+                local_start.strftime("%H:%M"),
+                local_end.strftime("%H:%M"),
+            )
+        )
+    return result
+
+
+async def create_class_continuation(
+    db: AsyncSession,
+    source_id: UUID,
+    data: ClassContinuationCreate,
+    *,
+    actor_user_id: str | None = None,
+) -> tuple[Class, int]:
+    """Create the next class and every selected membership atomically."""
+
+    existing = await db.scalar(
+        select(Class).where(
+            Class.continuation_request_id == str(data.request_id),
+        )
+    )
+    if existing is not None:
+        if existing.previous_class_id != str(source_id):
+            raise ValueError("Mã yêu cầu đã được sử dụng cho một lớp khác")
+        enrolled_count = int(
+            await db.scalar(
+                select(func.count(Enrollment.id)).where(
+                    Enrollment.class_id == existing.id,
+                )
+            )
+            or 0
+        )
+        return existing, enrolled_count
+
+    try:
+        source = await db.scalar(
+            select(Class).where(Class.id == str(source_id)).with_for_update()
+        )
+        if source is None:
+            raise ValueError("Không tìm thấy lớp nguồn trong workspace này")
+        if source.cancelled_at is not None:
+            raise ValueError("Không thể tạo lớp kế tiếp từ lớp đã hủy")
+        if source.identity_scheme == "LEGACY" or source.end_date is None:
+            raise ValueError(
+                "Lớp nguồn cần hoàn tất thông tin trước khi tạo lớp kế tiếp"
+            )
+        if source.version != data.expected_source_version:
+            raise ValueError(
+                "Lớp nguồn vừa được cập nhật. Vui lòng tải lại rồi thử lại"
+            )
+        if (
+            data.class_data.start_date is None
+            or data.class_data.start_date <= source.end_date
+        ):
+            raise ValueError("Ngày bắt đầu lớp kế tiếp phải sau ngày kết thúc lớp cũ")
+
+        student_ids = sorted({str(item.student_id) for item in data.students})
+        students = (
+            list(
+                (
+                    await db.scalars(
+                        select(Student)
+                        .where(Student.id.in_(student_ids), Student.status == "active")
+                        .order_by(Student.id.asc())
+                        .with_for_update()
+                    )
+                ).all()
+            )
+            if student_ids
+            else []
+        )
+        student_by_id = {str(student.id): student for student in students}
+        if len(student_by_id) != len(student_ids):
+            raise ValueError("Một hoặc nhiều học viên không còn hoạt động")
+
+        source_enrollment_ids = sorted(
+            {
+                str(item.source_enrollment_id)
+                for item in data.students
+                if item.source_enrollment_id is not None
+            }
+        )
+        source_enrollments = (
+            list(
+                (
+                    await db.scalars(
+                        select(Enrollment)
+                        .where(
+                            Enrollment.id.in_(source_enrollment_ids),
+                            Enrollment.class_id == source.id,
+                        )
+                        .options(selectinload(Enrollment.slot_selections))
+                        .order_by(Enrollment.id.asc())
+                        .with_for_update()
+                    )
+                )
+                .unique()
+                .all()
+            )
+            if source_enrollment_ids
+            else []
+        )
+        enrollment_by_id = {
+            str(enrollment.id): enrollment for enrollment in source_enrollments
+        }
+        if len(enrollment_by_id) != len(source_enrollment_ids):
+            raise ValueError("Một hoặc nhiều ghi danh không thuộc lớp nguồn")
+        for selection in data.students:
+            if selection.source_enrollment_id is None:
+                continue
+            enrollment = enrollment_by_id[str(selection.source_enrollment_id)]
+            if enrollment.student_id != str(selection.student_id):
+                raise ValueError("Học viên không khớp với ghi danh của lớp nguồn")
+
+        class_payload = data.class_data.model_copy(
+            update={"source_class_id": source_id},
+        )
+        target = await _create_class_without_commit(
+            db,
+            class_payload,
+            actor_user_id=actor_user_id,
+            continuation_request_id=data.request_id,
+        )
+
+        source_reference = _continuation_reference_date(source)
+        source_slots = await load_class_slots(
+            db,
+            source.id,
+            effective_at=source_reference,
+        )
+        source_slot_key_by_id = {
+            str(slot["slot_id"]): _slot_key(slot) for slot in source_slots
+        }
+        target_slots = await load_class_slots(
+            db,
+            target.id,
+            effective_at=target.start_date,
+        )
+        target_slot_id_by_key = {
+            _slot_key(slot): str(slot["slot_id"]) for slot in target_slots
+        }
+        target_active_slot_ids = list(target_slot_id_by_key.values())
+        target_slot_key_by_id = {
+            slot_id: key for key, slot_id in target_slot_id_by_key.items()
+        }
+        if target.start_date is None or target.end_date is None:
+            raise ValueError("Lớp kế tiếp cần có ngày bắt đầu và ngày kết thúc")
+        existing_schedule_by_student = await _student_schedule_rows_for_continuation(
+            db,
+            student_ids=student_ids,
+            target_start=target.start_date,
+            target_end=target.end_date,
+        )
+
+        for selection in data.students:
+            source_enrollment = (
+                enrollment_by_id.get(str(selection.source_enrollment_id))
+                if selection.source_enrollment_id is not None
+                else None
+            )
+            # Explicit per-student configuration wins. Omitted fields retain
+            # the old continuation contract for safe rolling deployments.
+            custom_fee = (
+                selection.custom_fee
+                if "custom_fee" in selection.model_fields_set
+                else int(source_enrollment.custom_fee)
+                if data.preserve_custom_fees
+                and source_enrollment is not None
+                and source_enrollment.custom_fee is not None
+                else None
+            )
+            target_slot_ids: list[str] | None = None
+            if selection.selected_slots is not None:
+                selected_keys = [
+                    (item.day, item.start, item.end)
+                    for item in selection.selected_slots
+                ]
+                missing = [
+                    key for key in selected_keys if key not in target_slot_id_by_key
+                ]
+                if missing:
+                    raise ValueError(
+                        "Lịch lớp mới đã thay đổi; vui lòng kiểm tra lại buổi học "
+                        f"của {student_by_id[str(selection.student_id)].full_name}"
+                    )
+                target_slot_ids = [target_slot_id_by_key[key] for key in selected_keys]
+                if (
+                    len(target_slot_ids) < len(target_active_slot_ids)
+                    and not selection.partial_fee_reviewed
+                ):
+                    raise ValueError(
+                        "Vui lòng xác nhận học phí cho học viên học không đủ lịch: "
+                        f"{student_by_id[str(selection.student_id)].full_name}"
+                    )
+            elif data.preserve_slot_selections and source_enrollment is not None:
+                selected_source_ids = _active_selection_ids(
+                    source_enrollment,
+                    source_reference,
+                )
+                if selected_source_ids:
+                    selected_keys = [
+                        source_slot_key_by_id[source_slot_id]
+                        for source_slot_id in selected_source_ids
+                        if source_slot_id in source_slot_key_by_id
+                    ]
+                    missing = [
+                        key for key in selected_keys if key not in target_slot_id_by_key
+                    ]
+                    if missing:
+                        raise ValueError(
+                            "Lịch lớp mới đã thay đổi; vui lòng kiểm tra lại buổi học "
+                            f"của {student_by_id[str(selection.student_id)].full_name}"
+                        )
+                    target_slot_ids = [
+                        target_slot_id_by_key[key] for key in selected_keys
+                    ]
+
+            effective_target_ids = target_slot_ids or target_active_slot_ids
+            for target_slot_id in effective_target_ids:
+                target_key = target_slot_key_by_id[target_slot_id]
+                for class_name, day, start, end in existing_schedule_by_student.get(
+                    str(selection.student_id),
+                    [],
+                ):
+                    if day == target_key[0] and _clock_ranges_overlap(
+                        start,
+                        end,
+                        target_key[1],
+                        target_key[2],
+                    ):
+                        raise ValueError(
+                            f"{student_by_id[str(selection.student_id)].full_name} "
+                            f"trùng lịch lớp {class_name} vào {day}, {start}-{end}"
+                        )
+
+            await enroll_locked_student(
+                db,
+                student=student_by_id[str(selection.student_id)],
+                class_=target,
+                custom_fee=custom_fee,
+                enrollment_date=target.start_date,
+                selected_slot_ids=target_slot_ids,
+                actor_user_id=actor_user_id,
+                known_new_class=True,
+                known_active_slot_ids=target_active_slot_ids,
+            )
+
+        await _commit_class_changes(db)
+        await db.refresh(target)
+        _clear_dependent_caches()
+        return target, len(data.students)
+    except Exception:
+        await db.rollback()
+        raise
 
 
 async def update_class(
@@ -1423,6 +2250,10 @@ async def update_class(
             teacher_ids,
             assistant_ids,
         )
+        if canonical_schedule and canonical_schedule.slots:
+            teacher_ids = _schedule_teacher_ids(canonical_schedule)
+            if not teacher_ids:
+                raise ValueError("Mỗi buổi học phải có ít nhất một giáo viên")
         payload["schedule"] = (
             canonical_schedule.model_dump(mode="json") if canonical_schedule else None
         )
@@ -1464,7 +2295,7 @@ async def update_class(
             end_date=next_end_date,
         )
 
-    if teacher_ids_was_set:
+    if teacher_ids_was_set or "schedule" in payload:
         await _sync_class_teachers(
             db,
             class_,
@@ -1479,7 +2310,13 @@ async def update_class(
             actor_user_id=actor_user_id,
         )
     if "schedule" in payload:
-        await sync_class_slots(db, class_, class_.schedule)
+        await sync_class_slots(
+            db,
+            class_,
+            class_.schedule,
+            actor_user_id=actor_user_id,
+            reason="Cập nhật giáo viên theo từng buổi",
+        )
 
     if changing_end_date and class_.identity_scheme != "LEGACY":
         await _reconcile_class_fee_records_after_end_date_change(db, class_)

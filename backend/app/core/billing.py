@@ -158,13 +158,25 @@ def get_enrollment_next_fee_due(
     overdue_dates: list[date] = []
     upcoming_dates: list[date] = []
     max_cycle = -1
+    cumulative_deferral_days = 0
     for record in getattr(enrollment, "fee_records", None) or []:
         cycle_no = getattr(record, "cycle_no", None)
         if cycle_no is not None:
             max_cycle = max(max_cycle, int(cycle_no))
+        base_due_date = getattr(record, "base_due_date", None)
+        adjusted_due_date = getattr(record, "adjusted_due_date", None)
+        if base_due_date is not None and adjusted_due_date is not None:
+            cumulative_deferral_days = max(
+                cumulative_deferral_days,
+                max(0, (adjusted_due_date - base_due_date).days),
+            )
         if getattr(record, "status", None) != "UNPAID":
             continue
-        due_date = getattr(record, "due_date", None)
+        # ``adjusted_due_date`` is the user-visible effective due date.  Keep
+        # ``due_date`` as the immutable/base projection for compatibility with
+        # historical rows, but never let a suspension credit disappear from
+        # dashboard/class summaries by reading the base column first.
+        due_date = adjusted_due_date or getattr(record, "due_date", None)
         if due_date is None:
             continue
         if due_date < reference:
@@ -195,6 +207,8 @@ def get_enrollment_next_fee_due(
         next_due = cycle_base_due_date(
             enrollment_date, billing_type, cycle_weeks, next_cycle
         )
+        if cumulative_deferral_days:
+            next_due = next_due + timedelta(days=cumulative_deferral_days)
         if next_due < reference:
             overdue_dates.append(next_due)
         else:

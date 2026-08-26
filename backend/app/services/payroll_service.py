@@ -9,6 +9,7 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.staff import StaffMember
+from app.models.banking import WorkspacePaymentAccount
 from app.models.staff_attendance import (
     StaffCompensationRate,
     StaffCompensationRateEvent,
@@ -160,6 +161,19 @@ async def settle_staff_payroll(
     actor_user_id: str,
 ) -> StaffPayrollSettlementResponse:
     await _require_staff(db, staff_id)
+    settlement_account = None
+    if payload.settlement_account_id is not None:
+        settlement_account = await db.scalar(
+            select(WorkspacePaymentAccount).where(
+                WorkspacePaymentAccount.id == str(payload.settlement_account_id),
+                WorkspacePaymentAccount.is_active.is_(True),
+            )
+        )
+        if settlement_account is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Tài khoản ngân hàng không tồn tại hoặc đã ngừng sử dụng.",
+            )
     await db.execute(
         text("select pg_advisory_xact_lock(hashtext(:scope))"),
         {"scope": f"staff-payroll:{staff_id}"},
@@ -231,6 +245,23 @@ async def settle_staff_payroll(
         total_amount=total,
         high_watermark_ledger_id=(allocations[-1][0].id if allocations else None),
         method=payload.method,
+        settlement_account_id=(
+            settlement_account.id if settlement_account is not None else None
+        ),
+        settlement_bank_code_snapshot=(
+            settlement_account.bank_code if settlement_account is not None else None
+        ),
+        settlement_bank_name_snapshot=(
+            settlement_account.bank_name if settlement_account is not None else None
+        ),
+        settlement_account_number_snapshot=(
+            settlement_account.account_number
+            if settlement_account is not None
+            else None
+        ),
+        settlement_account_name_snapshot=(
+            settlement_account.account_name if settlement_account is not None else None
+        ),
         reference=payload.reference,
         reason=payload.reason,
         request_id=str(payload.request_id),
@@ -339,6 +370,11 @@ def _settlement_response(
         total_amount=settlement.total_amount,
         cutoff_at=settlement.cutoff_at,
         method=settlement.method,
+        settlement_account_id=settlement.settlement_account_id,
+        settlement_bank_code=settlement.settlement_bank_code_snapshot,
+        settlement_bank_name=settlement.settlement_bank_name_snapshot,
+        settlement_account_number=settlement.settlement_account_number_snapshot,
+        settlement_account_name=settlement.settlement_account_name_snapshot,
         reference=settlement.reference,
         created_at=settlement.created_at,
         reversed_at=reversed_at,

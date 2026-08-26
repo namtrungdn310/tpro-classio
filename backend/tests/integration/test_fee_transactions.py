@@ -269,7 +269,7 @@ async def test_refund_retry_and_reversal_keep_projection_and_ledger_consistent(
                 request_id=refund_request_id,
                 items=[{"record_id": fee_id, "amount": 250_000}],
                 reason="Học viên dừng khóa học sớm",
-                refund_method="bank_transfer",
+                refund_method="cash",
             )
             refunded = await refund_fee_records(db, payload, actor_id=actor_id)
             retried = await refund_fee_records(db, payload, actor_id=actor_id)
@@ -295,7 +295,7 @@ async def test_refund_retry_and_reversal_keep_projection_and_ledger_consistent(
                         request_id=refund_request_id,
                         items=[{"record_id": fee_id, "amount": 100_000}],
                         reason="Học viên dừng khóa học sớm",
-                        refund_method="bank_transfer",
+                        refund_method="cash",
                     ),
                     actor_id=actor_id,
                 )

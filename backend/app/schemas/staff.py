@@ -47,8 +47,17 @@ class StaffPayrollSettlementCreate(BaseModel):
 
     request_id: UUID
     method: Literal["bank_transfer", "cash"]
+    settlement_account_id: UUID | None = None
     reference: str | None = Field(default=None, max_length=120)
     reason: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_settlement_account(self) -> "StaffPayrollSettlementCreate":
+        if self.method == "bank_transfer" and self.settlement_account_id is None:
+            raise ValueError("Hãy chọn tài khoản ngân hàng dùng để tất toán")
+        if self.method == "cash" and self.settlement_account_id is not None:
+            raise ValueError("Tất toán tiền mặt không cần tài khoản ngân hàng")
+        return self
 
 
 class StaffPayrollSettlementResponse(BaseModel):
@@ -58,6 +67,11 @@ class StaffPayrollSettlementResponse(BaseModel):
     total_amount: int
     cutoff_at: datetime
     method: str
+    settlement_account_id: UUID | None
+    settlement_bank_code: str | None
+    settlement_bank_name: str | None
+    settlement_account_number: str | None
+    settlement_account_name: str | None
     reference: str | None
     created_at: datetime
     reversed_at: datetime | None = None
@@ -88,6 +102,25 @@ class StaffPayrollSummaryResponse(BaseModel):
     settlements: list[StaffPayrollSettlementResponse]
 
 
+class StaffAttendanceHistoryItem(BaseModel):
+    attendance_id: UUID
+    class_name: str | None = None
+    role: str
+    occurrence_start_at: datetime
+    occurrence_end_at: datetime
+    kind: str
+    checkin_at: datetime
+    rate_amount: int
+    rate_version: int
+    reversed_at: datetime | None = None
+    reversal_reason: str | None = None
+
+
+class StaffAttendanceHistoryResponse(BaseModel):
+    staff_id: UUID
+    items: list[StaffAttendanceHistoryItem]
+
+
 class StaffBase(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -95,12 +128,21 @@ class StaffBase(BaseModel):
     staff_type: StaffType
     zalo_name: str | None = Field(default=None, max_length=100)
     phone: str | None = Field(default=None, max_length=32)
+    email: str | None = Field(default=None, max_length=320)
+    checkin_window_after_hours: int = Field(default=24, ge=1, le=720)
     is_active: bool = True
 
     @field_validator("zalo_name")
     @classmethod
     def normalize_zalo_name(cls, value: str | None) -> str | None:
         return value or None
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str | None) -> str | None:
+        if not value:
+            return None
+        return _normalize_and_validate_email(value)
 
     @model_validator(mode="after")
     def validate_contact_pair(self) -> "StaffBase":
@@ -129,6 +171,8 @@ class StaffUpdate(BaseModel):
     staff_type: StaffType | None = None
     zalo_name: str | None = Field(default=None, max_length=100)
     phone: str | None = Field(default=None, max_length=32)
+    email: str | None = Field(default=None, max_length=320)
+    checkin_window_after_hours: int | None = Field(default=None, ge=1, le=720)
     is_active: bool | None = None
 
     @model_validator(mode="before")
@@ -155,6 +199,13 @@ class StaffUpdate(BaseModel):
     def normalize_zalo_name(cls, value: str | None) -> str | None:
         return value or None
 
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str | None) -> str | None:
+        if not value:
+            return None
+        return _normalize_and_validate_email(value)
+
 
 class StaffClassResponse(BaseModel):
     id: UUID
@@ -164,6 +215,10 @@ class StaffClassResponse(BaseModel):
 
 class StaffResponse(StaffBase):
     id: UUID
+    current_rate: int | None = None
+    attendance_account_status: Literal[
+        "connected", "disabled", "invited", "expired", "not_connected"
+    ] = "not_connected"
     assigned_classes: list[StaffClassResponse] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
@@ -175,6 +230,7 @@ class TeacherOptionResponse(BaseModel):
     id: UUID
     full_name: str
     staff_type: Literal["TEACHER", "ASSISTANT"]
+    email: str | None = None
 
 
 def _normalize_and_validate_phone(value: str | None) -> str | None:
@@ -192,4 +248,20 @@ def _normalize_and_validate_phone(value: str | None) -> str | None:
         return None
     if not is_valid_vietnam_mobile_phone(normalized):
         raise ValueError("SĐT nhân sự phải là số di động Việt Nam hợp lệ")
+    return normalized
+
+
+_EMAIL_PATTERN = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
+
+
+def _normalize_and_validate_email(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if not normalized:
+        return None
+    if len(normalized) > 320:
+        raise ValueError("Email nhân sự không được vượt quá 320 ký tự")
+    if not _EMAIL_PATTERN.fullmatch(normalized):
+        raise ValueError("Email nhân sự không hợp lệ")
     return normalized

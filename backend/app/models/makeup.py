@@ -13,9 +13,10 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+from app.core.workspace import WorkspaceScoped
 
 
-class ClassScheduleAdjustment(Base):
+class ClassScheduleAdjustment(WorkspaceScoped, Base):
     """Header/lô hoãn: reason + phạm vi ngày + idempotency request_id."""
 
     __tablename__ = "class_schedule_adjustments"
@@ -58,7 +59,7 @@ class ClassScheduleAdjustment(Base):
     )
 
 
-class ClassSessionException(Base):
+class ClassSessionException(WorkspaceScoped, Base):
     """Một dated exception của đúng một original occurrence.
 
     Status: MAKEUP_PENDING / MAKEUP_SCHEDULED / MAKEUP_COMPLETED / RESTORED /
@@ -134,7 +135,7 @@ class ClassSessionException(Base):
     )
 
 
-class ClassSessionStaffSnapshot(Base):
+class ClassSessionStaffSnapshot(WorkspaceScoped, Base):
     """Snapshot staff của ORIGINAL slot (teacher + assistant) tại thời điểm hoãn."""
 
     __tablename__ = "class_session_staff_snapshots"
@@ -170,7 +171,7 @@ class ClassSessionStaffSnapshot(Base):
     exception = relationship("ClassSessionException", back_populates="staff_snapshots")
 
 
-class ClassSessionStudentSnapshot(Base):
+class ClassSessionStudentSnapshot(WorkspaceScoped, Base):
     """Snapshot eligibility học viên theo membership tại ngày original.
 
     Chỉ lưu trường entitlement/display — không contact/private note.
@@ -215,7 +216,7 @@ class ClassSessionStudentSnapshot(Base):
     )
 
 
-class ClassScheduleAdjustmentEvent(Base):
+class ClassScheduleAdjustmentEvent(WorkspaceScoped, Base):
     """Append-only audit ledger của mọi command make-up."""
 
     __tablename__ = "class_schedule_adjustment_events"

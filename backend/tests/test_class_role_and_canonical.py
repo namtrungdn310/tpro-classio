@@ -81,10 +81,10 @@ def test_slot_effective_teacher_uses_explicit_when_present() -> None:
     ]
 
 
-def test_slot_effective_teacher_falls_back_to_pool_when_empty() -> None:
+def test_slot_effective_teacher_does_not_bleed_class_pool_when_empty() -> None:
     slot = ClassScheduleSlot(day="Thứ 2", start="18:00", end="19:30")
     pool = [str(uuid4())]
-    assert _slot_effective_teacher_ids(slot, pool) == pool
+    assert _slot_effective_teacher_ids(slot, pool) == []
 
 
 def test_slot_effective_assistant_never_falls_back() -> None:
@@ -101,15 +101,19 @@ def test_slot_effective_assistant_never_falls_back() -> None:
     ]
 
 
-def test_normalize_materializes_legacy_teacher_and_keeps_empty_assistant() -> None:
+def test_normalize_requires_explicit_teacher_and_keeps_empty_assistant() -> None:
     teacher_id = str(uuid4())
     assistant_id = str(uuid4())
     schedule = ClassSchedule(
         text="Thứ 2 (18:00-19:30)",
         slots=[
-            # Legacy: thiếu teacher_ids và assistant_ids.
-            ClassScheduleSlot(day="Thứ 2", start="18:00", end="19:30"),
-            # Explicit: giữ nguyên assignment.
+            # Mỗi buổi phải có assignment giáo viên riêng.
+            ClassScheduleSlot(
+                day="Thứ 2",
+                start="18:00",
+                end="19:30",
+                teacher_ids=[teacher_id],
+            ),
             ClassScheduleSlot(
                 day="Thứ 4",
                 start="19:00",
@@ -135,6 +139,18 @@ def test_normalize_materializes_legacy_teacher_and_keeps_empty_assistant() -> No
     # day/start/end/text không đổi.
     assert canonical.text == schedule.text
     assert first.day == "Thứ 2" and first.start == "18:00" and first.end == "19:30"
+
+
+def test_normalize_rejects_legacy_slot_without_teacher_assignment() -> None:
+    schedule = ClassSchedule(
+        slots=[ClassScheduleSlot(day="Thứ 2", start="18:00", end="19:30")]
+    )
+    with pytest.raises(ValueError, match="ít nhất một giáo viên"):
+        normalize_schedule_assignments(
+            schedule,
+            teacher_ids=[str(uuid4())],
+            assistant_ids=[],
+        )
 
 
 def test_normalize_dedupes_ids_in_stable_order() -> None:

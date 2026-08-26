@@ -97,6 +97,38 @@ grant execute on function public.student_code_luhn_check(text) to tpro_backend;
 grant execute on function public.student_code_from_serial(bigint) to tpro_backend;
 grant execute on function public.student_code_valid(text) to tpro_backend;
 
+-- Workspace isolation migrations intentionally revoke PUBLIC/Browser EXECUTE.
+-- The API runs as tpro_backend in deployed environments (the disposable
+-- pipeline uses tpro_runtime), so re-apply only these two server-side helpers
+-- after the broad function revoke above.
+do $$
+begin
+  if to_regprocedure('public.current_workspace_id()') is not null then
+    execute 'grant execute on function public.current_workspace_id() to tpro_backend';
+  end if;
+  if to_regprocedure('public.stamp_workspace_id()') is not null then
+    execute 'grant execute on function public.stamp_workspace_id() to tpro_backend';
+  end if;
+end
+$$;
+
+-- Dev operations reads are aggregate security-definer functions in the
+-- dedicated ops schema. Grant execute to the backend runtime only; browser
+-- roles and direct table access remain denied.
+do $$
+begin
+  if to_regnamespace('ops') is not null then
+    execute 'grant usage on schema ops to tpro_backend';
+  end if;
+  if to_regprocedure('ops.platform_overview()') is not null then
+    execute 'grant execute on function ops.platform_overview() to tpro_backend';
+  end if;
+  if to_regprocedure('ops.disable_workspace_pay2s(uuid,uuid,text)') is not null then
+    execute 'grant execute on function ops.disable_workspace_pay2s(uuid,uuid,text) to tpro_backend';
+  end if;
+end
+$$;
+
 do $$
 declare
   runtime_role record;

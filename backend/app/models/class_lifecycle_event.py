@@ -5,9 +5,10 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
+from app.core.workspace import WorkspaceScoped
 
 
-class ClassLifecycleEvent(Base):
+class ClassLifecycleEvent(WorkspaceScoped, Base):
     """Append-only audit evidence for business lifecycle changes of a class."""
 
     __tablename__ = "class_lifecycle_events"

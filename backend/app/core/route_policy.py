@@ -62,6 +62,12 @@ DOMAIN_PREFIX_POLICIES: dict[str, RoutePolicyKind] = {
     "/staff": "MANAGEMENT",
     "/dashboard": "MANAGEMENT",
     "/contact-suggestions": "MANAGEMENT",
+    "/banking": "MANAGEMENT",
+    # Provider callbacks are unauthenticated at the application-session layer;
+    # the webhook router performs its own bearer-token validation and replay
+    # protection.
+    "/webhooks": "PUBLIC",
+    "/ops": "DEV_ONLY",
 }
 
 

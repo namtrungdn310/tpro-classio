@@ -30,6 +30,7 @@ from sqlalchemy.orm import aliased
 from app.core.config import settings
 from app.models.fee_operation import FeeOperation, FeeOperationItem
 from app.models.payment import Payment
+from app.models.student import Student
 from app.schemas.report import (
     FeePaidAllocationResponse,
     FeePaidReceiptDetailResponse,
@@ -255,6 +256,9 @@ def _receipt_source():
             FeeOperation.actor_username_snapshot.label("actor_username"),
             FeeOperation.actor_role_snapshot.label("actor_role"),
             item.student_id.label("student_id"),
+            func.min(
+                func.coalesce(item.student_code_snapshot, Student.student_code)
+            ).label("student_code"),
             func.coalesce(item.student_name_snapshot, "Học viên đã xoá").label(
                 "student_name"
             ),
@@ -265,6 +269,19 @@ def _receipt_source():
             cast(func.min(cast(payment.payment_method, Text)), Text).label(
                 "payment_method"
             ),
+            cast(func.min(payment.payment_origin), Text).label("payment_origin"),
+            cast(func.min(cast(payment.settlement_account_id, Text)), Text).label(
+                "settlement_account_id"
+            ),
+            func.min(payment.settlement_bank_name_snapshot).label(
+                "settlement_bank_name"
+            ),
+            func.min(payment.settlement_account_number_snapshot).label(
+                "settlement_account_number"
+            ),
+            func.min(payment.settlement_account_name_snapshot).label(
+                "settlement_account_name"
+            ),
             func.bool_and(source_reversed).label("reversed_all"),
             effective_gross.label("gross_amount"),
             effective_refunded.label("refunded_amount"),
@@ -274,6 +291,8 @@ def _receipt_source():
                     func.concat_ws(
                         " ",
                         item.student_name_snapshot,
+                        item.student_code_snapshot,
+                        Student.student_code,
                         item.class_name_snapshot,
                         FeeOperation.actor_name_snapshot,
                         FeeOperation.actor_username_snapshot,
@@ -286,6 +305,7 @@ def _receipt_source():
         )
         .join(item, item.operation_id == FeeOperation.id)
         .join(payment, payment.id == item.payment_id)
+        .outerjoin(Student, Student.id == item.student_id)
         .outerjoin(
             effective_refunds,
             effective_refunds.c.source_payment_id == payment.id,
@@ -344,6 +364,7 @@ def _apply_paid_filters(
     date_from: date | None,
     date_to: date | None,
     payment_method: str | None,
+    payment_origin: str | None,
     refund_state: FeePaidRefundState | None,
 ):
     conditions = []
@@ -359,6 +380,8 @@ def _apply_paid_filters(
         conditions.append(receipts.c.paid_date <= date_to)
     if payment_method:
         conditions.append(receipts.c.payment_method == payment_method)
+    if payment_origin:
+        conditions.append(receipts.c.payment_origin == payment_origin)
     if refund_state:
         conditions.append(_refund_state_condition(receipts, refund_state))
     else:
@@ -389,11 +412,19 @@ def _receipt_summary(row) -> FeePaidReceiptSummaryResponse:
         ),
         payment_operation_id=UUID(str(row.payment_operation_id)),
         student_id=UUID(str(row.student_id)) if row.student_id else None,
+        student_code=row.student_code,
         student_name=row.student_name,
         period=_single_period(row.periods),
         paid_date=row.paid_date,
         paid_at=row.paid_at,
         payment_method=row.payment_method,
+        payment_origin=row.payment_origin or "manual",
+        settlement_account_id=(
+            UUID(str(row.settlement_account_id)) if row.settlement_account_id else None
+        ),
+        settlement_bank_name=row.settlement_bank_name,
+        settlement_account_number=row.settlement_account_number,
+        settlement_account_name=row.settlement_account_name,
         gross_amount=gross_amount,
         refunded_amount=refunded_amount,
         net_amount=max(0, gross_amount - refunded_amount),
@@ -418,6 +449,7 @@ async def get_paid_fee_receipts(
     date_from: date | None = None,
     date_to: date | None = None,
     payment_method: str | None = None,
+    payment_origin: str | None = None,
     refund_state: FeePaidRefundState | None = None,
     cursor: str | None = None,
     limit: int = 30,
@@ -437,6 +469,7 @@ async def get_paid_fee_receipts(
         date_from=date_from,
         date_to=date_to,
         payment_method=payment_method,
+        payment_origin=payment_origin,
         refund_state=refund_state,
     )
     filtered_receipts = filtered.cte("filtered_paid_receipts")
@@ -749,6 +782,16 @@ async def _load_receipt_timeline(
                 occurred_at=operation.occurred_at,
                 amount_delta=sum(_to_int(item.amount_delta) for item in items),
                 payment_method=payments[0].payment_method,
+                payment_origin=payments[0].payment_origin or "manual",
+                settlement_account_id=(
+                    UUID(str(payments[0].settlement_account_id))
+                    if payments[0].settlement_account_id
+                    else None
+                ),
+                settlement_bank_name=payments[0].settlement_bank_name_snapshot,
+                settlement_account_number=(
+                    payments[0].settlement_account_number_snapshot
+                ),
                 actor_name=operation.actor_name_snapshot,
                 actor_username=operation.actor_username_snapshot,
                 actor_role=operation.actor_role_snapshot,

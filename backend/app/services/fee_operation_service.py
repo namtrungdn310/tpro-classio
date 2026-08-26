@@ -27,6 +27,7 @@ class FeeRecordAuditSnapshot:
     due_date: date | None
     notification_channel: str | None
     notification_message: str | None
+    student_code: str | None = None
 
 
 @dataclass(frozen=True)
@@ -91,6 +92,7 @@ def snapshot_fee_record(record: FeeRecord | None) -> FeeRecordAuditSnapshot | No
         fee_record_id=record.id,
         enrollment_id=record.enrollment_id,
         student_id=enrollment.student_id if enrollment else None,
+        student_code=student.student_code if student else None,
         student_name=record.student_name_snapshot
         or (student.full_name if student else None),
         class_id=enrollment.class_id if enrollment else None,
@@ -192,6 +194,7 @@ async def append_fee_operation(
                 fee_record_id=subject.fee_record_id,
                 enrollment_id=subject.enrollment_id,
                 student_id=subject.student_id,
+                student_code_snapshot=subject.student_code,
                 student_name_snapshot=subject.student_name,
                 class_id=subject.class_id,
                 class_name_snapshot=subject.class_name,

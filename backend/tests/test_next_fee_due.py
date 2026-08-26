@@ -37,13 +37,23 @@ def make_enrollment(
     )
 
 
-def make_record(period, due_date, cycle_no, status="UNPAID", refunded_amount=0):
+def make_record(
+    period,
+    due_date,
+    cycle_no,
+    status="UNPAID",
+    refunded_amount=0,
+    base_due_date=None,
+    adjusted_due_date=None,
+):
     return SimpleNamespace(
         period=period,
         due_date=due_date,
         cycle_no=cycle_no,
         status=status,
         refunded_amount=refunded_amount,
+        base_due_date=base_due_date,
+        adjusted_due_date=adjusted_due_date,
     )
 
 
@@ -111,6 +121,47 @@ def test_upcoming_unpaid_record_is_reported():
     assert due_date == date(2026, 8, 6)
 
 
+def test_service_credit_uses_adjusted_due_date_for_existing_cycle():
+    class_ = make_class()
+    enrollment = make_enrollment(
+        class_,
+        date(2026, 6, 6),
+        fee_records=[
+            make_record(
+                "2026-08",
+                date(2026, 8, 6),
+                2,
+                base_due_date=date(2026, 8, 6),
+                adjusted_due_date=date(2026, 8, 16),
+            )
+        ],
+    )
+    due_date, state = get_enrollment_next_fee_due(enrollment, TODAY)
+    assert state == NEXT_FEE_DUE_UPCOMING
+    assert due_date == date(2026, 8, 16)
+
+
+def test_service_credit_is_carried_to_unmaterialized_next_cycle():
+    class_ = make_class()
+    enrollment = make_enrollment(
+        class_,
+        date(2026, 6, 6),
+        fee_records=[
+            make_record(
+                "2026-07",
+                date(2026, 7, 6),
+                1,
+                status="PAID",
+                base_due_date=date(2026, 7, 6),
+                adjusted_due_date=date(2026, 7, 16),
+            )
+        ],
+    )
+    due_date, state = get_enrollment_next_fee_due(enrollment, TODAY)
+    assert state == NEXT_FEE_DUE_UPCOMING
+    assert due_date == date(2026, 8, 16)
+
+
 def test_refunded_period_does_not_reopen_or_shift_schedule():
     class_ = make_class()
     enrollment = make_enrollment(
@@ -144,6 +195,35 @@ def test_course_paid_periods_advance_to_next_cycle():
     due_date, state = get_enrollment_next_fee_due(enrollment, TODAY)
     assert state == NEXT_FEE_DUE_UPCOMING
     assert due_date == date(2026, 8, 24)
+
+
+def test_four_week_package_deferral_uses_28_day_anchor_not_calendar_month():
+    """A package is four weeks (28 days), then the student's credit is added."""
+    class_ = make_class(
+        type="COURSE",
+        billing_cycle_months=None,
+        billing_cycle_weeks=4,
+        start_date=date(2026, 8, 1),
+        end_date=date(2027, 8, 1),
+    )
+    enrollment = make_enrollment(
+        class_,
+        date(2026, 8, 14),
+        fee_records=[
+            make_record("2026-08", date(2026, 8, 14), 0, status="PAID"),
+            make_record(
+                "2026-09",
+                date(2026, 9, 11),
+                1,
+                status="UNPAID",
+                base_due_date=date(2026, 9, 11),
+                adjusted_due_date=date(2026, 9, 21),
+            ),
+        ],
+    )
+    due_date, state = get_enrollment_next_fee_due(enrollment, date(2026, 8, 16))
+    assert state == NEXT_FEE_DUE_UPCOMING
+    assert due_date == date(2026, 9, 21)
 
 
 def test_next_due_date_never_exceeds_class_end_date():

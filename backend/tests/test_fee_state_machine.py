@@ -297,7 +297,7 @@ async def test_unpay_appends_negative_reversal_and_preserves_notification() -> N
 
 
 @pytest.mark.asyncio
-async def test_direct_payment_can_be_reversed_to_notified_with_a_snapshot() -> None:
+async def test_direct_payment_cannot_invent_a_notification_when_reversed() -> None:
     record = make_fee_record(
         status="PAID",
         notified_at=None,
@@ -332,27 +332,19 @@ async def test_direct_payment_can_be_reversed_to_notified_with_a_snapshot() -> N
             ),
         ),
     ):
-        response = await mark_fees_unpaid(
-            db,
-            [UUID(record.id)],
-            actor_id=actor_id,
-            target_notification_state="NOTIFIED_UNPAID",
-        )
+        with pytest.raises(HTTPException) as exc_info:
+            await mark_fees_unpaid(
+                db,
+                [UUID(record.id)],
+                actor_id=actor_id,
+                target_notification_state="NOTIFIED_UNPAID",
+            )
 
-    assert record.status == "UNPAID"
-    assert record.notified_at is not None
-    assert record.notification_channel == "zalo_manual"
-    assert record.notification_message
-    assert response.records[0].notification_state == "NOTIFIED_UNPAID"
-    reversal = db.add.call_args.args[0]
-    assert isinstance(reversal, Payment)
-    assert reversal.entry_type == "payment_reversal"
-    assert int(reversal.amount) == -750000
-    assert reversal.payment_method == "bank_transfer"
-    assert reversal.related_payment_id == payment_id
-    assert reversal.created_by == actor_id
-    db.commit.assert_awaited_once()
-    db.rollback.assert_not_awaited()
+    assert exc_info.value.status_code == 422
+    assert record.status == "PAID"
+    assert record.notification_message is None
+    db.rollback.assert_awaited_once()
+    db.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio

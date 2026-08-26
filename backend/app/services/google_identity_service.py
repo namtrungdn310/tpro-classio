@@ -200,6 +200,7 @@ async def link_google_identity(
             text(
                 "update profiles set avatar_url = :url, avatar_synced_at = :now"
                 " where id = cast(:uid as uuid)"
+                " and workspace_id = public.current_workspace_id()"
             ),
             {"url": avatar_url, "now": now, "uid": user_id},
         )
@@ -208,6 +209,7 @@ async def link_google_identity(
             text(
                 "update profiles set avatar_synced_at = :now"
                 " where id = cast(:uid as uuid)"
+                " and workspace_id = public.current_workspace_id()"
             ),
             {"now": now, "uid": user_id},
         )

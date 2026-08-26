@@ -7,9 +7,10 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+from app.core.workspace import WorkspaceScoped
 
 
-class EnrollmentServiceCreditEvent(Base):
+class EnrollmentServiceCreditEvent(WorkspaceScoped, Base):
     __tablename__ = "enrollment_service_credit_events"
 
     id: Mapped[str] = mapped_column(
@@ -55,7 +56,7 @@ class EnrollmentServiceCreditEvent(Base):
     )
 
 
-class ServiceCreditAllocation(Base):
+class ServiceCreditAllocation(WorkspaceScoped, Base):
     __tablename__ = "service_credit_allocations"
 
     id: Mapped[str] = mapped_column(

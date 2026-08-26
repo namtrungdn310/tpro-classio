@@ -42,10 +42,13 @@ async def resolve_occurrence_for_staff(
     db: AsyncSession,
     occurrence_id: UUID,
     staff_id: str,
+    *,
+    days_before: int = 2,
+    days_after: int = 7,
 ) -> StaffOccurrence | None:
     """Find the canonical occurrence matching the requested occurrence id."""
-    range_start = datetime.now(timezone.utc) - timedelta(days=2)
-    range_end = datetime.now(timezone.utc) + timedelta(days=7)
+    range_start = datetime.now(timezone.utc) - timedelta(days=days_before)
+    range_end = datetime.now(timezone.utc) + timedelta(days=days_after)
     result = await db.execute(
         select(Class).where(
             Class.is_active.is_(True),

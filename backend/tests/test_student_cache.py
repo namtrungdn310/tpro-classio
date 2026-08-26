@@ -48,6 +48,7 @@ async def test_get_students_always_queries_database() -> None:
         archived_at=None,
         archived_reason=None,
         created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
         enrollments=[],
     )
     db = AsyncMock()

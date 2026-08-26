@@ -16,9 +16,10 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
+from app.core.workspace import WorkspaceScoped
 
 
-class StaffCompensationRate(Base):
+class StaffCompensationRate(WorkspaceScoped, Base):
     __tablename__ = "staff_compensation_rates"
 
     id: Mapped[str] = mapped_column(
@@ -42,7 +43,7 @@ class StaffCompensationRate(Base):
     )
 
 
-class StaffCompensationRateEvent(Base):
+class StaffCompensationRateEvent(WorkspaceScoped, Base):
     __tablename__ = "staff_compensation_rate_events"
 
     id: Mapped[str] = mapped_column(
@@ -70,7 +71,7 @@ class StaffCompensationRateEvent(Base):
     )
 
 
-class StaffAttendanceEntry(Base):
+class StaffAttendanceEntry(WorkspaceScoped, Base):
     __tablename__ = "staff_attendance_entries"
 
     id: Mapped[str] = mapped_column(
@@ -110,6 +111,12 @@ class StaffAttendanceEntry(Base):
     rate_amount: Mapped[int] = mapped_column(BigInteger, nullable=False)
     rate_version: Mapped[int] = mapped_column(Integer, nullable=False)
     request_id: Mapped[str] = mapped_column(UUID(as_uuid=False), nullable=False)
+    reversed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reversed_by: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("profiles.id", ondelete="SET NULL"),
+    )
+    reversal_reason: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -117,7 +124,7 @@ class StaffAttendanceEntry(Base):
     )
 
 
-class StaffEarningLedgerEntry(Base):
+class StaffEarningLedgerEntry(WorkspaceScoped, Base):
     __tablename__ = "staff_earning_ledger"
 
     id: Mapped[str] = mapped_column(
@@ -154,7 +161,7 @@ class StaffEarningLedgerEntry(Base):
     )
 
 
-class StaffPayrollSettlement(Base):
+class StaffPayrollSettlement(WorkspaceScoped, Base):
     __tablename__ = "staff_payroll_settlements"
 
     id: Mapped[str] = mapped_column(
@@ -174,6 +181,14 @@ class StaffPayrollSettlement(Base):
         ForeignKey("staff_earning_ledger.id", ondelete="RESTRICT"),
     )
     method: Mapped[str] = mapped_column(Text, nullable=False)
+    settlement_account_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("workspace_payment_accounts.id", ondelete="SET NULL"),
+    )
+    settlement_bank_code_snapshot: Mapped[str | None] = mapped_column(Text)
+    settlement_bank_name_snapshot: Mapped[str | None] = mapped_column(Text)
+    settlement_account_number_snapshot: Mapped[str | None] = mapped_column(Text)
+    settlement_account_name_snapshot: Mapped[str | None] = mapped_column(Text)
     reference: Mapped[str | None] = mapped_column(Text)
     reason: Mapped[str | None] = mapped_column(Text)
     request_id: Mapped[str] = mapped_column(UUID(as_uuid=False), nullable=False)
@@ -188,7 +203,7 @@ class StaffPayrollSettlement(Base):
     )
 
 
-class StaffPayrollSettlementItem(Base):
+class StaffPayrollSettlementItem(WorkspaceScoped, Base):
     __tablename__ = "staff_payroll_settlement_items"
 
     id: Mapped[str] = mapped_column(
@@ -209,7 +224,7 @@ class StaffPayrollSettlementItem(Base):
     allocated_amount: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
 
-class StaffPayrollSettlementReversal(Base):
+class StaffPayrollSettlementReversal(WorkspaceScoped, Base):
     __tablename__ = "staff_payroll_settlement_reversals"
 
     id: Mapped[str] = mapped_column(

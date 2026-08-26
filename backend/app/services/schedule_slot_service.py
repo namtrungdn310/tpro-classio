@@ -17,7 +17,9 @@ from app.models.class_ import Class
 from app.models.class_schedule_slot import (
     ClassScheduleSlot,
     ClassScheduleSlotStaff,
+    ClassScheduleSlotTeacherEvent,
 )
+from app.models.staff import StaffMember
 
 WEEKDAY_TO_INDEX = {
     "Thứ 2": 0,
@@ -40,10 +42,24 @@ async def load_class_slots(
     """Relational-first slot projection (JSON-slot shape + stable identity).
 
     Each slot dict: day/start/end/teacher_ids/assistant_ids + slot_id/version.
+    Columns are selected explicitly so the ``lazy="selectin"`` ``staff_links``
+    relationship is never auto-loaded (which would duplicate the staff read).
     """
     reference = effective_at or business_today()
     rows = await db.execute(
-        select(ClassScheduleSlot)
+        select(
+            ClassScheduleSlot.id,
+            ClassScheduleSlot.weekday,
+            ClassScheduleSlot.local_start,
+            ClassScheduleSlot.local_end,
+            ClassScheduleSlot.version,
+            ClassScheduleSlotStaff.staff_id,
+            ClassScheduleSlotStaff.role,
+        )
+        .outerjoin(
+            ClassScheduleSlotStaff,
+            ClassScheduleSlotStaff.slot_id == ClassScheduleSlot.id,
+        )
         .where(
             ClassScheduleSlot.class_id == class_id,
             ClassScheduleSlot.effective_from <= reference,
@@ -52,43 +68,145 @@ async def load_class_slots(
         )
         .order_by(ClassScheduleSlot.weekday, ClassScheduleSlot.local_start)
     )
-    slots = list(rows.scalars().unique().all())
-    if not slots:
-        return []
 
-    staff_rows = await db.execute(
-        select(ClassScheduleSlotStaff).where(
-            ClassScheduleSlotStaff.slot_id.in_([slot.id for slot in slots])
-        )
-    )
-    staff_by_slot: dict[str, list[ClassScheduleSlotStaff]] = {}
-    for staff in staff_rows.scalars().unique().all():
-        staff_by_slot.setdefault(str(staff.slot_id), []).append(staff)
+    slots: list[tuple[str, str, time, time, int]] = []
+    staff_by_slot: dict[str, list[tuple[str, str]]] = {}
+    seen_slot_ids: set[str] = set()
+    for slot_id, weekday, local_start, local_end, version, staff_id, role in rows.all():
+        key = str(slot_id)
+        if key not in seen_slot_ids:
+            seen_slot_ids.add(key)
+            slots.append(
+                (
+                    key,
+                    weekday,
+                    local_start,
+                    local_end,
+                    version,
+                )
+            )
+        if staff_id is not None and role is not None:
+            staff_by_slot.setdefault(key, []).append((str(staff_id), role))
 
     projection: list[dict] = []
-    for slot in slots:
+    for key, weekday, local_start, local_end, version in slots:
         teacher_ids = [
-            str(item.staff_id)
-            for item in staff_by_slot.get(str(slot.id), [])
-            if item.role == "TEACHER"
+            staff_id
+            for staff_id, item_role in staff_by_slot.get(key, [])
+            if item_role == "TEACHER"
         ]
         assistant_ids = [
-            str(item.staff_id)
-            for item in staff_by_slot.get(str(slot.id), [])
-            if item.role == "ASSISTANT"
+            staff_id
+            for staff_id, item_role in staff_by_slot.get(key, [])
+            if item_role == "ASSISTANT"
         ]
         projection.append(
             {
-                "day": slot.weekday,
-                "start": _time_text(slot.local_start),
-                "end": _time_text(slot.local_end),
+                "day": weekday,
+                "start": _time_text(local_start),
+                "end": _time_text(local_end),
                 "teacher_ids": teacher_ids,
                 "assistant_ids": assistant_ids,
-                "slot_id": str(slot.id),
-                "version": slot.version,
+                "slot_id": key,
+                "version": version,
             }
         )
     return projection
+
+
+async def load_class_slots_bulk(
+    db: AsyncSession,
+    class_ids: list[str],
+    *,
+    effective_at: date | None = None,
+) -> dict[str, list[dict]]:
+    """Load current relational slots for many classes in ONE bounded query.
+
+    Availability checks run against every active class.  Calling
+    :func:`load_class_slots` once per class turns that path into an N+1 query
+    pattern, which is especially expensive when the database is a remote
+    Supabase pooler.  Slots and their staff links are joined in a single
+    statement with explicit columns (the ORM's ``lazy="selectin"`` is skipped
+    on purpose), keeping the same relational-first projection as the single
+    class loader.
+    """
+    ids = list(dict.fromkeys(str(class_id) for class_id in class_ids))
+    if not ids:
+        return {}
+
+    reference = effective_at or business_today()
+    rows = await db.execute(
+        select(
+            ClassScheduleSlot.id,
+            ClassScheduleSlot.class_id,
+            ClassScheduleSlot.weekday,
+            ClassScheduleSlot.local_start,
+            ClassScheduleSlot.local_end,
+            ClassScheduleSlot.version,
+            ClassScheduleSlotStaff.staff_id,
+            ClassScheduleSlotStaff.role,
+        )
+        .outerjoin(
+            ClassScheduleSlotStaff,
+            ClassScheduleSlotStaff.slot_id == ClassScheduleSlot.id,
+        )
+        .where(
+            ClassScheduleSlot.class_id.in_(ids),
+            ClassScheduleSlot.effective_from <= reference,
+            (ClassScheduleSlot.effective_until.is_(None))
+            | (ClassScheduleSlot.effective_until > reference),
+        )
+        .order_by(
+            ClassScheduleSlot.class_id,
+            ClassScheduleSlot.weekday,
+            ClassScheduleSlot.local_start,
+        )
+    )
+
+    slots: list[tuple[str, str, str, time, time, int]] = []
+    staff_by_slot: dict[str, list[tuple[str, str]]] = {}
+    seen_slot_ids: set[str] = set()
+    for (
+        slot_id,
+        class_id,
+        weekday,
+        local_start,
+        local_end,
+        version,
+        staff_id,
+        role,
+    ) in rows.all():
+        key = str(slot_id)
+        if key not in seen_slot_ids:
+            seen_slot_ids.add(key)
+            slots.append((key, str(class_id), weekday, local_start, local_end, version))
+        if staff_id is not None and role is not None:
+            staff_by_slot.setdefault(key, []).append((str(staff_id), role))
+
+    projection: dict[str, list[dict]] = {class_id: [] for class_id in ids}
+    for key, slot_class_id, weekday, local_start, local_end, version in slots:
+        teacher_ids = [
+            staff_id
+            for staff_id, item_role in staff_by_slot.get(key, [])
+            if item_role == "TEACHER"
+        ]
+        assistant_ids = [
+            staff_id
+            for staff_id, item_role in staff_by_slot.get(key, [])
+            if item_role == "ASSISTANT"
+        ]
+        projection.setdefault(slot_class_id, []).append(
+            {
+                "day": weekday,
+                "start": _time_text(local_start),
+                "end": _time_text(local_end),
+                "teacher_ids": teacher_ids,
+                "assistant_ids": assistant_ids,
+                "slot_id": key,
+                "version": version,
+            }
+        )
+    return {class_id: slots for class_id, slots in projection.items() if slots}
 
 
 def _time_text(value: time) -> str:
@@ -101,6 +219,8 @@ async def sync_class_slots(
     schedule: dict | None,
     *,
     effective_from: date | None = None,
+    actor_user_id: str | None = None,
+    reason: str | None = None,
 ) -> None:
     """Dual-write the relational slot projection from a class schedule payload.
 
@@ -146,6 +266,15 @@ async def sync_class_slots(
         if str(slot.id) in claimed:
             continue
         if slot.effective_until is None:
+            await _record_teacher_assignment_events(
+                db,
+                class_=class_,
+                slot=slot,
+                next_teacher_ids=[],
+                effective_from=reference,
+                actor_user_id=actor_user_id,
+                reason=reason or "Đóng buổi học trong lịch lớp",
+            )
             slot.effective_until = reference
 
     for item, current in targets:
@@ -171,18 +300,40 @@ async def sync_class_slots(
             current.updated_at = __import__("datetime").datetime.now(
                 __import__("datetime").timezone.utc
             )
-        await _replace_slot_staff(db, current, item)
+        await _replace_slot_staff(
+            db,
+            class_=class_,
+            slot=current,
+            item=item,
+            effective_from=reference,
+            actor_user_id=actor_user_id,
+            reason=reason,
+        )
 
     await db.flush()
 
 
 async def _replace_slot_staff(
     db: AsyncSession,
+    *,
+    class_: Class,
     slot: ClassScheduleSlot,
     item: dict,
+    effective_from: date,
+    actor_user_id: str | None,
+    reason: str | None,
 ) -> None:
     teacher_ids = [str(value) for value in item.get("teacher_ids") or []]
     assistant_ids = [str(value) for value in item.get("assistant_ids") or []]
+    await _record_teacher_assignment_events(
+        db,
+        class_=class_,
+        slot=slot,
+        next_teacher_ids=teacher_ids,
+        effective_from=effective_from,
+        actor_user_id=actor_user_id,
+        reason=reason,
+    )
     await db.execute(
         delete(ClassScheduleSlotStaff).where(ClassScheduleSlotStaff.slot_id == slot.id)
     )
@@ -193,6 +344,77 @@ async def _replace_slot_staff(
     for staff_id in assistant_ids:
         db.add(
             ClassScheduleSlotStaff(slot_id=slot.id, staff_id=staff_id, role="ASSISTANT")
+        )
+
+
+async def _record_teacher_assignment_events(
+    db: AsyncSession,
+    *,
+    class_: Class,
+    slot: ClassScheduleSlot,
+    next_teacher_ids: list[str],
+    effective_from: date,
+    actor_user_id: str | None,
+    reason: str | None,
+) -> None:
+    """Append only the teacher delta; assistant assignments are untouched."""
+    current_rows = await db.execute(
+        select(ClassScheduleSlotStaff, StaffMember.full_name)
+        .join(StaffMember, StaffMember.id == ClassScheduleSlotStaff.staff_id)
+        .where(
+            ClassScheduleSlotStaff.slot_id == slot.id,
+            ClassScheduleSlotStaff.role == "TEACHER",
+        )
+        .with_for_update()
+    )
+    current = {str(link.staff_id): name for link, name in current_rows.all()}
+    requested = list(dict.fromkeys(next_teacher_ids))
+    requested_set = set(requested)
+    current_set = set(current)
+    changed = (current_set - requested_set) | (requested_set - current_set)
+    if not changed:
+        return
+
+    names: dict[str, str] = dict(current)
+    if requested_set - current_set:
+        result = await db.execute(
+            select(StaffMember.id, StaffMember.full_name).where(
+                StaffMember.id.in_(requested_set - current_set),
+                StaffMember.staff_type == "TEACHER",
+            )
+        )
+        names.update({str(staff_id): full_name for staff_id, full_name in result.all()})
+
+    for staff_id in sorted(current_set - requested_set):
+        db.add(
+            ClassScheduleSlotTeacherEvent(
+                class_id=str(class_.id),
+                slot_id=str(slot.id),
+                staff_id=staff_id,
+                event_type="REMOVED",
+                effective_from=effective_from,
+                teacher_name_snapshot=names[staff_id],
+                actor_user_id=actor_user_id,
+                reason=reason,
+            )
+        )
+    for staff_id in requested:
+        if staff_id in current_set:
+            continue
+        name = names.get(staff_id)
+        if not name:
+            raise ValueError("Giáo viên không hợp lệ")
+        db.add(
+            ClassScheduleSlotTeacherEvent(
+                class_id=str(class_.id),
+                slot_id=str(slot.id),
+                staff_id=staff_id,
+                event_type="ASSIGNED",
+                effective_from=effective_from,
+                teacher_name_snapshot=name,
+                actor_user_id=actor_user_id,
+                reason=reason,
+            )
         )
 
 

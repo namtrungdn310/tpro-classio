@@ -31,6 +31,7 @@ begin
         ('enrollments'),
         ('fee_records'),
         ('fee_message_templates'),
+        ('fee_message_drafts'),
         ('fee_operation_items'),
         ('fee_operations'),
         ('password_reset_sessions'),
@@ -39,7 +40,10 @@ begin
         ('staff_members'),
         ('student_lifecycle_events'),
         ('students'),
-        ('user_device_sessions')
+        ('user_device_sessions'),
+        ('workspace_payment_accounts'),
+        ('workspace_payment_providers'),
+        ('workspace_payment_webhooks')
     ) as required_table(table_name)
     where to_regclass(
       'public.' || quote_ident(required_table.table_name)
@@ -63,6 +67,18 @@ begin
       and allowed_mime_types = array['image/webp']::text[]
   ) then
     raise exception 'avatar bucket is missing or not private/restricted';
+  end if;
+
+  if not exists (
+    select 1
+    from storage.buckets
+    where id = 'banking-qr'
+      and name = 'banking-qr'
+      and public is false
+      and file_size_limit = 2097152
+      and allowed_mime_types = array['image/webp']::text[]
+  ) then
+    raise exception 'banking QR bucket is missing or not private/restricted';
   end if;
 
   if exists (
@@ -618,14 +634,17 @@ begin
     raise exception 'staff_members.zalo_name is missing';
   end if;
 
+  -- `email` is contact metadata (migration 079), not an auth/account link.
+  -- Only the legacy auth_user_id link is forbidden; staff email remains
+  -- intentionally nullable and must never be unique/indexed as an identity.
   if exists (
     select 1
     from information_schema.columns
     where table_schema = 'public'
       and table_name = 'staff_members'
-      and column_name in ('auth_user_id', 'email')
+      and column_name = 'auth_user_id'
   ) then
-    raise exception 'obsolete staff account-link columns must be removed';
+    raise exception 'obsolete staff auth account-link column must be removed';
   end if;
 
   if exists (
@@ -821,6 +840,43 @@ begin
 
   if exists (
     select 1
+      from pg_roles runtime_role
+     where runtime_role.rolname in ('tpro_backend', 'tpro_runtime')
+       and (
+         not has_function_privilege(
+           runtime_role.rolname,
+           'public.student_code_luhn_check(text)',
+           'execute'
+         )
+         or not has_function_privilege(
+           runtime_role.rolname,
+           'public.student_code_from_serial(bigint)',
+           'execute'
+         )
+         or not has_function_privilege(
+           runtime_role.rolname,
+           'public.student_code_valid(text)',
+           'execute'
+         )
+       )
+  ) then
+    raise exception 'runtime student-code function privileges are incomplete';
+  end if;
+
+  if has_function_privilege(
+    'anon',
+    'public.student_code_from_serial(bigint)',
+    'execute'
+  ) or has_function_privilege(
+    'authenticated',
+    'public.student_code_from_serial(bigint)',
+    'execute'
+  ) then
+    raise exception 'student-code allocation must not be browser executable';
+  end if;
+
+  if exists (
+    select 1
     from pg_proc p
     join pg_namespace n on n.oid = p.pronamespace
     where n.nspname = 'public'
@@ -990,14 +1046,13 @@ begin
     from pg_constraint
     where conrelid = 'public.fee_message_templates'::regclass
       and conname in (
-        'fee_message_templates_singleton_check',
         'fee_message_templates_version_check',
         'fee_message_templates_reminder_length_check',
         'fee_message_templates_received_length_check'
       )
       and contype = 'c'
       and convalidated
-  ) <> 4 then
+  ) <> 3 then
     raise exception 'fee message template constraints are missing or unvalidated';
   end if;
   if not exists (
@@ -1340,6 +1395,9 @@ begin
       and indexname = 'ux_fee_records_enrollment_cycle'
   ) then
     raise exception 'fee cycle identity index is missing';
+  end if;
+  if to_regclass('public.ix_fee_records_outstanding_due') is null then
+    raise exception 'cross-period outstanding fee queue index is missing';
   end if;
 
   if exists (
@@ -2076,11 +2134,634 @@ begin
     raise exception 'browser roles must not access payroll ledgers directly';
   end if;
 
+  -- Migration 077: each teacher earns their own immutable per-staff rate for
+  -- a shared session. There is no class-level split/pro-rata amount.
+  if not exists (
+    select 1
+      from pg_trigger
+     where tgrelid = 'public.staff_earning_ledger'::regclass
+       and tgname = 'staff_earning_rate_snapshot_integrity'
+       and not tgisinternal
+       and tgenabled <> 'D'
+  ) then
+    raise exception 'staff earning rate-snapshot integrity trigger is missing';
+  end if;
+  if has_function_privilege(
+    'anon', 'public.validate_staff_earning_rate_snapshot()', 'execute'
+  ) or has_function_privilege(
+    'authenticated', 'public.validate_staff_earning_rate_snapshot()', 'execute'
+  ) then
+    raise exception 'staff earning integrity function must not be browser executable';
+  end if;
+  if exists (
+    select 1
+      from public.staff_earning_ledger earning
+      join public.staff_attendance_entries attendance
+        on attendance.id = earning.attendance_entry_id
+     where earning.entry_type = 'EARNING'
+       and (
+         earning.staff_id <> attendance.staff_id
+         or earning.amount <> attendance.rate_amount
+         or earning.amount <= 0
+       )
+  ) then
+    raise exception 'staff earning ledger contains a split or mismatched amount';
+  end if;
+
   if to_regclass('public.staff_payroll_settlement_reversals') is null
      or not (select relrowsecurity and relforcerowsecurity
              from pg_class where oid = 'public.staff_payroll_settlement_reversals'::regclass)
   then
     raise exception 'payroll settlement reversal ledger security is incomplete';
+  end if;
+
+  -- Migration 074: suspension windows are half-open, bounded and non-overlapping;
+  -- enrollment cannot bypass the application guard while a class is suspended.
+  if not exists (
+    select 1 from pg_constraint
+     where conrelid = 'public.class_schedule_adjustments'::regclass
+       and conname = 'class_schedule_adjustments_max_window_check'
+       and contype = 'c' and convalidated
+  ) then
+    raise exception 'suspension window max-duration constraint is missing';
+  end if;
+  if not exists (
+    select 1 from pg_trigger
+     where tgrelid = 'public.class_schedule_adjustments'::regclass
+       and tgname = 'trg_class_schedule_adjustments_no_overlap'
+       and not tgisinternal and tgenabled <> 'D'
+  ) then
+    raise exception 'suspension overlap trigger must be enabled';
+  end if;
+  if not exists (
+    select 1 from pg_trigger
+     where tgrelid = 'public.enrollments'::regclass
+       and tgname = 'trg_enrollments_no_open_suspension'
+       and not tgisinternal and tgenabled <> 'D'
+  ) then
+    raise exception 'enrollment suspension guard trigger must be enabled';
+  end if;
+  if has_function_privilege(
+    'anon', 'public.block_overlapping_open_suspension()', 'execute'
+  ) or has_function_privilege(
+    'authenticated', 'public.block_overlapping_open_suspension()', 'execute'
+  ) or has_function_privilege(
+    'anon', 'public.block_enrollment_during_open_suspension()', 'execute'
+  ) or has_function_privilege(
+    'authenticated', 'public.block_enrollment_during_open_suspension()', 'execute'
+  ) then
+    raise exception 'suspension guard functions must not be browser executable';
+  end if;
+
+  -- Migration 075: early-payment requests are auditable snapshots.  Browser
+  -- roles may use the server API, never read or mutate the request/QR ledger
+  -- directly; item constraints and payment provenance must be present.
+  if to_regclass('public.payment_request_items') is null then
+    raise exception 'early payment item snapshot table is missing';
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+     where conrelid = 'public.payment_request_items'::regclass
+       and conname = 'payment_request_items_code_check'
+       and contype = 'c' and convalidated
+  ) or not exists (
+    select 1 from pg_constraint
+     where conrelid = 'public.payment_request_items'::regclass
+       and conname = 'payment_request_items_dates_check'
+       and contype = 'c' and convalidated
+  ) then
+    raise exception 'early payment item snapshot constraints are missing';
+  end if;
+  if not exists (
+    select 1 from information_schema.columns
+     where table_schema = 'public'
+       and table_name = 'payments'
+       and column_name in ('payment_origin', 'payment_request_id')
+     group by table_schema, table_name
+     having count(*) = 2
+  ) then
+    raise exception 'payment provenance columns are missing';
+  end if;
+  if has_table_privilege('anon', 'public.payment_requests', 'select')
+     or has_table_privilege('authenticated', 'public.payment_requests', 'select')
+     or has_table_privilege('anon', 'public.payment_request_items', 'select')
+     or has_table_privilege('authenticated', 'public.payment_request_items', 'select')
+     or has_table_privilege('anon', 'public.payment_request_events', 'select')
+     or has_table_privilege('authenticated', 'public.payment_request_events', 'select')
+  then
+    raise exception 'browser roles must not read early payment request ledgers';
+  end if;
+  if to_regclass('public.payment_requests_request_id_uniq') is null
+     or to_regclass('public.payments_provider_transaction_uniq') is null then
+    raise exception 'early payment idempotency indexes are missing';
+  end if;
+
+  -- Migration 076: per-slot teacher assignment is append-only and server-only.
+  if to_regclass('public.class_schedule_slot_teacher_events') is null then
+    raise exception 'per-slot teacher assignment history table is missing';
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+     where conrelid = 'public.class_schedule_slot_teacher_events'::regclass
+       and conname = 'class_schedule_slot_teacher_events_range_check'
+       and contype = 'c' and convalidated
+  ) then
+    raise exception 'per-slot teacher assignment date constraint is missing';
+  end if;
+  if not exists (
+    select 1 from pg_trigger
+     where tgrelid = 'public.class_schedule_slot_teacher_events'::regclass
+       and tgname = 'class_schedule_slot_teacher_events_append_only'
+       and not tgisinternal and tgenabled <> 'D'
+  ) or not exists (
+    select 1 from pg_trigger
+     where tgrelid = 'public.class_schedule_slot_teacher_events'::regclass
+       and tgname = 'class_schedule_slot_teacher_events_truncate'
+       and not tgisinternal and tgenabled <> 'D'
+  ) then
+    raise exception 'per-slot teacher assignment history must be append-only';
+  end if;
+  if has_table_privilege('anon', 'public.class_schedule_slot_teacher_events', 'select')
+     or has_table_privilege('authenticated', 'public.class_schedule_slot_teacher_events', 'select')
+     or has_table_privilege('anon', 'public.class_schedule_slot_teacher_events', 'insert')
+     or has_table_privilege('authenticated', 'public.class_schedule_slot_teacher_events', 'insert')
+  then
+    raise exception 'browser roles must not access per-slot teacher assignment history';
+  end if;
+  if has_function_privilege(
+    'anon', 'public.block_class_schedule_slot_teacher_event_mutation()', 'execute'
+  ) or has_function_privilege(
+    'authenticated', 'public.block_class_schedule_slot_teacher_event_mutation()', 'execute'
+  ) then
+    raise exception 'per-slot teacher history guard must not be browser executable';
+  end if;
+
+  -- M082/M083: every business/audit row is owned by exactly one admin
+  -- workspace.  The immutable registry and security audit are included too;
+  -- omitting either would allow cross-admin metadata leakage.
+  if to_regclass('public.workspaces') is null
+     or not exists (
+       select 1 from pg_constraint
+        where conrelid = 'public.account_security_events'::regclass
+          and conname = 'account_security_events_workspace_fkey'
+          and contype = 'f'
+     )
+     or not exists (
+       select 1 from pg_constraint
+        where conrelid = 'public.student_code_registry'::regclass
+          and conname = 'student_code_registry_workspace_fkey'
+          and contype = 'f'
+     )
+  then
+    raise exception 'workspace isolation migration is incomplete';
+  end if;
+  if exists (
+    select 1
+      from (
+        values
+          ('profiles'), ('account_invitations'), ('classes'),
+          ('class_lifecycle_events'), ('class_schedule_slots'),
+          ('class_schedule_slot_staff'), ('class_schedule_slot_teacher_events'),
+          ('class_teachers'), ('class_teacher_events'), ('enrollments'),
+          ('enrollment_slot_selections'), ('enrollment_service_credit_events'),
+          ('service_credit_allocations'), ('fee_message_templates'),
+          ('fee_records'), ('fee_operations'), ('fee_operation_items'),
+          ('payments'), ('payment_requests'), ('payment_request_items'),
+          ('payment_request_events'), ('payment_provider_deliveries'),
+          ('payment_provider_attempts'), ('payment_posting_queue'),
+          ('workspace_payment_accounts'), ('workspace_payment_providers'),
+          ('workspace_payment_webhooks'),
+          ('class_schedule_adjustments'), ('class_session_exceptions'),
+          ('class_session_staff_snapshots'), ('class_session_student_snapshots'),
+          ('class_schedule_adjustment_events'), ('staff_members'),
+          ('staff_account_links'), ('staff_account_link_events'),
+          ('staff_compensation_rates'), ('staff_compensation_rate_events'),
+          ('staff_attendance_entries'), ('staff_earning_ledger'),
+          ('staff_payroll_settlements'), ('staff_payroll_settlement_items'),
+          ('staff_payroll_settlement_reversals'), ('students'),
+          ('student_lifecycle_events'), ('account_security_events'),
+          ('student_code_registry'), ('workspace_payment_accounts'),
+          ('workspace_payment_providers')
+      ) as required(table_name)
+      left join information_schema.columns column_
+        on column_.table_schema = 'public'
+       and column_.table_name = required.table_name
+       and column_.column_name = 'workspace_id'
+     where column_.column_name is null
+  ) then
+    raise exception 'one or more tenant-owned relations lack workspace_id';
+  end if;
+  if exists (
+    select 1
+      from public.profiles p
+     where p.workspace_id is null
+  ) or exists (
+    select 1
+      from public.classes c
+     where c.workspace_id is null
+  ) or exists (
+    select 1
+      from public.students s
+     where s.workspace_id is null
+  ) then
+    raise exception 'tenant-owned rows must never have a null workspace_id';
+  end if;
+  if has_table_privilege('anon', 'public.workspaces', 'select')
+     or has_table_privilege('authenticated', 'public.workspaces', 'select')
+     or has_table_privilege('anon', 'public.account_security_events', 'select')
+     or has_table_privilege('authenticated', 'public.account_security_events', 'select')
+     or has_table_privilege('anon', 'public.student_code_registry', 'select')
+     or has_table_privilege('authenticated', 'public.student_code_registry', 'select')
+  then
+    raise exception 'browser roles must not read workspace metadata or audit registries';
+  end if;
+  -- Dev is an application-effective role derived from OWNER_USER_ID, not a
+  -- persisted user_role enum value. Every database workspace owner must still
+  -- belong to the workspace they own; this is the enforceable tenant boundary.
+  if exists (
+    select 1
+      from public.workspaces workspace_
+     where workspace_.owner_user_id is not null
+       and not exists (
+         select 1 from public.profiles profile_
+          where profile_.id = workspace_.owner_user_id
+            and profile_.workspace_id = workspace_.id
+       )
+  ) then
+    raise exception 'workspace owners must belong to their owned workspace';
+  end if;
+  if not exists (
+    select 1 from pg_trigger
+     where tgrelid = 'public.account_security_events'::regclass
+       and tgname = 'account_security_events_workspace_stamp'
+       and not tgisinternal and tgenabled <> 'D'
+  ) or not exists (
+    select 1 from pg_trigger
+     where tgrelid = 'public.student_code_registry'::regclass
+       and tgname = 'student_code_registry_workspace_stamp'
+       and not tgisinternal and tgenabled <> 'D'
+  ) then
+    raise exception 'workspace insert guards are missing for audit registries';
+  end if;
+
+  -- M084: creating a new admin invitation is the only permitted cross-
+  -- workspace hand-off.  The trigger must validate an owner-less target and
+  -- the inviter's current workspace; no generic cross-tenant write may pass.
+  if position(
+    'tg_table_name = ''account_invitations''' in
+    pg_get_functiondef('public.stamp_workspace_id()'::regprocedure)
+  ) = 0 then
+    raise exception 'admin invitation workspace hand-off guard is missing';
+  end if;
+  -- Execute the hand-off once in a rollback-only subtransaction.  This catches
+  -- the common regression where the ORM/trigger rejects a legitimate admin
+  -- invitation because its reserved workspace differs from the inviter's.
+  declare
+    probe_owner_id uuid;
+    probe_owner_workspace_id uuid;
+    probe_workspace_id uuid;
+  begin
+    select p.id, p.workspace_id
+      into probe_owner_id, probe_owner_workspace_id
+      from public.profiles p
+     where p.role = 'admin'
+       and p.account_status <> 'disabled'
+     order by p.created_at, p.id
+     limit 1;
+    if probe_owner_id is not null and probe_owner_workspace_id is not null then
+      begin
+        perform set_config(
+          'app.workspace_id', probe_owner_workspace_id::text, false
+        );
+        insert into public.workspaces (owner_user_id, name)
+        values (null, 'workspace hand-off probe')
+        returning id into probe_workspace_id;
+        insert into public.account_invitations (
+          id, email, token_hash, role, invited_by, expires_at, workspace_id
+        ) values (
+          gen_random_uuid(),
+          'workspace-handoff-probe+' || gen_random_uuid()::text || '@invalid.example',
+          encode(gen_random_bytes(32), 'hex'),
+          'admin',
+          probe_owner_id,
+          now() + interval '1 hour',
+          probe_workspace_id
+        );
+        raise exception 'rollback successful workspace hand-off probe'
+          using errcode = 'P9005';
+      exception
+        when sqlstate 'P9005' then null;
+      end;
+    end if;
+  end;
+
+  -- M088/M089/M090/M091: explicit Admin-to-parent sharing audit, Dev-only
+  -- operations control plane, honest Pay2S plan label, and production runtime
+  -- grants. These checks
+  -- intentionally fail closed before the UI can advertise a half-migrated
+  -- payment flow.
+  if exists (
+    select required_column.column_name
+    from (
+      values
+        ('sent_channel'), ('send_count')
+    ) as required_column(column_name)
+    where not exists (
+      select 1
+      from information_schema.columns column_
+      where column_.table_schema = 'public'
+        and column_.table_name = 'payment_requests'
+        and column_.column_name = required_column.column_name
+    )
+  ) or exists (
+    select required_column.column_name
+    from (
+      values
+        ('idempotency_key'), ('event_metadata')
+    ) as required_column(column_name)
+    where not exists (
+      select 1
+      from information_schema.columns column_
+      where column_.table_schema = 'public'
+        and column_.table_name = 'payment_request_events'
+        and column_.column_name = required_column.column_name
+    )
+  ) then
+    raise exception 'payment request sharing audit columns are missing';
+  end if;
+  if not exists (
+    select 1
+    from pg_constraint
+    where conrelid = 'public.payment_requests'::regclass
+      and conname = 'payment_requests_send_count_check'
+      and contype = 'c'
+      and convalidated
+  ) or not exists (
+    select 1
+    from pg_index index_
+    where index_.indrelid = 'public.payment_request_events'::regclass
+      and index_.indexrelid = 'public.payment_request_events_idempotency_key_uniq'::regclass
+  ) then
+    raise exception 'payment request sharing idempotency safeguards are missing';
+  end if;
+  if to_regclass('ops.platform_actions') is null
+     or to_regprocedure('ops.platform_overview()') is null
+     or to_regprocedure('ops.disable_workspace_pay2s(uuid,uuid,text)') is null
+  then
+    raise exception 'Dev operations control plane migration is incomplete';
+  end if;
+  if not exists (
+    select 1
+    from pg_class relation_
+    join pg_namespace namespace_ on namespace_.oid = relation_.relnamespace
+    where namespace_.nspname = 'ops'
+      and relation_.relname = 'platform_actions'
+      and relation_.relrowsecurity
+      and relation_.relforcerowsecurity
+  ) then
+    raise exception 'operations audit ledger must keep RLS and FORCE RLS enabled';
+  end if;
+  if to_regclass('ops.platform_pay2s_settings') is not null
+     or to_regprocedure('ops.platform_pay2s_mode()') is not null
+     or to_regprocedure('ops.platform_pay2s_setting()') is not null
+     or to_regprocedure('ops.set_platform_pay2s_mode(text,uuid)') is not null
+     or to_regprocedure('ops.platform_pay2s_credentials()') is not null
+     or to_regprocedure(
+       'ops.set_platform_pay2s_credentials(text,text,text,text,uuid)'
+     ) is not null
+  then
+    raise exception 'shared Pay2S credential surface must be removed';
+  end if;
+  if exists (
+    select 1
+      from public.workspace_payment_providers
+     where connection_mode <> 'byo'
+  ) or not exists (
+    select 1 from pg_constraint constraint_
+     where constraint_.conrelid = 'public.workspace_payment_providers'::regclass
+       and constraint_.conname = 'workspace_payment_providers_connection_mode_check'
+       and constraint_.contype = 'c'
+       and constraint_.convalidated
+       and pg_get_constraintdef(constraint_.oid) like '%connection_mode = ''byo''%'
+  ) then
+    raise exception 'every workspace must own an independent Pay2S connection';
+  end if;
+  if has_schema_privilege('anon', 'ops', 'USAGE')
+     or has_schema_privilege('authenticated', 'ops', 'USAGE')
+     or has_function_privilege('anon', 'ops.platform_overview()', 'execute')
+     or has_function_privilege('authenticated', 'ops.platform_overview()', 'execute')
+     or has_function_privilege('anon', 'ops.disable_workspace_pay2s(uuid,uuid,text)', 'execute')
+     or has_function_privilege('authenticated', 'ops.disable_workspace_pay2s(uuid,uuid,text)', 'execute')
+  then
+    raise exception 'browser roles must not access the Dev operations control plane';
+  end if;
+  if exists (select 1 from pg_roles where rolname = 'tpro_backend')
+     and (
+       not has_schema_privilege('tpro_backend', 'ops', 'USAGE')
+       or not has_function_privilege(
+         'tpro_backend', 'ops.platform_overview()', 'execute'
+       )
+       or not has_function_privilege(
+         'tpro_backend',
+         'ops.disable_workspace_pay2s(uuid,uuid,text)',
+         'execute'
+       )
+     )
+  then
+    raise exception 'production runtime role must access the Dev operations control plane';
+  end if;
+  if not exists (
+    select 1
+    from information_schema.columns column_
+    where column_.table_schema = 'public'
+      and column_.table_name = 'workspace_payment_providers'
+      and column_.column_name = 'plan'
+      and replace(coalesce(column_.column_default, ''), ' ', '') in (
+        '''unconfirmed''::text', '''unconfirmed'''
+      )
+  ) then
+    raise exception 'Pay2S provider plan must not assume an undocumented free tier';
+  end if;
+  if to_regclass('public.payment_provider_deliveries_pay2s_transaction_uniq') is null then
+    raise exception 'Pay2S Collection Link and transaction webhook deduplication index is missing';
+  end if;
+  -- Migration 093: every newly recorded bank transfer carries the selected
+  -- receiving-account identity; legacy rows remain nullable for audit safety.
+  if exists (
+    select required.column_name
+    from (
+      values
+        ('payments', 'settlement_account_id'),
+        ('payments', 'settlement_bank_code_snapshot'),
+        ('payments', 'settlement_bank_name_snapshot'),
+        ('payments', 'settlement_account_number_snapshot'),
+        ('payments', 'settlement_account_name_snapshot'),
+        ('payment_requests', 'settlement_account_id')
+    ) as required(table_name, column_name)
+    where not exists (
+      select 1
+      from information_schema.columns column_
+      where column_.table_schema = 'public'
+        and column_.table_name = required.table_name
+        and column_.column_name = required.column_name
+    )
+  ) then
+    raise exception 'payment settlement account provenance columns are missing';
+  end if;
+  if not exists (
+    select 1
+    from pg_constraint
+    where conrelid = 'public.payments'::regclass
+      and conname = 'payments_settlement_snapshot_shape_check'
+      and contype = 'c'
+      and convalidated
+  ) or not exists (
+    select 1
+    from pg_constraint
+    where conrelid = 'public.payments'::regclass
+      and conname = 'payments_cash_without_settlement_account_check'
+      and contype = 'c'
+      and convalidated
+  ) then
+    raise exception 'payment settlement account integrity constraints are missing';
+  end if;
+  if to_regclass('public.payments_settlement_account_idx') is null
+     or to_regclass('public.payment_requests_settlement_account_idx') is null then
+    raise exception 'payment settlement account lookup indexes are missing';
+  end if;
+
+  -- Migration 101: unmatched provider transactions remain workspace-scoped
+  -- and explicitly reviewable without mutating the append-only delivery row.
+  if not exists (
+    select 1
+      from information_schema.columns
+     where table_schema = 'public'
+       and table_name = 'payment_posting_queue'
+       and column_name in (
+         'transaction_snapshot', 'resolution', 'resolved_at', 'resolved_by'
+       )
+     group by table_schema, table_name
+    having count(*) = 4
+  ) then
+    raise exception 'payment reconciliation queue columns are missing';
+  end if;
+  if to_regclass('public.payment_posting_queue_delivery_uniq') is null
+     or to_regclass('public.payment_posting_queue_workspace_review_idx') is null
+  then
+    raise exception 'payment reconciliation indexes are missing';
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+     where conrelid = 'public.payment_posting_queue'::regclass
+       and conname = 'payment_posting_queue_resolution_shape'
+       and contype = 'c' and convalidated
+  ) then
+    raise exception 'payment reconciliation terminal-state constraint is missing';
+  end if;
+
+  -- Migration 111: immutable fee-operation rows retain the stable student
+  -- code even when the current profile later changes lifecycle state.
+  if not exists (
+    select 1 from information_schema.columns
+     where table_schema = 'public'
+       and table_name = 'fee_operation_items'
+       and column_name = 'student_code_snapshot'
+  ) or not exists (
+    select 1 from pg_constraint
+     where conrelid = 'public.fee_operation_items'::regclass
+       and conname = 'fee_operation_items_student_code_snapshot_check'
+       and contype = 'c' and convalidated
+  ) or to_regclass('public.ix_fee_operation_items_student_code') is null then
+    raise exception 'fee operation student-code snapshot integrity is incomplete';
+  end if;
+
+  if to_regclass('public.ix_fee_records_outstanding_due') is null then
+    raise exception 'outstanding fee queue index is missing';
+  end if;
+
+  -- Migrations 108/109: one canonical draft per student/period/kind; legacy
+  -- per-record copies are removed after a lossless migration.
+  if to_regclass('public.fee_message_drafts') is null
+     or not exists (
+       select 1 from pg_constraint
+       where conrelid = 'public.fee_message_drafts'::regclass
+         and conname = 'fee_message_drafts_group_unique'
+     )
+     or not (select relrowsecurity and relforcerowsecurity
+             from pg_class where oid = 'public.fee_message_drafts'::regclass)
+  then
+    raise exception 'canonical fee message draft storage is incomplete';
+  end if;
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'fee_records'
+      and column_name in ('reminder_message_draft', 'received_message_draft')
+  ) then
+    raise exception 'legacy per-record fee message draft columns must be removed';
+  end if;
+  if exists (
+    select 1
+      from pg_roles role_
+     where role_.rolname in ('tpro_backend', 'tpro_runtime')
+       and not has_table_privilege(
+         role_.rolname,
+         'public.fee_message_drafts',
+         'select,insert,update,delete'
+       )
+  ) then
+    raise exception 'backend runtime must be able to manage grouped Zalo drafts';
+  end if;
+
+  -- Migration 103: bank-transfer payroll records retain payout-account evidence.
+  if exists (
+    select required.column_name
+    from (
+      values
+        ('staff_payroll_settlements', 'settlement_account_id'),
+        ('staff_payroll_settlements', 'settlement_bank_code_snapshot'),
+        ('staff_payroll_settlements', 'settlement_bank_name_snapshot'),
+        ('staff_payroll_settlements', 'settlement_account_number_snapshot'),
+        ('staff_payroll_settlements', 'settlement_account_name_snapshot')
+    ) as required(table_name, column_name)
+    where not exists (
+      select 1
+      from information_schema.columns column_
+      where column_.table_schema = 'public'
+        and column_.table_name = required.table_name
+        and column_.column_name = required.column_name
+    )
+  ) then
+    raise exception 'payroll payout-account columns are missing';
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.staff_payroll_settlements'::regclass
+      and conname = 'staff_payroll_settlements_account_fkey'
+      and contype = 'f'
+  ) or to_regclass('public.staff_payroll_settlements_account_idx') is null
+  then
+    raise exception 'payroll payout-account safeguards are missing';
+  end if;
+
+  -- Migration 112: a renewed class is a new business record. The source
+  -- remains immutable and request-level idempotency prevents duplicate classes.
+  if (
+    select count(*)
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'classes'
+      and column_name in ('previous_class_id', 'continuation_request_id')
+  ) <> 2 then
+    raise exception 'class continuation lineage columns are missing';
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.classes'::regclass
+      and conname = 'classes_previous_class_workspace_fkey'
+      and contype = 'f'
+      and confdeltype = 'r'
+  ) or to_regclass('public.ux_classes_continuation_request') is null then
+    raise exception 'class continuation lineage or idempotency safeguards are missing';
   end if;
 
 end $$;

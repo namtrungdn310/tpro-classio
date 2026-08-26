@@ -1,6 +1,6 @@
 from datetime import date
 from unittest.mock import AsyncMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from pydantic import ValidationError
@@ -73,21 +73,44 @@ def make_membership_row(class_id: str, member_id: str, role: str) -> tuple:
 def make_availability_db(
     rows: list[tuple], memberships: list[tuple] | None = None
 ) -> AsyncMock:
+    """Merged membership flow: class rows already carry one row per member.
+
+    The production query LEFT JOINs membership into the class read, so the
+    mock returns the expanded rows for the first execute and empty relational
+    slot results afterwards (fallback to the JSON schedule projection).
+    """
     db = AsyncMock()
-    real_results = [
-        QueryResult(rows),
-        QueryResult(memberships if memberships is not None else []),
-    ]
+    expanded = _expand_memberships(rows, memberships)
+    real_results = [QueryResult(expanded)]
 
     def side_effect(*args, **kwargs):
         if real_results:
             return real_results.pop(0)
-        # Relational slot/staff reads: rỗng -> fallback JSON projection.
         return EmptyScalarResult()
 
     db.execute.side_effect = side_effect
     db.scalar.return_value = None
     return db
+
+
+def _expand_memberships(
+    rows: list[tuple], memberships: list[tuple] | None
+) -> list[tuple]:
+    """Simulate LEFT JOIN: one class row per junction member, or a NULL member
+    row when the class has no membership."""
+    by_class: dict[str, list[tuple]] = {}
+    for membership in memberships or []:
+        by_class.setdefault(membership[0], []).append(membership)
+    expanded: list[tuple] = []
+    for row in rows:
+        class_id = row[0]
+        class_members = by_class.get(class_id)
+        if class_members:
+            for _class_id, member_id, member_role in class_members:
+                expanded.append((*row[:7], member_id, member_role))
+        else:
+            expanded.append((*row[:7], None, None))
+    return expanded
 
 
 def _memberships_for(rows: list[tuple]) -> list[tuple]:
@@ -330,7 +353,7 @@ async def test_availability_skips_completed_class_date_gap() -> None:
 
 
 @pytest.mark.asyncio
-async def test_availability_legacy_slot_falls_back_to_class_pool() -> None:
+async def test_availability_legacy_slot_does_not_bleed_class_pool() -> None:
     teacher_a = str(uuid4())
     teacher_b = str(uuid4())
     class_id = str(uuid4())
@@ -359,9 +382,8 @@ async def test_availability_legacy_slot_falls_back_to_class_pool() -> None:
         end_date=date(2026, 3, 31),
     )
 
-    # Slot legacy không khai IDs: fallback toàn bộ GV cấp lớp → teacher_b bận.
-    assert len(blocks) == 1
-    assert [str(staff_id) for staff_id in blocks[0].busy_teacher_ids] == [teacher_b]
+    # Slot thiếu assignment không được suy đoán thành toàn bộ GV cấp lớp.
+    assert blocks == []
 
 
 @pytest.mark.asyncio
@@ -460,6 +482,95 @@ def test_availability_request_rejects_unknown_fields_and_invalid_payload() -> No
             teacher_ids=[],
             assistant_ids=[],
         )
+
+
+def test_availability_request_all_classes_allows_empty_staff_scope() -> None:
+    payload = ScheduleAvailabilityRequest(
+        scope="all_classes",
+        start_date=date(2026, 1, 1),
+        end_date=date(2026, 3, 31),
+        teacher_ids=[],
+        assistant_ids=[],
+    )
+    assert payload.scope == "all_classes"
+
+
+@pytest.mark.asyncio
+async def test_all_classes_availability_returns_blocks_without_staff_filter() -> None:
+    class_id = str(uuid4())
+    teacher_id = str(uuid4())
+    rows = [
+        make_row(
+            class_id,
+            "6A1",
+            {
+                "slots": [
+                    {
+                        "day": "Thứ 2",
+                        "start": "18:00",
+                        "end": "19:30",
+                        "teacher_ids": [teacher_id],
+                    }
+                ]
+            },
+            teacher_id,
+        )
+    ]
+    db = make_availability_db(rows, _memberships_for(rows))
+    result = await get_class_schedule_availability(
+        db,
+        class_id=None,
+        teacher_ids=[],
+        assistant_ids=[],
+        start_date=date(2026, 1, 1),
+        end_date=date(2026, 3, 31),
+        scope="all_classes",
+    )
+    assert [(item.class_name, item.day, item.start, item.end) for item in result] == [
+        ("6A1", "Thứ 2", "18:00", "19:30")
+    ]
+    assert result[0].busy_teacher_ids == [UUID(teacher_id)]
+    # Broad class-centric reads must stay bounded: memberships + relational
+    # slots + slot staff are loaded in bulk, not once per class.
+    assert db.execute.await_count <= 4
+
+
+@pytest.mark.asyncio
+async def test_all_classes_availability_locks_unassigned_legacy_slot() -> None:
+    """Class-centric hit testing must not treat a staff-less legacy slot as free."""
+    class_id = str(uuid4())
+    rows = [
+        make_row(
+            class_id,
+            "Lớp chưa phân công",
+            {
+                "slots": [
+                    {
+                        "day": "Thứ 3",
+                        "start": "09:00",
+                        "end": "10:30",
+                        "teacher_ids": [],
+                        "assistant_ids": [],
+                    }
+                ]
+            },
+            None,  # outer join: the class has no staff junction row
+        )
+    ]
+    result = await get_class_schedule_availability(
+        make_availability_db(rows, []),
+        class_id=None,
+        teacher_ids=[],
+        assistant_ids=[],
+        start_date=date(2026, 1, 1),
+        end_date=date(2026, 3, 31),
+        scope="all_classes",
+    )
+    assert [(item.class_name, item.day, item.start, item.end) for item in result] == [
+        ("Lớp chưa phân công", "Thứ 3", "09:00", "10:30")
+    ]
+    assert result[0].busy_teacher_ids == []
+    assert result[0].busy_assistant_ids == []
 
 
 def test_availability_route_is_management_gated() -> None:

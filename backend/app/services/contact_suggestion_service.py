@@ -15,7 +15,7 @@ async def lookup_contact_suggestion(
     db: AsyncSession,
     lookup: ContactSuggestionLookup,
 ) -> ContactSuggestionResponse | None:
-    """Return one unambiguous, currently eligible contact pair.
+    """Return one unambiguous contact pair from the current workspace.
 
     The lookup is intentionally read-through: there is no secondary contact
     store or persistent autocomplete cache to retain personal data after its
@@ -25,7 +25,10 @@ async def lookup_contact_suggestion(
     if lookup.owner == "staff":
         phone_column = StaffMember.phone
         zalo_column = StaffMember.zalo_name
-        source_constraints = (StaffMember.is_active.is_(True),)
+        # Retained staff profiles remain useful when a former staff member is
+        # re-entered. The unique-match rule below still prevents an ambiguous
+        # Zalo name or phone number from being filled automatically.
+        source_constraints = ()
     else:
         phone_column = (
             Student.student_phone if lookup.owner == "student" else Student.parent_phone

@@ -275,7 +275,7 @@ async def test_full_postpone_schedule_complete_flow_with_financial_isolation() -
         assert {item.role for item in exception.staff} == {"TEACHER", "ASSISTANT"}
         # Student B nhập học sau buổi gốc -> không có trong snapshot.
         assert exception.eligible_student_count == 1
-    after_pending = await _fee_tables_hash(db)
+        after_pending = await _fee_tables_hash(db)
 
     replacement = original + timedelta(days=3, hours=0)
     async with AsyncSessionLocal() as db:
@@ -303,7 +303,7 @@ async def test_full_postpone_schedule_complete_flow_with_financial_isolation() -
             "CANCELLED",
         }
         new_version = scheduled.exception.version
-    after_scheduled = await _fee_tables_hash(db)
+        after_scheduled = await _fee_tables_hash(db)
 
     # Chưa kết thúc -> không xác nhận được.
     async with AsyncSessionLocal() as db:
@@ -335,7 +335,7 @@ async def test_full_postpone_schedule_complete_flow_with_financial_isolation() -
         )
         await db.commit()
         assert completed.exception.status == "MAKEUP_COMPLETED"
-    after_completed = await _fee_tables_hash(db)
+        after_completed = await _fee_tables_hash(db)
 
     assert after_pending == before
     assert after_scheduled == before

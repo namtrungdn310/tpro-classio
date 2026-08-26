@@ -5,9 +5,10 @@ from sqlalchemy.dialects.postgresql import ENUM, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+from app.core.workspace import WorkspaceScoped
 
 
-class Student(Base):
+class Student(WorkspaceScoped, Base):
     __tablename__ = "students"
 
     id: Mapped[str] = mapped_column(

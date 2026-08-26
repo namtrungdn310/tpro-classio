@@ -7,9 +7,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.core.business_time import business_today
 from app.core.contact import validate_complete_contact_pair
 from app.core.phone import is_valid_vietnam_mobile_phone, normalize_vietnam_phone
+from app.schemas.enrollment import MAX_SELECTED_SLOTS
 
 StudentStatus = Literal["active", "inactive", "archived"]
-StudentListState = Literal["UNASSIGNED", "CURRENT", "FORMER", "ARCHIVED"]
+StudentListState = Literal["UNASSIGNED", "CURRENT", "STOPPED"]
 StudentIdentityMatchStrength = Literal["strong", "possible"]
 StudentHiddenField = Literal[
     "birth_date",
@@ -58,6 +59,11 @@ class StudentCreate(BaseModel):
     # None deliberately inherits the class fee; this field is an override.
     custom_fee: int | None = Field(default=None, ge=0, le=999_999_999_999)
     enrollment_date: date | None = None
+    selected_slot_ids: list[UUID] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_SELECTED_SLOTS,
+    )
     birth_date: date
     school: str = Field(min_length=1, max_length=160)
     parent_name: str | None = Field(default=None, max_length=120)
@@ -75,6 +81,16 @@ class StudentCreate(BaseModel):
         value: list[StudentHiddenField],
     ) -> list[StudentHiddenField]:
         return _deduplicate_hidden_fields(value)
+
+    @field_validator("selected_slot_ids")
+    @classmethod
+    def deduplicate_selected_slots(
+        cls,
+        value: list[UUID] | None,
+    ) -> list[UUID] | None:
+        if value is not None and len(value) != len(set(value)):
+            raise ValueError("Danh sách buổi học không được trùng lặp")
+        return value
 
     @field_validator("birth_date")
     @classmethod
@@ -150,7 +166,9 @@ class StudentPreviousClass(BaseModel):
 
 class StudentIdentityCandidate(BaseModel):
     id: UUID
+    student_code: str
     status: StudentStatus
+    list_state: StudentListState
     full_name: str
     birth_date: date | None
     school: str | None
@@ -186,7 +204,6 @@ class StudentUpdate(BaseModel):
     student_phone: str | None = Field(default=None, max_length=32)
     notes: str | None = Field(default=None, max_length=1000)
     hidden_fields: list[StudentHiddenField] | None = Field(default=None, max_length=7)
-    status: StudentStatus | None = None
 
     @field_validator("hidden_fields")
     @classmethod
@@ -265,11 +282,21 @@ class StudentEnrollmentInfo(BaseModel):
     effective_fee: int
     enrollment_date: date | None
     status: Literal["active", "dropped", "completed", "cancelled"]
+    selected_slot_ids: list[UUID] = Field(default_factory=list)
+
+
+class StudentLastEnrollmentInfo(BaseModel):
+    class_id: UUID
+    class_name: str
+    status: Literal["active", "dropped", "completed", "cancelled"]
+    enrollment_date: date | None
+    ended_at: datetime | None
+    end_reason: str | None
 
 
 class StudentResponse(BaseModel):
     id: UUID
-    student_code: str | None = None
+    student_code: str
     full_name: str
     birth_date: date | None
     school: str | None
@@ -286,9 +313,23 @@ class StudentResponse(BaseModel):
     archived_reason: str | None = None
     classes: list[StudentClassInfo]
     active_enrollments: list[StudentEnrollmentInfo]
+    last_enrollment: StudentLastEnrollmentInfo | None = None
     created_at: datetime
+    updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class StudentListPageResponse(BaseModel):
+    items: list[StudentResponse]
+    next_cursor: UUID | None = None
+    has_more: bool = False
+
+
+class StudentScopeSummary(BaseModel):
+    unassigned: int = Field(ge=0)
+    current: int = Field(ge=0)
+    stopped: int = Field(ge=0)
 
 
 class StudentArchiveRequest(BaseModel):
@@ -301,3 +342,54 @@ class StudentRestoreRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     reason: str = Field(min_length=3, max_length=500)
+
+
+class StudentEnrollmentPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enrollment_id: UUID
+    custom_fee: int | None = Field(default=None, ge=0, le=999_999_999_999)
+    enrollment_date: date | None = None
+    # ``None`` means the caller is not changing the schedule.  An explicit
+    # list must contain at least one slot; an empty list must never be
+    # interpreted as "restore every session".
+    selected_slot_ids: list[UUID] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_SELECTED_SLOTS,
+    )
+
+
+class StudentEnrollmentTarget(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    class_id: UUID
+    custom_fee: int | None = Field(default=None, ge=0, le=999_999_999_999)
+    enrollment_date: date | None = None
+    # New memberships also require an explicit non-empty selection whenever
+    # the field is supplied.  Omitting it keeps the legacy/default behaviour.
+    selected_slot_ids: list[UUID] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_SELECTED_SLOTS,
+    )
+
+
+class StudentMembershipCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: UUID
+    expected_updated_at: datetime
+    profile: StudentUpdate
+    enrollment_updates: list[StudentEnrollmentPatch] = Field(
+        default_factory=list, max_length=20
+    )
+    targets: list[StudentEnrollmentTarget] = Field(default_factory=list, max_length=20)
+    mode: Literal["supplement", "transfer"] = "supplement"
+    source_enrollment_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def validate_transfer_source(self) -> "StudentMembershipCommand":
+        if self.mode == "transfer" and self.source_enrollment_id is None:
+            raise ValueError("Chuyển lớp phải chỉ định lớp nguồn")
+        return self

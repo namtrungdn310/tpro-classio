@@ -62,20 +62,23 @@ async def reactivate_student(
     *,
     actor_user_id: str | None,
 ) -> StudentResponse:
-    class_ = await db.scalar(
-        select(Class)
-        .where(
-            Class.id == str(request.student.class_id),
-            operational_class_predicate(),
-            Class.identity_scheme != "LEGACY",
+    if request.student.class_id is not None:
+        class_ = await db.scalar(
+            select(Class)
+            .where(
+                Class.id == str(request.student.class_id),
+                operational_class_predicate(),
+                Class.identity_scheme != "LEGACY",
+            )
+            .with_for_update()
         )
-        .with_for_update()
-    )
-    if class_ is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Không tìm thấy lớp học đang mở",
-        )
+        if class_ is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Không tìm thấy lớp học đang mở",
+            )
+    else:
+        class_ = None
 
     await lock_student_identity(db, request.student)
     candidates = await find_student_identity_candidates(db, request.student)
@@ -105,31 +108,43 @@ async def reactivate_student(
     payload.pop("class_id")
     custom_fee = payload.pop("custom_fee")
     enrollment_date = payload.pop("enrollment_date")
+    selected_slot_ids = payload.pop("selected_slot_ids")
     for field, value in payload.items():
         setattr(student, field, value)
     student.status = "active"
 
-    enrollment = await enroll_locked_student(
-        db,
-        student=student,
-        class_=class_,
-        custom_fee=custom_fee,
-        enrollment_date=enrollment_date,
+    enrollment = (
+        await enroll_locked_student(
+            db,
+            student=student,
+            class_=class_,
+            custom_fee=custom_fee,
+            enrollment_date=enrollment_date,
+            selected_slot_ids=[str(slot_id) for slot_id in selected_slot_ids]
+            if selected_slot_ids is not None
+            else None,
+            actor_user_id=actor_user_id,
+        )
+        if class_ is not None
+        else None
     )
-    append_student_lifecycle_event(
-        db,
-        student_id=student.id,
-        class_id=class_.id,
-        enrollment_id=enrollment.id,
-        actor_user_id=actor_user_id,
-        action=(
-            "student_reactivated"
-            if previous_status == "inactive"
-            else "existing_student_enrolled"
-        ),
-        previous_status=previous_status,
-        next_status="active",
-    )
+    if class_ is not None or previous_status != "active":
+        append_student_lifecycle_event(
+            db,
+            student_id=student.id,
+            class_id=class_.id if class_ is not None else None,
+            enrollment_id=enrollment.id if enrollment is not None else None,
+            actor_user_id=actor_user_id,
+            action=(
+                "student_reactivated"
+                if previous_status == "inactive"
+                else "existing_student_enrolled"
+                if class_ is not None
+                else "student_restored"
+            ),
+            previous_status=previous_status,
+            next_status="active",
+        )
     await db.commit()
     _clear_dependent_caches()
 

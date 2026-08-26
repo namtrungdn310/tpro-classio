@@ -7,12 +7,13 @@ no cycle 0 exists for legacy enrollments.
 """
 
 import os
+from datetime import date
 
 import pytest
 from sqlalchemy import text
 
 from app.core.database import AsyncSessionLocal
-from app.services.fee_service import get_fee_records
+from app.services.fee_service import get_fee_records, get_outstanding_fee_records
 
 pytestmark = [
     pytest.mark.db_integration,
@@ -71,7 +72,13 @@ async def test_no_legacy_cycle_zero() -> None:
         assert count == 0
 
 
-async def test_dual_read_dto_exposes_cycle_identity() -> None:
+async def test_dual_read_dto_exposes_cycle_identity(monkeypatch) -> None:
+    # The fixture is deliberately dated in the future; the DTO still exposes
+    # a paid early obligation for audit/reconciliation.  Move the business
+    # clock to the due date only for the DTO parity assertion below.
+    monkeypatch.setattr(
+        "app.services.fee_service.business_today", lambda: date(2026, 11, 1)
+    )
     async with AsyncSessionLocal() as db:
         response = await get_fee_records(db, period="2026-11")
         by_enrollment = [
@@ -87,6 +94,38 @@ async def test_dual_read_dto_exposes_cycle_identity() -> None:
         assert record.origin == "LEGACY_BACKFILL"
         assert record.status == "PAID"
         assert record.final_amount == 750_000
+
+
+async def test_early_paid_future_obligation_remains_visible_before_due_date(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.services.fee_service.business_today", lambda: date(2026, 10, 31)
+    )
+    async with AsyncSessionLocal() as db:
+        response = await get_fee_records(db, period="2026-11")
+    matching = [
+        record
+        for record in response.records
+        if str(record.enrollment_id) == "70000000-0000-0000-0000-000000000011"
+    ]
+    assert len(matching) == 1
+    assert matching[0].status == "PAID"
+
+
+async def test_outstanding_view_keeps_unpaid_obligations_from_multiple_periods(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.services.fee_service.business_today", lambda: date(2026, 12, 31)
+    )
+    async with AsyncSessionLocal() as db:
+        response = await get_outstanding_fee_records(db)
+
+    assert response.period == "outstanding"
+    assert all(record.status == "UNPAID" for record in response.records)
+    periods = {record.period for record in response.records}
+    assert len(periods) >= 2
 
 
 async def test_payment_links_preserved() -> None:

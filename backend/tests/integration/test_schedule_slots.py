@@ -250,7 +250,10 @@ async def test_occurrences_carry_slot_identity() -> None:
         slots = await load_class_slots(db, str(created.id))
         slot_id = slots[0]["slot_id"]
 
-        monday = business_today() + timedelta(days=(7 - business_today().weekday()) % 7)
+        # The fixture starts tomorrow.  Always inspect the next Monday rather
+        # than today's Monday (which is still before the class start when the
+        # disposable runner happens to execute on a Monday).
+        monday = business_today() + timedelta(days=7 - business_today().weekday())
         start_window = datetime.combine(
             monday, datetime.min.time(), tzinfo=BUSINESS_TIMEZONE
         )
@@ -294,7 +297,7 @@ async def test_makeup_preview_reads_relational_slots() -> None:
             ),
             actor_user_id=None,
         )
-        monday = business_today() + timedelta(days=(7 - business_today().weekday()) % 7)
+        monday = business_today() + timedelta(days=7 - business_today().weekday())
         preview = await preview_postponement(
             db,
             UUID(str(created.id)),

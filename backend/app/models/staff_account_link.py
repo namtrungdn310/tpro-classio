@@ -7,9 +7,10 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
+from app.core.workspace import WorkspaceScoped
 
 
-class StaffAccountLink(Base):
+class StaffAccountLink(WorkspaceScoped, Base):
     __tablename__ = "staff_account_links"
 
     id: Mapped[str] = mapped_column(
@@ -45,7 +46,7 @@ class StaffAccountLink(Base):
     )
 
 
-class StaffAccountLinkEvent(Base):
+class StaffAccountLinkEvent(WorkspaceScoped, Base):
     __tablename__ = "staff_account_link_events"
 
     id: Mapped[str] = mapped_column(

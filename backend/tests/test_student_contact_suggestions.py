@@ -94,7 +94,7 @@ async def test_contact_suggestion_rejects_ambiguous_reused_values(
 
 
 @pytest.mark.asyncio
-async def test_staff_contact_suggestion_uses_active_staff_only() -> None:
+async def test_staff_contact_suggestion_uses_retained_staff_profiles() -> None:
     result = Mock()
     result.all.return_value = [SimpleNamespace(phone="0912345678", zalo_name="Cô Hạnh")]
     db = SimpleNamespace(execute=AsyncMock(return_value=result))
@@ -108,7 +108,7 @@ async def test_staff_contact_suggestion_uses_active_staff_only() -> None:
     assert response.zalo_name == "Cô Hạnh"
     statement = db.execute.await_args.args[0]
     compiled = statement.compile(dialect=postgresql.dialect())
-    assert "staff_members.is_active" in str(compiled)
+    assert "staff_members.is_active" not in str(compiled)
     assert "students" not in str(compiled)
 
 

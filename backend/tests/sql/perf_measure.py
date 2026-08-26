@@ -82,7 +82,7 @@ async def main() -> None:
         async with factory() as session:
             await get_class_schedule_availability(
                 session,
-                class_id=TARGET_CLASS,
+                class_id=None,
                 teacher_ids=t,
                 assistant_ids=a,
                 start_date=START,
@@ -91,7 +91,7 @@ async def main() -> None:
         availability.append((loop.time() - t0) * 1000)
     _report("availability", availability)
 
-    # 2. Class list by scope.
+    # 2. Class list by scope (scale: ~650 operational).
     list_latencies: list[float] = []
     for i in range(30):
         scope = ["operational", "active", "scheduled", "completed"][i % 4]
@@ -101,7 +101,7 @@ async def main() -> None:
         list_latencies.append((loop.time() - t0) * 1000)
     _report("class_list", list_latencies)
 
-    # 3. Summary.
+    # Summary.
     summary_latencies: list[float] = []
     for i in range(20):
         t0 = loop.time()
@@ -110,17 +110,32 @@ async def main() -> None:
         summary_latencies.append((loop.time() - t0) * 1000)
     _report("summary", summary_latencies)
 
+    # Pick a canonical operational class from the scale dataset as the target
+    # for detail/history/occurrence/preview measurements.
+    async with factory() as session:
+        target = (
+            await session.execute(
+                __import__("sqlalchemy").text(
+                    "select id from public.classes "
+                    "where identity_scheme <> 'LEGACY' "
+                    "  and cancelled_at is null and completed_at is null "
+                    "order by id limit 1"
+                )
+            )
+        ).scalar()
+    target_class = str(target or TARGET_CLASS)
+
     # 4. Detail + history.
     detail_latencies: list[float] = []
     history_latencies: list[float] = []
     for i in range(20):
         t0 = loop.time()
         async with factory() as session:
-            await get_class_response(session, UUID(TARGET_CLASS))
+            await get_class_response(session, UUID(target_class))
         detail_latencies.append((loop.time() - t0) * 1000)
         t0 = loop.time()
         async with factory() as session:
-            await get_class_history(session, UUID(TARGET_CLASS))
+            await get_class_history(session, UUID(target_class))
         history_latencies.append((loop.time() - t0) * 1000)
     _report("detail", detail_latencies)
     _report("history", history_latencies)
@@ -131,7 +146,7 @@ async def main() -> None:
         t0 = loop.time()
         async with factory() as session:
             await get_class_effective_occurrences(
-                session, UUID(TARGET_CLASS), START, END
+                session, UUID(target_class), START, END
             )
         occurrence_latencies.append((loop.time() - t0) * 1000)
     _report("occurrences", occurrence_latencies)
@@ -143,7 +158,7 @@ async def main() -> None:
         async with factory() as session:
             await preview_postponement(
                 session,
-                UUID(TARGET_CLASS),
+                UUID(target_class),
                 PostponementPreviewRequest(
                     from_date=START,
                     to_date=START + timedelta(days=14),
@@ -152,8 +167,7 @@ async def main() -> None:
         preview_latencies.append((loop.time() - t0) * 1000)
     _report("postpone_preview", preview_latencies)
 
-    # 7. Make-up command (create + schedule) — dùng class riêng để không đụng
-    # fixture của preview; idempotent theo request_id nên chỉ 1 vòng lặp.
+    # 7. Make-up command (create + schedule) — idempotent per request_id.
     command_latencies: list[float] = []
     if len(staff_ids) >= 1:
         t0 = loop.time()
@@ -166,7 +180,7 @@ async def main() -> None:
             try:
                 await create_postponement(
                     session,
-                    UUID(TARGET_CLASS),
+                    UUID(target_class),
                     PostponementCreateRequest(
                         original_start_at=[original],
                         reason_code="OTHER",

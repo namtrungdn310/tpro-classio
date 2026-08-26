@@ -1,13 +1,14 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, Text, func, text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Integer, Text, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+from app.core.workspace import WorkspaceScoped
 
 
-class StaffMember(Base):
+class StaffMember(WorkspaceScoped, Base):
     __tablename__ = "staff_members"
     __table_args__ = (
         CheckConstraint(
@@ -25,6 +26,10 @@ class StaffMember(Base):
     staff_type: Mapped[str] = mapped_column(Text, nullable=False)
     zalo_name: Mapped[str | None] = mapped_column(Text)
     phone: Mapped[str | None] = mapped_column(Text)
+    email: Mapped[str | None] = mapped_column(Text)
+    checkin_window_after_hours: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=24
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

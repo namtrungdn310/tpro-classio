@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 from app.core.phone import normalize_vietnam_phone
 from app.core.search import normalize_search_text
 from app.core.class_lifecycle import is_operational_class
+from app.core.student_lifecycle import derive_student_list_state
 from app.models.enrollment import Enrollment
 from app.models.student import Student
 from app.schemas.student import (
@@ -199,7 +200,9 @@ async def find_student_identity_candidates(
     return [
         StudentIdentityCandidate(
             id=candidate.student.id,
+            student_code=candidate.student.student_code,
             status=candidate.student.status,
+            list_state=derive_student_list_state(candidate.student),
             full_name=candidate.student.full_name,
             birth_date=candidate.student.birth_date,
             school=candidate.student.school,

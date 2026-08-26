@@ -9,12 +9,14 @@ from pydantic import TypeAdapter, ValidationError
 from app.models.class_ import Class
 from app.core.business_time import business_today
 from app.schemas.class_ import (
+    ClassContinuationCreate,
     ClassCreate,
     ClassHistoryTeacherEvent,
     ClassScope,
     ClassUpdate,
 )
 from app.services.class_service import (
+    _clock_ranges_overlap,
     get_class_labels,
     _synchronize_identity_metadata,
     update_class,
@@ -53,6 +55,94 @@ def make_class_create(**overrides: object) -> ClassCreate:
         payload["class_category"] = "IELTS"
         payload["grade_mode"] = "NONE"
     return ClassCreate(**payload)
+
+
+def test_class_continuation_rejects_duplicate_students() -> None:
+    student_id = uuid4()
+    with pytest.raises(ValidationError, match="trùng học viên"):
+        ClassContinuationCreate(
+            request_id=uuid4(),
+            expected_source_version=1,
+            class_data=make_class_create(),
+            students=[
+                {"student_id": student_id},
+                {"student_id": student_id},
+            ],
+        )
+
+
+def test_class_continuation_rejects_reusing_source_enrollment() -> None:
+    enrollment_id = uuid4()
+    with pytest.raises(ValidationError, match="ghi danh cũ"):
+        ClassContinuationCreate(
+            request_id=uuid4(),
+            expected_source_version=1,
+            class_data=make_class_create(),
+            students=[
+                {"student_id": uuid4(), "source_enrollment_id": enrollment_id},
+                {"student_id": uuid4(), "source_enrollment_id": enrollment_id},
+            ],
+        )
+
+
+def test_class_continuation_accepts_reviewed_partial_schedule_and_fee() -> None:
+    payload = ClassContinuationCreate(
+        request_id=uuid4(),
+        expected_source_version=1,
+        class_data=make_class_create(
+            schedule={
+                "slots": [
+                    {"day": "Thứ 2", "start": "18:00", "end": "19:30"},
+                    {"day": "Thứ 4", "start": "18:00", "end": "19:30"},
+                ]
+            }
+        ),
+        students=[
+            {
+                "student_id": uuid4(),
+                "selected_slots": [
+                    {"day": "Thứ 2", "start": "18:00", "end": "19:30"},
+                ],
+                "custom_fee": 350_000,
+                "partial_fee_reviewed": True,
+            }
+        ],
+    )
+
+    assert payload.students[0].custom_fee == 350_000
+    assert payload.students[0].partial_fee_reviewed is True
+
+
+def test_class_continuation_rejects_duplicate_selected_sessions() -> None:
+    session = {"day": "Thứ 2", "start": "18:00", "end": "19:30"}
+    with pytest.raises(ValidationError, match="buổi học không được trùng"):
+        ClassContinuationCreate(
+            request_id=uuid4(),
+            expected_source_version=1,
+            class_data=make_class_create(),
+            students=[
+                {
+                    "student_id": uuid4(),
+                    "selected_slots": [session, session],
+                }
+            ],
+        )
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "overlaps"),
+    [
+        (("18:00", "19:30"), ("19:00", "20:00"), True),
+        (("18:00", "19:30"), ("19:30", "20:30"), False),
+        (("18:00", "20:00"), ("18:30", "19:00"), True),
+    ],
+)
+def test_continuation_schedule_overlap_uses_half_open_ranges(
+    left: tuple[str, str],
+    right: tuple[str, str],
+    overlaps: bool,
+) -> None:
+    assert _clock_ranges_overlap(*left, *right) is overlaps
 
 
 def make_persisted_class(**overrides: object) -> Class:

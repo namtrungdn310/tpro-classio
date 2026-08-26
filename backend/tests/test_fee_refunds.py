@@ -87,7 +87,7 @@ def make_payload(record: FeeRecord, *, amount: int = 250_000):
     return FeeBatchRefundRequest(
         request_id=uuid4(),
         items=[{"record_id": record.id, "amount": amount}],
-        refund_method="bank_transfer",
+        refund_method="cash",
         reason="Học viên dừng khóa học sớm",
     )
 
@@ -117,9 +117,39 @@ def test_refund_schema_allows_an_omitted_reason() -> None:
     payload = FeeBatchRefundRequest(
         request_id=uuid4(),
         items=[{"record_id": uuid4(), "amount": 100_000}],
+        refund_method="cash",
     )
 
     assert payload.reason == ""
+
+
+def test_refund_schema_requires_a_bank_account_for_bank_transfer() -> None:
+    record_id = uuid4()
+    with pytest.raises(ValidationError) as missing_account:
+        FeeBatchRefundRequest(
+            request_id=uuid4(),
+            items=[{"record_id": record_id, "amount": 100_000}],
+            refund_method="bank_transfer",
+        )
+    assert "phải chọn tài khoản ngân hàng" in str(missing_account.value)
+
+    account_id = uuid4()
+    payload = FeeBatchRefundRequest(
+        request_id=uuid4(),
+        items=[{"record_id": record_id, "amount": 100_000}],
+        refund_method="bank_transfer",
+        settlement_account_id=account_id,
+    )
+    assert payload.settlement_account_id == account_id
+
+    with pytest.raises(ValidationError) as cash_account:
+        FeeBatchRefundRequest(
+            request_id=uuid4(),
+            items=[{"record_id": record_id, "amount": 100_000}],
+            refund_method="cash",
+            settlement_account_id=account_id,
+        )
+    assert "tiền mặt không chọn tài khoản" in str(cash_account.value)
 
 
 @pytest.mark.asyncio

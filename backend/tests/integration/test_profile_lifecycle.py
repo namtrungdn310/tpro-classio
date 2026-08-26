@@ -1,7 +1,7 @@
 """R6-D08/V08 — profile lifecycle + student code read path integration tests.
 
 Run with RUN_DB_INTEGRATION=1. Proves: profile-only create (no class),
-leaving last class keeps profile (FORMER), explicit archive/restore with
+leaving the last class keeps the profile unassigned; explicit stop/resume keeps
 reason, no destructive CASCADE, student_code preserved, server search with
 cursor.
 """
@@ -92,7 +92,7 @@ async def test_archive_and_restore_preserve_code() -> None:
         )
         assert archived is not None
         assert archived.status == "archived"
-        assert archived.list_state == "ARCHIVED"
+        assert archived.list_state == "STOPPED"
         assert archived.student_code == original_code
 
         restored = await restore_student(

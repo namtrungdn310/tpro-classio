@@ -5,7 +5,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import Principal, require_management
+from app.schemas.attendance import (
+    AttendanceCheckInResponse,
+    AttendanceReversalCreate,
+    AttendanceReversalResponse,
+    ManualAttendanceCreate,
+    ManualAttendanceTarget,
+)
 from app.schemas.staff import (
+    StaffAttendanceHistoryResponse,
     StaffCreate,
     StaffCompensationRateCreate,
     StaffCompensationRateResponse,
@@ -24,9 +32,15 @@ from app.services.staff_service import (
     archive_staff_member,
     create_staff_member,
     get_active_teacher_options,
+    get_staff_attendance_history,
     get_staff_members,
     get_staff_response,
     update_staff_member,
+)
+from app.services.attendance_service import (
+    list_manual_attendance_targets,
+    manual_check_in,
+    reverse_attendance,
 )
 from app.services.payroll_service import (
     create_staff_compensation_rate,
@@ -45,6 +59,68 @@ async def get_staff_payroll_route(
     principal: Principal = Depends(require_management),
 ) -> StaffPayrollSummaryResponse:
     return await get_staff_payroll_summary(db, id)
+
+
+@router.get(
+    "/{id}/attendance-history",
+    response_model=StaffAttendanceHistoryResponse,
+)
+async def get_staff_attendance_history_route(
+    id: UUID,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> StaffAttendanceHistoryResponse:
+    return await get_staff_attendance_history(db, id)
+
+
+@router.get(
+    "/{id}/attendance/manual-targets",
+    response_model=list[ManualAttendanceTarget],
+)
+async def list_staff_manual_attendance_targets_route(
+    id: UUID,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> list[ManualAttendanceTarget]:
+    return await list_manual_attendance_targets(db, id)
+
+
+@router.post(
+    "/{id}/attendance/manual",
+    response_model=AttendanceCheckInResponse,
+)
+async def manual_check_in_route(
+    id: UUID,
+    payload: ManualAttendanceCreate,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> AttendanceCheckInResponse:
+    return await manual_check_in(
+        db,
+        id,
+        payload,
+        actor_user_id=principal.user_id,
+    )
+
+
+@router.post(
+    "/{id}/attendance/{attendance_id}/reversal",
+    response_model=AttendanceReversalResponse,
+)
+async def reverse_attendance_route(
+    id: UUID,
+    attendance_id: UUID,
+    payload: AttendanceReversalCreate,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> AttendanceReversalResponse:
+    return await reverse_attendance(
+        db,
+        id,
+        attendance_id,
+        payload,
+        actor_user_id=principal.user_id,
+    )
 
 
 @router.post("/{id}/compensation-rates", response_model=StaffCompensationRateResponse)

@@ -44,7 +44,9 @@ def make_candidate(
 ) -> StudentIdentityCandidate:
     return StudentIdentityCandidate(
         id=student_id,
+        student_code="TP000000018",
         status="inactive",
+        list_state="UNASSIGNED",
         full_name="Nguyễn Minh An",
         birth_date=date(2014, 6, 5),
         school="THCS Chu Văn An",

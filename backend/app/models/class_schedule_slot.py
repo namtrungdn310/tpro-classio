@@ -7,9 +7,10 @@ from sqlalchemy.dialects.postgresql import ENUM, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+from app.core.workspace import WorkspaceScoped
 
 
-class ClassScheduleSlot(Base):
+class ClassScheduleSlot(WorkspaceScoped, Base):
     """Một recurring slot với UUID ổn định, version và effective range.
 
     Sửa giờ giữ UUID + tăng version; đóng slot đặt `effective_until` — không
@@ -70,7 +71,7 @@ class ClassScheduleSlot(Base):
     )
 
 
-class ClassScheduleSlotStaff(Base):
+class ClassScheduleSlotStaff(WorkspaceScoped, Base):
     __tablename__ = "class_schedule_slot_staff"
 
     id: Mapped[str] = mapped_column(
@@ -96,3 +97,46 @@ class ClassScheduleSlotStaff(Base):
     )
 
     slot = relationship("ClassScheduleSlot", back_populates="staff_links")
+
+
+class ClassScheduleSlotTeacherEvent(WorkspaceScoped, Base):
+    """Append-only history of teacher assignments for one recurring slot.
+
+    ``ClassScheduleSlotStaff`` remains the current projection.  This table is
+    the immutable audit/effective-dated record used by attendance, payroll and
+    the class profile when a teacher is replaced after the class has started.
+    Assistant assignments deliberately stay on the existing path.
+    """
+
+    __tablename__ = "class_schedule_slot_teacher_events"
+
+    id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    class_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("classes.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    slot_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("class_schedule_slots.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    staff_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("staff_members.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    event_type: Mapped[str] = mapped_column(Text, nullable=False)
+    effective_from: Mapped[date] = mapped_column(Date, nullable=False)
+    effective_until: Mapped[date | None] = mapped_column(Date)
+    teacher_name_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
+    actor_user_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("profiles.id", ondelete="SET NULL")
+    )
+    reason: Mapped[str | None] = mapped_column(Text)
+    request_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

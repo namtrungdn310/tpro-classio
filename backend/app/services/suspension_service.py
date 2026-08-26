@@ -15,6 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.business_time import BUSINESS_TIMEZONE, business_today
+from app.core.class_lifecycle import is_operational_class
+from app.core.billing_schedule import cycle_base_due_date, cycle_exists
 from app.models.class_ import Class
 from app.models.enrollment import Enrollment
 from app.models.makeup import (
@@ -37,7 +39,10 @@ async def _load_active_enrollments(db: AsyncSession, class_id: str) -> list[Enro
     result = await db.execute(
         select(Enrollment)
         .where(Enrollment.class_id == class_id, Enrollment.status == "active")
-        .options(selectinload(Enrollment.fee_records))
+        .options(
+            selectinload(Enrollment.fee_records),
+            selectinload(Enrollment.class_),
+        )
     )
     return list(result.scalars().unique().all())
 
@@ -55,27 +60,51 @@ async def preview_suspension(
             status_code=422,
             detail="Ngày học lại phải sau ngày bắt đầu hoãn",
         )
+    if data.suspended_from < business_today():
+        raise HTTPException(
+            status_code=422,
+            detail="Chỉ có thể hoãn lớp từ hôm nay trở đi",
+        )
+    if (data.resume_on - data.suspended_from).days > 120:
+        raise HTTPException(
+            status_code=422,
+            detail="Khoảng hoãn tối đa là 120 ngày",
+        )
+    if not is_operational_class(class_):
+        raise HTTPException(
+            status_code=409,
+            detail="Chỉ lớp đang hoạt động hoặc sắp mở mới có thể hoãn",
+        )
+    if class_.start_date is not None and data.suspended_from < class_.start_date:
+        raise HTTPException(
+            status_code=422, detail="Ngày bắt đầu hoãn nằm ngoài phạm vi lớp"
+        )
+    if class_.end_date is not None and data.resume_on > class_.end_date + timedelta(
+        days=1
+    ):
+        raise HTTPException(
+            status_code=422, detail="Ngày học lại nằm ngoài phạm vi lớp"
+        )
     enrollments = await _load_active_enrollments(db, str(class_id))
     credit_days = (data.resume_on - data.suspended_from).days
-    member_summary = [
-        {
-            "enrollment_id": str(enrollment.id),
-            "overlap_days": membership_overlap_days(
-                enrollment.enrollment_date,
-                (
-                    enrollment.ended_at.date()
-                    if enrollment.ended_at is not None
-                    else None
-                ),
-                data.suspended_from,
-                data.resume_on,
-            ),
-        }
+    overlap_by_enrollment = {
+        str(enrollment.id): membership_overlap_days(
+            enrollment.enrollment_date,
+            (enrollment.ended_at.date() if enrollment.ended_at is not None else None),
+            data.suspended_from,
+            data.resume_on,
+        )
         for enrollment in enrollments
+    }
+    member_summary = [
+        {"enrollment_id": enrollment_id, "overlap_days": overlap_days}
+        for enrollment_id, overlap_days in overlap_by_enrollment.items()
     ]
     target_cycles = 0
     protected_cases = 0
     for enrollment in enrollments:
+        if overlap_by_enrollment.get(str(enrollment.id), 0) <= 0:
+            continue
         cycles = sorted(
             (
                 record
@@ -88,12 +117,28 @@ async def preview_suspension(
             ),
             key=lambda record: record.cycle_no,
         )
+        found_target = False
         for record in cycles:
             if record.status == "PAID" or record.notified_at is not None:
                 protected_cases += 1
             else:
                 target_cycles += 1
+                found_target = True
                 break
+        if not found_target:
+            cycle_weeks = (
+                int(enrollment.class_.billing_cycle_weeks or 1)
+                if enrollment.class_.type == "COURSE"
+                else None
+            )
+            first_due = cycle_base_due_date(
+                enrollment.enrollment_date,
+                enrollment.class_.type,
+                cycle_weeks,
+                1,
+            )
+            if cycle_exists(first_due, enrollment.class_.end_date):
+                target_cycles += 1
     return SuspensionPreviewResponse(
         class_id=class_id,
         suspended_from=data.suspended_from,
@@ -120,10 +165,26 @@ async def create_suspension(
             status_code=422,
             detail="Ngày học lại phải sau ngày bắt đầu hoãn",
         )
+    if (data.resume_on - data.suspended_from).days > 120:
+        raise HTTPException(status_code=422, detail="Khoảng hoãn tối đa là 120 ngày")
     if data.suspended_from < business_today():
         raise HTTPException(
             status_code=422,
             detail="Chỉ có thể hoãn lớp từ hôm nay trở đi",
+        )
+    if not is_operational_class(class_):
+        raise HTTPException(
+            status_code=409, detail="Chỉ lớp đang hoạt động hoặc sắp mở mới có thể hoãn"
+        )
+    if class_.start_date is not None and data.suspended_from < class_.start_date:
+        raise HTTPException(
+            status_code=422, detail="Ngày bắt đầu hoãn nằm ngoài phạm vi lớp"
+        )
+    if class_.end_date is not None and data.resume_on > class_.end_date + timedelta(
+        days=1
+    ):
+        raise HTTPException(
+            status_code=422, detail="Ngày học lại nằm ngoài phạm vi lớp"
         )
 
     existing = await db.scalar(
@@ -132,6 +193,11 @@ async def create_suspension(
         )
     )
     if existing is not None:
+        if existing.class_id != str(class_id):
+            raise HTTPException(
+                status_code=409,
+                detail="Mã yêu cầu hoãn đã được dùng cho một lớp khác",
+            )
         return await preview_suspension(
             db,
             class_id,
@@ -142,6 +208,22 @@ async def create_suspension(
         )
 
     await db.scalar(select(Class.id).where(Class.id == str(class_id)).with_for_update())
+    affected_through = data.resume_on - timedelta(days=1)
+    overlapping = await db.scalar(
+        select(ClassScheduleAdjustment.id)
+        .where(
+            ClassScheduleAdjustment.class_id == str(class_id),
+            ClassScheduleAdjustment.status == "OPEN",
+            ClassScheduleAdjustment.affected_from <= affected_through,
+            ClassScheduleAdjustment.affected_through >= data.suspended_from,
+        )
+        .limit(1)
+    )
+    if overlapping is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Lớp đã có khoảng hoãn giao nhau; hãy chọn khoảng khác",
+        )
     enrollments = await _load_active_enrollments(db, str(class_id))
 
     adjustment = ClassScheduleAdjustment(
@@ -149,7 +231,7 @@ async def create_suspension(
         reason_code=data.reason_code,
         reason_note=(data.reason_note or "").strip() or None,
         affected_from=data.suspended_from,
-        affected_through=data.resume_on - timedelta(days=1),
+        affected_through=affected_through,
         status="OPEN",
         created_by=actor_user_id or "00000000-0000-0000-0000-000000000000",
         request_id=str(data.request_id),

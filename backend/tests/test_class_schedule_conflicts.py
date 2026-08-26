@@ -87,10 +87,11 @@ def availability_db(
     if memberships is None:
         memberships = [(row[0], row[7], row[8]) for row in rows if row[7] is not None]
     db = AsyncMock()
+    # Merged membership flow: the class read already carries one row per member,
+    # so no separate full-membership query exists anymore.
     real_results = [
         QueryResult(scalars=staff),
-        QueryResult(rows=rows),
-        QueryResult(rows=memberships),
+        QueryResult(rows=_expand_memberships(rows, memberships)),
     ]
 
     def side_effect(*args, **kwargs):
@@ -101,6 +102,23 @@ def availability_db(
     db.execute.side_effect = side_effect
     db.scalar.return_value = None
     return db
+
+
+def _expand_memberships(rows: list[tuple], memberships: list[tuple]) -> list[tuple]:
+    """Simulate the LEFT JOIN membership: one class row per junction member."""
+    by_class: dict[str, list[tuple]] = {}
+    for membership in memberships:
+        by_class.setdefault(membership[0], []).append(membership)
+    expanded: list[tuple] = []
+    for row in rows:
+        class_id = row[0]
+        class_members = by_class.get(class_id)
+        if class_members:
+            for _class_id, member_id, member_role in class_members:
+                expanded.append((*row[:7], member_id, member_role))
+        else:
+            expanded.append((*row[:7], None, None))
+    return expanded
 
 
 def call_validator(
@@ -135,7 +153,14 @@ async def test_rejects_schedule_overlap_for_the_same_teacher() -> None:
                 "6C1",
                 {
                     "text": "Thứ 2 (18:00-19:30)",
-                    "slots": [{"day": "Thứ 2", "start": "18:00", "end": "19:30"}],
+                    "slots": [
+                        {
+                            "day": "Thứ 2",
+                            "start": "18:00",
+                            "end": "19:30",
+                            "teacher_ids": [teacher.id],
+                        }
+                    ],
                 },
                 teacher.id,
             )
@@ -148,7 +173,14 @@ async def test_rejects_schedule_overlap_for_the_same_teacher() -> None:
             teacher_ids=[teacher.id],
             schedule={
                 "text": "Thứ 2 (19:00-20:30)",
-                "slots": [{"day": "Thứ 2", "start": "19:00", "end": "20:30"}],
+                "slots": [
+                    {
+                        "day": "Thứ 2",
+                        "start": "19:00",
+                        "end": "20:30",
+                        "teacher_ids": [teacher.id],
+                    }
+                ],
             },
         )
 
@@ -208,7 +240,16 @@ async def test_accepts_adjacent_schedule_for_the_same_teacher() -> None:
             make_conflict_row(
                 str(uuid4()),
                 "6C1",
-                {"slots": [{"day": "Thứ 2", "start": "18:00", "end": "19:30"}]},
+                {
+                    "slots": [
+                        {
+                            "day": "Thứ 2",
+                            "start": "18:00",
+                            "end": "19:30",
+                            "teacher_ids": [teacher.id],
+                        }
+                    ]
+                },
                 teacher.id,
             )
         ],
@@ -295,7 +336,16 @@ async def test_accepts_same_weekly_slot_when_class_date_ranges_do_not_overlap() 
             make_conflict_row(
                 str(uuid4()),
                 "6C1",
-                {"slots": [{"day": "Thứ 2", "start": "18:00", "end": "19:30"}]},
+                {
+                    "slots": [
+                        {
+                            "day": "Thứ 2",
+                            "start": "18:00",
+                            "end": "19:30",
+                            "teacher_ids": [teacher.id],
+                        }
+                    ]
+                },
                 teacher.id,
                 date(2026, 1, 1),
                 date(2026, 3, 31),
@@ -311,7 +361,16 @@ async def test_accepts_same_weekly_slot_when_class_date_ranges_do_not_overlap() 
     await call_validator(
         db,
         teacher_ids=[teacher.id],
-        schedule={"slots": [{"day": "Thứ 2", "start": "18:00", "end": "19:30"}]},
+        schedule={
+            "slots": [
+                {
+                    "day": "Thứ 2",
+                    "start": "18:00",
+                    "end": "19:30",
+                    "teacher_ids": [teacher.id],
+                }
+            ]
+        },
         start_date=date(2026, 4, 1),
         end_date=date(2026, 6, 30),
     )
@@ -334,7 +393,16 @@ async def test_rejects_same_weekly_slot_when_date_ranges_share_boundary_day() ->
             make_conflict_row(
                 str(uuid4()),
                 "6C1",
-                {"slots": [{"day": "Thứ 2", "start": "18:00", "end": "19:30"}]},
+                {
+                    "slots": [
+                        {
+                            "day": "Thứ 2",
+                            "start": "18:00",
+                            "end": "19:30",
+                            "teacher_ids": [teacher.id],
+                        }
+                    ]
+                },
                 teacher.id,
                 date(2026, 1, 1),
                 date(2026, 3, 30),
@@ -346,7 +414,16 @@ async def test_rejects_same_weekly_slot_when_date_ranges_share_boundary_day() ->
         await call_validator(
             db,
             teacher_ids=[teacher.id],
-            schedule={"slots": [{"day": "Thứ 2", "start": "18:00", "end": "19:30"}]},
+            schedule={
+                "slots": [
+                    {
+                        "day": "Thứ 2",
+                        "start": "18:00",
+                        "end": "19:30",
+                        "teacher_ids": [teacher.id],
+                    }
+                ]
+            },
             start_date=date(2026, 3, 30),
             end_date=date(2026, 6, 30),
         )
@@ -362,7 +439,16 @@ async def test_accepts_overlap_on_boundary_day_with_wrong_weekday() -> None:
             make_conflict_row(
                 str(uuid4()),
                 "6C1",
-                {"slots": [{"day": "Thứ 2", "start": "18:00", "end": "19:30"}]},
+                {
+                    "slots": [
+                        {
+                            "day": "Thứ 2",
+                            "start": "18:00",
+                            "end": "19:30",
+                            "teacher_ids": [teacher.id],
+                        }
+                    ]
+                },
                 teacher.id,
                 date(2026, 1, 1),
                 date(2026, 3, 31),
@@ -373,7 +459,16 @@ async def test_accepts_overlap_on_boundary_day_with_wrong_weekday() -> None:
     await call_validator(
         db,
         teacher_ids=[teacher.id],
-        schedule={"slots": [{"day": "Thứ 2", "start": "18:00", "end": "19:30"}]},
+        schedule={
+            "slots": [
+                {
+                    "day": "Thứ 2",
+                    "start": "18:00",
+                    "end": "19:30",
+                    "teacher_ids": [teacher.id],
+                }
+            ]
+        },
         start_date=date(2026, 3, 31),
         end_date=date(2026, 6, 30),
     )
@@ -388,7 +483,16 @@ async def test_rejects_malformed_stored_schedule_with_clear_class_context() -> N
             make_conflict_row(
                 str(uuid4()),
                 "6C1",
-                {"slots": [{"day": "Thứ 2", "start": "sai", "end": "19:30"}]},
+                {
+                    "slots": [
+                        {
+                            "day": "Thứ 2",
+                            "start": "sai",
+                            "end": "19:30",
+                            "teacher_ids": [teacher.id],
+                        }
+                    ]
+                },
                 teacher.id,
                 date(2026, 1, 1),
                 None,
@@ -403,7 +507,16 @@ async def test_rejects_malformed_stored_schedule_with_clear_class_context() -> N
         await call_validator(
             db,
             teacher_ids=[teacher.id],
-            schedule={"slots": [{"day": "Thứ 2", "start": "18:00", "end": "19:30"}]},
+            schedule={
+                "slots": [
+                    {
+                        "day": "Thứ 2",
+                        "start": "18:00",
+                        "end": "19:30",
+                        "teacher_ids": [teacher.id],
+                    }
+                ]
+            },
             start_date=date(2026, 2, 1),
             end_date=None,
         )
@@ -420,7 +533,16 @@ async def test_accepts_class_without_a_stored_schedule() -> None:
     await call_validator(
         db,
         teacher_ids=[teacher.id],
-        schedule={"slots": [{"day": "Thứ 2", "start": "18:00", "end": "19:30"}]},
+        schedule={
+            "slots": [
+                {
+                    "day": "Thứ 2",
+                    "start": "18:00",
+                    "end": "19:30",
+                    "teacher_ids": [teacher.id],
+                }
+            ]
+        },
         start_date=None,
         end_date=None,
     )
@@ -488,11 +610,14 @@ async def test_existing_slot_with_explicit_teacher_does_not_conflict_with_other_
 
 
 @pytest.mark.asyncio
-async def test_legacy_existing_slot_without_assignment_falls_back_to_class_pool() -> (
+async def test_legacy_existing_slot_without_assignment_does_not_bleed_class_pool() -> (
     None
 ):
-    """Slot legacy của lớp hiện có không khai teacher_ids: fallback toàn bộ GV
-    cấp lớp — giáo viên yêu cầu gây xung đột."""
+    """Slot thiếu assignment không được suy đoán thành toàn bộ pool.
+
+    Migrations 051/059 đã canonicalize dữ liệu thật; nếu một payload cũ lọt
+    vào đây, fail-closed là an toàn hơn việc làm bận nhầm tất cả giáo viên.
+    """
     teacher_a = make_staff()
     teacher_b = make_staff()
     other_class_id = str(uuid4())
@@ -514,27 +639,27 @@ async def test_legacy_existing_slot_without_assignment_falls_back_to_class_pool(
         ],
     )
 
-    with pytest.raises(ValueError, match="Cô Hạnh đã có lịch lớp 6A1"):
-        await call_validator(
-            db,
-            teacher_ids=[teacher_b.id],
-            schedule={
-                "slots": [
-                    {
-                        "day": "Thứ 2",
-                        "start": "18:00",
-                        "end": "19:30",
-                        "teacher_ids": [teacher_b.id],
-                    }
-                ]
-            },
-        )
+    await call_validator(
+        db,
+        teacher_ids=[teacher_b.id],
+        schedule={
+            "slots": [
+                {
+                    "day": "Thứ 2",
+                    "start": "18:00",
+                    "end": "19:30",
+                    "teacher_ids": [teacher_b.id],
+                }
+            ]
+        },
+    )
 
 
 @pytest.mark.asyncio
-async def test_requested_legacy_slot_falls_back_to_class_pool() -> None:
-    """Slot yêu cầu không khai teacher_ids (dữ liệu cũ): fallback toàn bộ GV
-    cấp lớp — vẫn phát hiện xung đột đúng."""
+async def test_requested_slot_without_teacher_assignment_is_not_treated_as_pool() -> (
+    None
+):
+    """Payload thiếu teacher_ids không được tự gán toàn bộ giáo viên lớp."""
     teacher = make_staff()
     other_class_id = str(uuid4())
     db = availability_db(
@@ -549,12 +674,20 @@ async def test_requested_legacy_slot_falls_back_to_class_pool() -> None:
         ],
     )
 
-    with pytest.raises(ValueError, match="Cô Hạnh đã có lịch lớp 6C1"):
-        await call_validator(
-            db,
-            teacher_ids=[teacher.id],
-            schedule={"slots": [{"day": "Thứ 2", "start": "18:00", "end": "19:30"}]},
-        )
+    await call_validator(
+        db,
+        teacher_ids=[teacher.id],
+        schedule={
+            "slots": [
+                {
+                    "day": "Thứ 2",
+                    "start": "18:00",
+                    "end": "19:30",
+                    "teacher_ids": [teacher.id],
+                }
+            ]
+        },
+    )
 
 
 @pytest.mark.asyncio
@@ -572,7 +705,16 @@ async def test_completed_or_cancelled_classes_do_not_occupy_future_schedule() ->
     await call_validator(
         db,
         teacher_ids=[teacher.id],
-        schedule={"slots": [{"day": "Thứ 2", "start": "18:00", "end": "19:30"}]},
+        schedule={
+            "slots": [
+                {
+                    "day": "Thứ 2",
+                    "start": "18:00",
+                    "end": "19:30",
+                    "teacher_ids": [teacher.id],
+                }
+            ]
+        },
     )
 
 
@@ -591,7 +733,16 @@ async def test_staff_rows_are_locked_in_stable_id_order() -> None:
         db,
         teacher_ids=[teacher.id],
         assistant_ids=[assistant.id],
-        schedule={"slots": [{"day": "Thứ 2", "start": "18:00", "end": "19:30"}]},
+        schedule={
+            "slots": [
+                {
+                    "day": "Thứ 2",
+                    "start": "18:00",
+                    "end": "19:30",
+                    "teacher_ids": [teacher.id],
+                }
+            ]
+        },
     )
 
     lock_query = db.execute.await_args_list[0].args[0]

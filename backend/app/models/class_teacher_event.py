@@ -5,9 +5,10 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
+from app.core.workspace import WorkspaceScoped
 
 
-class ClassTeacherEvent(Base):
+class ClassTeacherEvent(WorkspaceScoped, Base):
     """Append-only evidence of a teacher being assigned to or removed from a class."""
 
     __tablename__ = "class_teacher_events"

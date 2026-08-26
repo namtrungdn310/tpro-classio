@@ -3,17 +3,19 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.performance import log_timing
 from app.core.billing import get_enrollment_fee_amount
-from app.core.billing_schedule import month_end
-from app.core.business_time import business_today
 from app.core.class_lifecycle import (
     is_operational_class,
     operational_class_predicate,
+)
+from app.core.student_lifecycle import (
+    derive_student_list_state,
+    student_list_state_filter,
 )
 from app.core.phone import normalize_vietnam_phone
 from app.models.class_ import Class
@@ -25,14 +27,19 @@ from app.schemas.student import (
     StudentCreate,
     StudentCreateCommand,
     StudentEnrollmentInfo,
+    StudentLastEnrollmentInfo,
     StudentResponse,
+    StudentScopeSummary,
+    StudentMembershipCommand,
     StudentRestoreRequest,
     StudentUpdate,
     validate_complete_contact_pairs,
 )
-from app.services.fee_cycle_service import (
-    create_cycle_zero,
-    ensure_enrollment_cycles,
+from app.services.enrollment_service import (
+    _reconcile_current_fee_records,
+    _replace_slot_selections,
+    close_enrollment_financial_projection,
+    enroll_locked_student,
 )
 from app.services.student_identity_service import (
     build_student_identity_conflict,
@@ -92,6 +99,11 @@ def _to_response(student: Student) -> StudentResponse:
             effective_fee=get_enrollment_fee_amount(enrollment),
             enrollment_date=enrollment.enrollment_date,
             status=enrollment.status,
+            selected_slot_ids=[
+                selection.slot_id
+                for selection in enrollment.slot_selections
+                if selection.effective_until is None
+            ],
         )
         for enrollment in student.enrollments
         if (
@@ -101,6 +113,21 @@ def _to_response(student: Student) -> StudentResponse:
             and is_operational_class(enrollment.class_)
         )
     ]
+    historical_enrollments = [
+        enrollment
+        for enrollment in student.enrollments
+        if enrollment.class_ is not None
+        and enrollment.class_.identity_scheme != "LEGACY"
+    ]
+    latest_enrollment = max(
+        historical_enrollments,
+        key=lambda enrollment: (
+            enrollment.ended_at or enrollment.created_at,
+            enrollment.created_at,
+            enrollment.id,
+        ),
+        default=None,
+    )
 
     return StudentResponse(
         id=student.id,
@@ -116,35 +143,24 @@ def _to_response(student: Student) -> StudentResponse:
         notes=student.notes,
         hidden_fields=student.hidden_fields or [],
         status=student.status,
-        list_state=_derive_list_state(student),
+        list_state=derive_student_list_state(student),
         archived_at=student.archived_at,
         archived_reason=student.archived_reason,
         classes=classes,
         active_enrollments=active_enrollments,
+        last_enrollment=StudentLastEnrollmentInfo(
+            class_id=latest_enrollment.class_id,
+            class_name=latest_enrollment.class_.name,
+            status=latest_enrollment.status,
+            enrollment_date=latest_enrollment.enrollment_date,
+            ended_at=latest_enrollment.ended_at,
+            end_reason=latest_enrollment.end_reason,
+        )
+        if latest_enrollment is not None
+        else None,
         created_at=student.created_at,
+        updated_at=student.updated_at,
     )
-
-
-def _derive_list_state(student: Student) -> str:
-    """R6: derived list state — UNASSIGNED/CURRENT/FORMER; ARCHIVED explicit."""
-    if student.status == "archived":
-        return "ARCHIVED"
-    has_active = any(
-        enrollment.status == "active"
-        and enrollment.class_ is not None
-        and enrollment.class_.identity_scheme != "LEGACY"
-        and is_operational_class(enrollment.class_)
-        for enrollment in student.enrollments
-    )
-    if has_active:
-        return "CURRENT"
-    has_history = any(
-        enrollment.status in ("dropped", "completed", "cancelled")
-        for enrollment in student.enrollments
-    )
-    if has_history:
-        return "FORMER"
-    return "UNASSIGNED"
 
 
 def redact_student_hidden_fields(student: StudentResponse) -> StudentResponse:
@@ -221,37 +237,8 @@ async def get_students(
             )
         if status:
             statement = statement.where(Student.status == status)
-        if list_state == "ARCHIVED":
-            statement = statement.where(Student.status == "archived")
-        elif list_state == "CURRENT":
-            statement = statement.where(
-                Student.enrollments.any(
-                    and_(
-                        Enrollment.status == "active",
-                        Enrollment.class_.has(operational_class_predicate()),
-                    )
-                )
-            )
-        elif list_state == "FORMER":
-            statement = statement.where(
-                and_(
-                    ~Student.enrollments.any(
-                        and_(
-                            Enrollment.status == "active",
-                            Enrollment.class_.has(operational_class_predicate()),
-                        )
-                    ),
-                    Student.enrollments.any(
-                        Enrollment.status.in_(("dropped", "completed"))
-                    ),
-                )
-            )
-        elif list_state == "UNASSIGNED":
-            statement = statement.where(
-                ~Student.enrollments.any(
-                    Enrollment.status.in_(("active", "dropped", "completed"))
-                )
-            )
+        if list_state is not None:
+            statement = statement.where(student_list_state_filter(list_state))
         if cursor:
             cursor_row = await db.get(Student, str(cursor))
             if cursor_row is not None:
@@ -286,6 +273,27 @@ async def get_students(
             students = students[:bounded_limit]
 
         return [_to_response(student) for student in students], has_more
+
+
+async def get_student_scope_summary(db: AsyncSession) -> StudentScopeSummary:
+    """Return all workspace-scoped list counters in one database round trip."""
+    statement = select(
+        func.count(Student.id)
+        .filter(student_list_state_filter("UNASSIGNED"))
+        .label("unassigned"),
+        func.count(Student.id)
+        .filter(student_list_state_filter("CURRENT"))
+        .label("current"),
+        func.count(Student.id)
+        .filter(student_list_state_filter("STOPPED"))
+        .label("stopped"),
+    )
+    row = (await db.execute(statement)).one()
+    return StudentScopeSummary(
+        unassigned=int(row.unassigned or 0),
+        current=int(row.current or 0),
+        stopped=int(row.stopped or 0),
+    )
 
 
 def _apply_student_search_filter(statement, normalized_search: str) -> None:
@@ -380,6 +388,7 @@ async def create_student(
     class_id = payload.pop("class_id")
     custom_fee = payload.pop("custom_fee")
     enrollment_date = payload.pop("enrollment_date")
+    selected_slot_ids = payload.pop("selected_slot_ids")
 
     # R6: profile create độc lập lớp; ghi danh là command riêng (tùy chọn).
     if class_id is not None:
@@ -431,21 +440,18 @@ async def create_student(
     await db.flush()
 
     if class_ is not None:
-        enrollment = Enrollment(
-            student_id=student.id,
-            class_id=str(class_id),
-            custom_fee=custom_fee,
-            enrollment_date=enrollment_date or business_today(),
-        )
-        db.add(enrollment)
-        await db.flush()
-        enrollment.class_ = class_
-        # R6: cycle 0 cùng transaction ghi danh + các cycle trong tháng hiện tại.
-        await create_cycle_zero(db, enrollment)
-        await ensure_enrollment_cycles(
+        enrollment = await enroll_locked_student(
             db,
-            enrollment,
-            up_to=month_end(business_today()),
+            student=student,
+            class_=class_,
+            custom_fee=custom_fee,
+            enrollment_date=enrollment_date,
+            selected_slot_ids=(
+                [str(slot_id) for slot_id in selected_slot_ids]
+                if selected_slot_ids is not None
+                else None
+            ),
+            actor_user_id=actor_user_id,
         )
         enrollment_id = enrollment.id
     else:
@@ -510,6 +516,180 @@ async def update_student(
     return await get_student(db, id)
 
 
+async def apply_student_membership_command(
+    db: AsyncSession,
+    id: UUID,
+    command: StudentMembershipCommand,
+    *,
+    actor_user_id: str | None = None,
+) -> StudentResponse | None:
+    """Apply profile, membership and slot changes in one database transaction."""
+
+    await db.execute(
+        text("select pg_advisory_xact_lock(hashtext(:key))"),
+        {"key": f"student-command:{command.request_id}"},
+    )
+    referenced_enrollment_ids = {
+        str(item.enrollment_id) for item in command.enrollment_updates
+    }
+    if command.source_enrollment_id is not None:
+        referenced_enrollment_ids.add(str(command.source_enrollment_id))
+    referenced_class_ids: set[str] = set()
+    if referenced_enrollment_ids:
+        referenced_class_ids = set(
+            (
+                await db.scalars(
+                    select(Enrollment.class_id).where(
+                        Enrollment.id.in_(sorted(referenced_enrollment_ids)),
+                        Enrollment.student_id == str(id),
+                    )
+                )
+            ).all()
+        )
+        if len(referenced_class_ids) == 0:
+            raise HTTPException(
+                status_code=409, detail="Thông tin lớp của học viên đã thay đổi"
+            )
+    class_ids = sorted(
+        {str(target.class_id) for target in command.targets} | referenced_class_ids
+    )
+    if class_ids:
+        locked_classes = list(
+            (
+                await db.scalars(
+                    select(Class)
+                    .where(Class.id.in_(class_ids), operational_class_predicate())
+                    .order_by(Class.id)
+                    .with_for_update()
+                )
+            ).all()
+        )
+        if len(locked_classes) != len(class_ids):
+            raise HTTPException(
+                status_code=404, detail="Không tìm thấy lớp học đang mở"
+            )
+    else:
+        locked_classes = []
+    class_by_id = {class_.id: class_ for class_ in locked_classes}
+
+    student = await db.scalar(
+        select(Student)
+        .where(Student.id == str(id))
+        .options(selectinload(Student.enrollments).selectinload(Enrollment.class_))
+        .with_for_update()
+    )
+    if student is None:
+        return None
+    if student.status == "archived":
+        raise HTTPException(
+            status_code=409, detail="Hãy khôi phục hồ sơ trước khi thay đổi lớp"
+        )
+    if student.updated_at != command.expected_updated_at:
+        raise HTTPException(
+            status_code=409, detail="Hồ sơ vừa được thay đổi. Vui lòng tải lại."
+        )
+
+    profile_payload = _clean_payload(command.profile.model_dump(exclude_unset=True))
+    contact_fields = {"student_zalo", "student_phone", "parent_zalo", "parent_phone"}
+    if contact_fields.intersection(profile_payload):
+        try:
+            validate_complete_contact_pairs(
+                student_zalo=profile_payload.get("student_zalo", student.student_zalo),
+                student_phone=profile_payload.get(
+                    "student_phone", student.student_phone
+                ),
+                parent_zalo=profile_payload.get("parent_zalo", student.parent_zalo),
+                parent_phone=profile_payload.get("parent_phone", student.parent_phone),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    for field, value in profile_payload.items():
+        setattr(student, field, value)
+
+    enrollment_ids = referenced_enrollment_ids
+    enrollment_by_id: dict[str, Enrollment] = {}
+    if enrollment_ids:
+        enrollments = list(
+            (
+                await db.scalars(
+                    select(Enrollment)
+                    .where(
+                        Enrollment.id.in_(sorted(enrollment_ids)),
+                        Enrollment.student_id == student.id,
+                    )
+                    .options(selectinload(Enrollment.class_))
+                    .order_by(Enrollment.id)
+                    .with_for_update()
+                )
+            ).all()
+        )
+        enrollment_by_id = {enrollment.id: enrollment for enrollment in enrollments}
+        if len(enrollment_by_id) != len(enrollment_ids):
+            raise HTTPException(
+                status_code=409, detail="Thông tin lớp của học viên đã thay đổi"
+            )
+
+    for update in command.enrollment_updates:
+        enrollment = enrollment_by_id[str(update.enrollment_id)]
+        if enrollment.status != "active":
+            raise HTTPException(
+                status_code=409, detail="Lớp của học viên không còn hoạt động"
+            )
+        fields = update.model_fields_set
+        if "custom_fee" in fields:
+            enrollment.custom_fee = update.custom_fee
+        if "enrollment_date" in fields:
+            enrollment.enrollment_date = update.enrollment_date
+        if "selected_slot_ids" in fields:
+            await _replace_slot_selections(
+                db,
+                enrollment,
+                enrollment.class_,
+                [str(slot_id) for slot_id in (update.selected_slot_ids or [])],
+                actor_user_id=actor_user_id,
+            )
+        if {"custom_fee", "enrollment_date"}.intersection(fields):
+            await _reconcile_current_fee_records(db, [enrollment])
+
+    active_class_ids = {
+        enrollment.class_id
+        for enrollment in student.enrollments
+        if enrollment.status == "active"
+    }
+    for target in command.targets:
+        target_class_id = str(target.class_id)
+        if target_class_id in active_class_ids:
+            continue
+        await enroll_locked_student(
+            db,
+            student=student,
+            class_=class_by_id[target_class_id],
+            custom_fee=target.custom_fee,
+            enrollment_date=target.enrollment_date,
+            selected_slot_ids=[str(slot_id) for slot_id in target.selected_slot_ids]
+            if target.selected_slot_ids is not None
+            else None,
+            actor_user_id=actor_user_id,
+        )
+        active_class_ids.add(target_class_id)
+
+    if command.mode == "transfer" and command.source_enrollment_id is not None:
+        source = enrollment_by_id[str(command.source_enrollment_id)]
+        if source.status == "active":
+            source.status = "dropped"
+            source.ended_at = datetime.now(timezone.utc)
+            source.end_reason = "Chuyển lớp"
+            await close_enrollment_financial_projection(
+                db,
+                source,
+                actor_user_id=actor_user_id,
+                reason="Chuyển lớp",
+            )
+
+    await db.commit()
+    return await get_student(db, id)
+
+
 async def archive_student(
     db: AsyncSession,
     id: UUID,
@@ -545,6 +725,12 @@ async def archive_student(
         enrollment.status = "dropped"
         enrollment.ended_at = datetime.now(timezone.utc)
         enrollment.end_reason = "Hồ sơ học viên được lưu trữ"
+        await close_enrollment_financial_projection(
+            db,
+            enrollment,
+            actor_user_id=actor_user_id,
+            reason="Hồ sơ học viên được lưu trữ",
+        )
 
     if previous_status != "archived":
         append_student_lifecycle_event(

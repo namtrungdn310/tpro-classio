@@ -9,10 +9,16 @@ from fastapi import HTTPException, status
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.workspace import (
+    get_workspace_id,
+    reset_workspace_id,
+    set_workspace_id,
+)
 from app.core.config import settings
 from app.models.invitation import AccountInvitation
 from app.models.staff import StaffMember
 from app.models.staff_account_link import StaffAccountLink, StaffAccountLinkEvent
+from app.models.workspace import Workspace
 from app.services.auth_admin_service import get_active_auth_user_by_email
 
 
@@ -35,6 +41,20 @@ async def create_invitation(
         )
 
     normalized_email = email.strip().lower()
+    inviter_workspace_id = get_workspace_id()
+    workspace_id = inviter_workspace_id
+    if role == "teacher" and not workspace_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Không xác định được không gian dữ liệu của tài khoản mời.",
+        )
+    if role == "admin":
+        # Admin accounts never join the inviter's workspace.  Reserve an
+        # owner-less workspace and bind its owner atomically at registration.
+        workspace = Workspace(name="TPRO English")
+        db.add(workspace)
+        await db.flush()
+        workspace_id = str(workspace.id)
     await db.execute(
         text("select pg_advisory_xact_lock(hashtextextended(:email, 0))"),
         {"email": normalized_email},
@@ -62,15 +82,28 @@ async def create_invitation(
                 "update account_invitations set revoked_at = now()"
                 " where staff_id = cast(:staff_id as uuid) and role = 'teacher'"
                 " and consumed_at is null and revoked_at is null"
-                " and expires_at <= now()"
+                " and expires_at <= now() and workspace_id = cast(:workspace_id as uuid)"
             ),
-            {"staff_id": str(staff_id)},
+            {"staff_id": str(staff_id), "workspace_id": str(workspace_id)},
         )
         staff = await db.get(StaffMember, staff_id)
         if staff is None or not staff.is_active or staff.staff_type != "TEACHER":
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="Nhân sự giáo viên không hợp lệ hoặc đã ngừng hoạt động.",
+            )
+        # R8: only staff profiles with a recorded email can be invited to log
+        # in; the invited email must match the profile email exactly.  Staff
+        # without an email are centre records only and can never clock in.
+        if not staff.email:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Hồ sơ giáo viên chưa có email; hãy cập nhật email trước khi mời.",
+            )
+        if staff.email.strip().lower() != normalized_email:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Email mời phải khớp với email đã lưu trong hồ sơ giáo viên.",
             )
         # Check if staff is already linked
         existing_link = await db.scalar(
@@ -108,8 +141,12 @@ async def create_invitation(
             "update account_invitations set revoked_at = now()"
             " where lower(email) = :email and registered_user_id is null"
             " and consumed_at is null and revoked_at is null"
+            " and workspace_id = cast(:workspace_id as uuid)"
         ),
-        {"email": normalized_email},
+        {
+            "email": normalized_email,
+            "workspace_id": str(inviter_workspace_id or workspace_id),
+        },
     )
 
     raw_token = secrets.token_urlsafe(32)
@@ -122,10 +159,19 @@ async def create_invitation(
         invited_by=invited_by,
         expires_at=datetime.now(timezone.utc)
         + timedelta(hours=settings.invitation_expire_hours),
+        workspace_id=str(workspace_id),
     )
     db.add(invitation)
     await db.commit()
-    await db.refresh(invitation)
+    # An admin invitation intentionally belongs to the newly reserved
+    # workspace, not the inviter's workspace.  Refresh under that boundary so
+    # the ORM tenant criterion can see the row, then restore the request
+    # context before returning to the caller.
+    refresh_token = set_workspace_id(str(workspace_id))
+    try:
+        await db.refresh(invitation)
+    finally:
+        reset_workspace_id(refresh_token)
     return raw_token, invitation
 
 
@@ -232,6 +278,15 @@ async def consume_invitation(
         )
 
     invitation.consumed_at = datetime.now(timezone.utc)
+    invitation_workspace_id = getattr(invitation, "workspace_id", None)
+    if not invitation_workspace_id:
+        if isinstance(invitation, AccountInvitation):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Lời mời chưa được gán không gian dữ liệu riêng.",
+            )
+        invitation_workspace_id = "legacy-test"
+    set_workspace_id(str(invitation_workspace_id))
 
     if invitation.role == "teacher":
         if not invitation.staff_id:
@@ -281,18 +336,40 @@ async def consume_invitation(
                 reason="teacher_onboarding_completed",
             )
             db.add(event)
+    else:
+        # The invitation reserved a fresh tenant for this admin account.
+        workspace = await db.get(Workspace, invitation_workspace_id)
+        if not hasattr(invitation, "workspace_id"):
+            return invitation
+        if workspace is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Không gian dữ liệu của lời mời không còn tồn tại.",
+            )
+        if workspace.owner_user_id not in (None, user_id):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Không gian dữ liệu đã được gán cho tài khoản khác.",
+            )
+        workspace.owner_user_id = user_id
 
     return invitation
 
 
 async def revoke_invitation(db: AsyncSession, invitation_id: str) -> None:
+    workspace_id = get_workspace_id()
+    if not workspace_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Không xác định được không gian dữ liệu của tài khoản.",
+        )
     result = await db.execute(
         text(
             "update account_invitations set revoked_at = now()"
             " where id = cast(:id as uuid) and consumed_at is null"
-            " and revoked_at is null returning id"
+            " and revoked_at is null and workspace_id = cast(:workspace_id as uuid) returning id"
         ),
-        {"id": invitation_id},
+        {"id": invitation_id, "workspace_id": workspace_id},
     )
     if result.first() is None:
         raise HTTPException(
