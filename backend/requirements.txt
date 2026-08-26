@@ -12,4 +12,4 @@ cryptography==50.0.0
 Pillow==12.3.0
 python-multipart==0.0.20
 google-auth==2.40.3
-qrcode==8.1
+qrcode==8.2
