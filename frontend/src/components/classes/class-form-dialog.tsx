@@ -415,8 +415,11 @@ export function ClassFormDialog({
       Boolean(startDate) &&
       Boolean(endDate) &&
       teacherIds.length > 0,
-    staleTime: 0,
-    refetchOnMount: "always",
+    // Schedule availability is safe to reuse briefly while the picker is
+    // reopened. This avoids a duplicate request during the same edit flow,
+    // while the short window still keeps conflicts reasonably fresh.
+    staleTime: 10_000,
+    refetchOnMount: true,
     refetchOnWindowFocus: false,
     retry: false,
   });

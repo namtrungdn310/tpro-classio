@@ -385,16 +385,18 @@ test("T-E2E-PROD-008: another class block is locked before per-session assignmen
       day: "Thứ 2",
       start: "10:00",
       end: "11:00",
-      busy_teacher_ids: [],
+      // Cô Hạnh is the active teacher scope in the picker, so this slot must
+      // be marked busy for the selected assignment to be locked.
+      busy_teacher_ids: [TEACHER_T1.id],
       busy_assistant_ids: [ASSISTANT_A1.id],
     },
   ];
   await page.goto("http://localhost:3100/classes");
   await openSchedulePicker(page);
-  // Class add/edit keeps the original compact grid + detail list layout;
-  // teacher assignment is performed inside each card rather than through tabs.
-  await expect(page.getByText("Danh sách chi tiết", { exact: true })).toBeVisible();
-  await expect(page.getByRole("tab")).toHaveCount(0);
+  // The right panel stays a compact list; the teacher scope tab above the
+  // grid is the single context selector for the chosen teacher.
+  await expect(page.getByRole("heading", { name: /Buổi học/ })).toBeVisible();
+  await expect(page.getByRole("tab")).toHaveCount(1);
   const busyCell = page.locator("[data-day-index='0'][data-time-index='6']");
   await expect(busyCell).toHaveAttribute("data-schedule-state", "busy");
   await expect(busyCell).toHaveAttribute("aria-disabled", "true");
@@ -447,7 +449,9 @@ test("T-E2E-PROD-009: the final real cell keeps the same visible fill after an 0
     "data-schedule-endpoint",
     "true",
   );
-  await expect(page.getByText(/Thứ 3\s*\(08:00-16:00\)/)).toBeVisible();
+  await expect(
+    page.locator("[data-schedule-session-key='Thứ 3|08:00|16:00']"),
+  ).toBeVisible();
 
   const colors = await page.evaluate(() => {
     const styleAt = (timeIndex: number) => {
@@ -490,12 +494,16 @@ test("T-E2E-PROD-010: the filled endpoint supports click shrinking and bidirecti
   await page.mouse.down();
   await page.mouse.move(endBox.x + endBox.width / 2, endBox.y + 0.5, { steps: 24 });
   await page.mouse.up();
-  await expect(page.getByText(/Thứ 3\s*\(08:00-16:00\)/)).toBeVisible();
+  await expect(
+    page.locator("[data-schedule-session-key='Thứ 3|08:00|16:00']"),
+  ).toBeVisible();
 
   // The filled 16:00 endpoint behaves like the visible end edge: one click
   // shrinks by 30 minutes instead of extending the data to 16:30.
   await endCell.click();
-  await expect(page.getByText(/Thứ 3\s*\(08:00-15:30\)/)).toBeVisible();
+  await expect(
+    page.locator("[data-schedule-session-key='Thứ 3|08:00|15:30']"),
+  ).toBeVisible();
   await expect(
     page.locator("[data-day-index='1'][data-time-index='17']"),
   ).toHaveAttribute("data-schedule-endpoint", "true");
@@ -521,7 +529,9 @@ test("T-E2E-PROD-010: the filled endpoint supports click shrinking and bidirecti
     { steps: 6 },
   );
   await page.mouse.up();
-  await expect(page.getByText(/Thứ 3\s*\(08:00-16:00\)/)).toBeVisible();
+  await expect(
+    page.locator("[data-schedule-session-key='Thứ 3|08:00|16:00']"),
+  ).toBeVisible();
 
   const newEndBox = await endCell.boundingBox();
   const previousBoundaryCell = page.locator(
@@ -543,7 +553,9 @@ test("T-E2E-PROD-010: the filled endpoint supports click shrinking and bidirecti
   );
   await page.mouse.up();
 
-  await expect(page.getByText(/Thứ 3\s*\(08:00-15:30\)/)).toBeVisible();
+  await expect(
+    page.locator("[data-schedule-session-key='Thứ 3|08:00|15:30']"),
+  ).toBeVisible();
   await expect(previousBoundaryCell).toHaveAttribute(
     "data-schedule-endpoint",
     "true",

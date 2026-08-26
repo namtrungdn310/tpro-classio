@@ -886,12 +886,22 @@ def scenario_verify_after_and_perf():
     code, _ = psql_file(DB, SQL / "verify_security.sql")
     check_ok(code, "verify after integration failed")
     env = dict(os.environ)
-    env["PYTHONPATH"] = str(ROOT)
-    env["DATABASE_URL"] = (
-        f"postgresql+asyncpg://tpro_runtime:disposable@127.0.0.1:{PORT}/{DB}"
+    env.update(
+        {
+            "PYTHONPATH": str(ROOT),
+            "DATABASE_URL": (
+                f"postgresql+asyncpg://tpro_runtime:disposable@127.0.0.1:{PORT}/{DB}"
+            ),
+            "DATABASE_SSL_MODE": "disable",
+            "RUN_DB_INTEGRATION": "1",
+            # The performance gate intentionally opens 50 concurrent sessions;
+            # keep its disposable runner pool large enough to measure the API
+            # instead of timing out on the default development pool.
+            "DB_POOL_SIZE": "20",
+            "DB_MAX_OVERFLOW": "50",
+            "DB_POOL_TIMEOUT": "30",
+        }
     )
-    env["DATABASE_SSL_MODE"] = "disable"
-    env["RUN_DB_INTEGRATION"] = "1"
     code, out = run([str(VENV_PY), str(SQL / "perf_measure.py")], env=env)
     check_ok(code, "p95 measurement failed")
     if "p95" not in out:
