@@ -33,7 +33,7 @@ import {
   type UserAccount,
 } from "@/lib/api/auth";
 import { getApiErrorMessage } from "@/lib/api/errors";
-import { getActiveTeacherOptions } from "@/lib/api/staff";
+import { getActiveStaffOptions } from "@/lib/api/staff";
 import {
   fieldFeedbackAfterBlur,
   fieldFeedbackAfterInput,
@@ -86,17 +86,16 @@ export function UserAccessPanel() {
     queryKey: authQueryKeys.users,
     queryFn: getUsers,
     staleTime: 2 * 60 * 1000,
-    refetchOnMount: true,
   });
-  const inviteTeacherOptionsQuery = useQuery({
-    queryKey: ["staff", "teacher-options", "invitations"],
-    queryFn: getActiveTeacherOptions,
+  const inviteStaffOptionsQuery = useQuery({
+    queryKey: staffQueryKeys.staffOptions,
+    queryFn: getActiveStaffOptions,
     enabled: showInviteDialog && inviteRole === "teacher" && !inviteResult,
     staleTime: 2 * 60 * 1000,
   });
-  const inviteTeacherOptions = useMemo(
-    () => (inviteTeacherOptionsQuery.data ?? []).filter((option) => option.staff_type === "TEACHER"),
-    [inviteTeacherOptionsQuery.data],
+  const inviteStaffOptions = useMemo(
+    () => inviteStaffOptionsQuery.data ?? [],
+    [inviteStaffOptionsQuery.data],
   );
 
   const users = useMemo(() => usersQuery.data ?? [], [usersQuery.data]);
@@ -433,7 +432,7 @@ export function UserAccessPanel() {
                           "disabled:cursor-not-allowed disabled:opacity-60",
                         )}
                       >
-                        {role === "teacher" ? "Giáo viên" : "Admin"}
+                        {role === "teacher" ? "Nhân sự chấm công" : "Admin"}
                       </button>
                     ))}
                   </div>
@@ -441,21 +440,21 @@ export function UserAccessPanel() {
                 {inviteRole === "teacher" ? (
                   <div className="mb-4">
                     <label htmlFor="invite-staff" className="form-label-text mb-1.5 block text-gray-700">
-                      Hồ sơ giáo viên
+                      Hồ sơ nhân sự
                     </label>
                     <div className="relative">
                       <select
                         id="invite-staff"
                         value={inviteStaffId}
-                        disabled={isInviting || inviteTeacherOptionsQuery.isPending}
-                        aria-busy={inviteTeacherOptionsQuery.isPending || undefined}
+                        disabled={isInviting || inviteStaffOptionsQuery.isPending}
+                        aria-busy={inviteStaffOptionsQuery.isPending || undefined}
                         onChange={(event) => {
                           const selectedId = event.currentTarget.value;
                           setInviteStaffId(selectedId);
                           setInviteServerError("");
                           // Prefill the invited account email from the staff
                           // profile (admin already entered it) to avoid retyping.
-                          const selected = inviteTeacherOptions.find(
+                          const selected = inviteStaffOptions.find(
                             (option) => option.id === selectedId,
                           );
                           if (selected?.email && !inviteEmail.trim()) {
@@ -467,21 +466,21 @@ export function UserAccessPanel() {
                         }}
                         className={cn(formTextControlClassName, "appearance-auto pr-9")}
                       >
-                        <option value="">Chọn giáo viên</option>
-                        {inviteTeacherOptions.map((option) => (
+                        <option value="">Chọn nhân sự</option>
+                        {inviteStaffOptions.map((option) => (
                           <option key={option.id} value={option.id}>
                             {option.full_name}
                             {option.email ? ` · ${option.email}` : ""}
                           </option>
                         ))}
                       </select>
-                      {inviteTeacherOptionsQuery.isPending ? (
+                      {inviteStaffOptionsQuery.isPending ? (
                         <LoaderCircle className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-gray-400 motion-reduce:animate-none" aria-hidden="true" />
                       ) : null}
                     </div>
-                    {inviteTeacherOptionsQuery.isError ? (
+                    {inviteStaffOptionsQuery.isError ? (
                       <p role="alert" className="form-message-text mt-1 text-destructive">
-                        Không tải được danh sách giáo viên. Vui lòng thử làm mới trang.
+                        Không tải được danh sách nhân sự. Vui lòng thử làm mới trang.
                       </p>
                     ) : null}
                   </div>

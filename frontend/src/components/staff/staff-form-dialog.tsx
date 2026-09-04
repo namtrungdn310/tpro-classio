@@ -21,7 +21,6 @@ import {
   formTextControlErrorClassName,
 } from "@/components/ui/form-text-control";
 import { SaveButton } from "@/components/ui/save-button";
-import { SegmentedControl } from "@/components/ui/segmented-control";
 import { SplitTextField } from "@/components/ui/split-text-field";
 import {
   shouldShowUnsavedChanges,
@@ -34,7 +33,7 @@ import {
   staffFormSchema,
   type StaffFormValues,
 } from "@/lib/schemas/staff";
-import type { StaffCreate, StaffResponse, StaffType, StaffUpdate } from "@/lib/types";
+import type { StaffCreate, StaffResponse, StaffUpdate } from "@/lib/types";
 import {
   noSavedInfoFormProps,
   savedInfoAutocomplete,
@@ -50,7 +49,6 @@ import { cn } from "@/lib/utils";
 
 const STAFF_FEEDBACK_FIELDS = [
   "full_name",
-  "staff_type",
   "contact",
   "email",
   "checkin_window_hours",
@@ -59,7 +57,6 @@ const STAFF_FEEDBACK_FIELDS = [
 
 const defaultValues: StaffFormValues = {
   full_name: "",
-  staff_type: "TEACHER",
   zalo_name: "",
   phone: "",
   email: "",
@@ -71,7 +68,6 @@ export function StaffFormDialog({
   assignedClassNames,
   contactSuggestionSources,
   embedded = false,
-  initialStaffType,
   isSaving,
   onClose,
   onDirtyChange,
@@ -81,7 +77,6 @@ export function StaffFormDialog({
   assignedClassNames: string[];
   contactSuggestionSources: ContactSuggestionSource[];
   embedded?: boolean;
-  initialStaffType?: StaffType;
   isSaving: boolean;
   onClose: () => void;
   onDirtyChange?: (dirty: boolean) => void;
@@ -98,17 +93,13 @@ export function StaffFormDialog({
     handleSubmit,
     register,
     reset,
-    setError,
     setValue,
     watch,
   } = useForm<StaffFormValues>({
     resolver: zodResolver(staff ? staffFormSchema : staffCreateFormSchema),
     mode: "onChange",
     shouldFocusError: true,
-    defaultValues: {
-      ...defaultValues,
-      staff_type: initialStaffType ?? "TEACHER",
-    },
+    defaultValues,
   });
   const {
     markBlur,
@@ -117,7 +108,6 @@ export function StaffFormDialog({
     resetFeedback,
     shouldShowError,
   } = useFormFieldFeedback(STAFF_FEEDBACK_FIELDS);
-  const staffType = watch("staff_type");
   const watchedFormValues = watch();
   const contactSuggestion = useContactPairSuggestion({
     localSources: contactSuggestionSources,
@@ -136,7 +126,6 @@ export function StaffFormDialog({
       const m = Math.round((windowVal - h) * 60);
       reset({
         full_name: staff.full_name,
-        staff_type: staff.staff_type,
         zalo_name: staff.zalo_name ?? "",
         phone: staff.phone ?? "",
         email: staff.email ?? "",
@@ -144,28 +133,14 @@ export function StaffFormDialog({
         checkin_window_minutes: m === 0 ? "00" : String(m).padStart(2, "0"),
       });
     } else {
-      reset({
-        ...defaultValues,
-        staff_type: initialStaffType ?? "TEACHER",
-      });
+      reset(defaultValues);
     }
     resetFeedback();
-  }, [initialStaffType, reset, resetFeedback, staff]);
+  }, [reset, resetFeedback, staff]);
 
   async function submit(values: StaffFormValues) {
     markSubmitted();
     setSubmitError("");
-    if (
-      staff?.staff_type === "TEACHER" &&
-      values.staff_type === "ASSISTANT" &&
-      assignedClassNames.length > 0
-    ) {
-      setError("staff_type", {
-        type: "manual",
-        message: `Hãy gỡ nhân sự khỏi ${formatClassList(assignedClassNames)} trước khi đổi sang trợ giảng.`,
-      });
-      return;
-    }
 
     const rawHours = values.checkin_window_hours;
     const rawMinutes = values.checkin_window_minutes;
@@ -178,7 +153,7 @@ export function StaffFormDialog({
 
     const payload: StaffCreate | StaffUpdate = {
       full_name: values.full_name.trim(),
-      staff_type: values.staff_type,
+      ...(staff?.staff_type ? { staff_type: staff.staff_type } : {}),
       zalo_name: values.zalo_name.trim() || null,
       phone: values.phone ? normalizeVietnamPhone(values.phone) : null,
       email: values.email.trim() || null,
@@ -222,7 +197,6 @@ export function StaffFormDialog({
   const hasUnsavedChanges = Boolean(
     staff && normalizedStaffKey(watchedFormValues) !== normalizedStaffKey({
       full_name: staff.full_name,
-      staff_type: staff.staff_type,
       zalo_name: staff.zalo_name ?? "",
       phone: staff.phone ?? "",
       email: staff.email ?? "",
@@ -242,7 +216,6 @@ export function StaffFormDialog({
     isSaving,
   });
   const fullNameId = `${fieldIdPrefix}-full-name`;
-  const typeLabelId = `${fieldIdPrefix}-staff-type-label`;
   const contactLabelId = `${fieldIdPrefix}-contact-label`;
   const zaloNameId = `${fieldIdPrefix}-zalo-name`;
   const phoneId = `${fieldIdPrefix}-phone`;
@@ -252,9 +225,6 @@ export function StaffFormDialog({
   const contactError = errors.zalo_name ?? errors.phone;
   const visibleFullNameError = shouldShowError("full_name", isSubmitted)
     ? errors.full_name
-    : undefined;
-  const visibleStaffTypeError = shouldShowError("staff_type", isSubmitted)
-    ? errors.staff_type
     : undefined;
   const visibleContactError = shouldShowError("contact", isSubmitted)
     ? contactError
@@ -289,9 +259,7 @@ export function StaffFormDialog({
   const assignmentsId = `${fieldIdPrefix}-assignments`;
   const fullNameDescription = [
     visibleFullNameError ? `${fullNameId}-error` : null,
-    staff?.staff_type === "TEACHER" && assignedClassNames.length > 0
-      ? assignmentsId
-      : null,
+    assignedClassNames.length > 0 ? assignmentsId : null,
   ]
     .filter(Boolean)
     .join(" ") || undefined;
@@ -311,8 +279,7 @@ export function StaffFormDialog({
           <FormDialogBody>
             <fieldset disabled={isSaving} className="space-y-3 disabled:opacity-70">
               <FormSection label="Hồ sơ nhân sự" order={1}>
-              <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
-                <div className="min-w-0">
+                <div className="space-y-3">
                   <FormField
                     controlId={fullNameId}
                     error={visibleFullNameError?.message}
@@ -337,45 +304,16 @@ export function StaffFormDialog({
                       data-col={0}
                     />
                   </FormField>
+
+                  {assignedClassNames.length > 0 ? (
+                    <p
+                      id={assignmentsId}
+                      className="helper-text min-w-0 select-none text-gray-500"
+                    >
+                      Đang phụ trách: {assignedClassNames.join(", ")}
+                    </p>
+                  ) : null}
                 </div>
-
-                <FormField
-                  error={visibleStaffTypeError?.message}
-                  errorId={`${fieldIdPrefix}-staff-type-error`}
-                  label="Vai trò"
-                  labelId={typeLabelId}
-                >
-                  <input type="hidden" {...register("staff_type")} />
-                  <SegmentedControl
-                    ariaLabelledBy={typeLabelId}
-                    ariaDescribedBy={visibleStaffTypeError ? `${fieldIdPrefix}-staff-type-error` : undefined}
-                    invalid={Boolean(visibleStaffTypeError)}
-                    options={[
-                      { label: "Giáo viên", value: "TEACHER" },
-                      { label: "Trợ giảng", value: "ASSISTANT" },
-                    ]}
-                    selected={staffType}
-                    onSelect={(value) => {
-                      clearErrors("staff_type");
-                      setSubmitError("");
-                      markInput("staff_type", value);
-                      setValue("staff_type", value as StaffType, {
-                        shouldDirty: true,
-                        shouldValidate: false,
-                      });
-                    }}
-                  />
-                </FormField>
-
-                {staff?.staff_type === "TEACHER" && assignedClassNames.length > 0 ? (
-                  <p
-                    id={assignmentsId}
-                    className="helper-text min-w-0 select-none text-gray-500 sm:col-span-2"
-                  >
-                    Đang phụ trách: {assignedClassNames.join(", ")}
-                  </p>
-                ) : null}
-              </div>
               </FormSection>
 
               <FormSection label="Thông tin liên hệ" order={2}>
@@ -401,9 +339,9 @@ export function StaffFormDialog({
                       markBlur("contact");
                     }
                   }}
-                  className={`h-8 rounded-md border bg-white transition-shadow focus-within:ring-2 ${
+                  className={`h-8 rounded-md border bg-white transition-shadow focus-within:ring-1 ${
                     visibleContactError
-                      ? "border-destructive focus-within:border-destructive focus-within:ring-destructive/15"
+                      ? "border-destructive focus-within:!border-destructive focus-within:!ring-destructive/15"
                       : "border-gray-200 focus-within:border-primary/60 focus-within:ring-primary/15"
                   }`}
                   left={
@@ -636,11 +574,6 @@ function getInputClass(hasError: boolean) {
   return cn(formTextControlClassName, hasError && formTextControlErrorClassName);
 }
 
-function formatClassList(classNames: string[]) {
-  if (classNames.length <= 3) return `các lớp ${classNames.join(", ")}`;
-  return `${classNames.slice(0, 3).join(", ")} và ${classNames.length - 3} lớp khác`;
-}
-
 function normalizedStaffKey(values: StaffFormValues) {
   const rawHours = values.checkin_window_hours;
   const rawMinutes = values.checkin_window_minutes;
@@ -655,10 +588,9 @@ function normalizedStaffKey(values: StaffFormValues) {
 
   return JSON.stringify({
     full_name: values.full_name.trim(),
-    staff_type: values.staff_type,
-    zalo_name: values.zalo_name.trim() || null,
+    zalo_name: values.zalo_name?.trim() || null,
     phone: values.phone ? normalizeVietnamPhone(values.phone) : null,
-    email: values.email.trim() || null,
+    email: values.email?.trim() || null,
     checkin_window_after_hours: totalHours,
   });
 }

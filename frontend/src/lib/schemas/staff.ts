@@ -11,7 +11,7 @@ const staffFormFields = {
     .trim()
     .min(1, validationMessages.required("họ và tên"))
     .max(255, "Họ và tên không được vượt quá 255 ký tự."),
-  staff_type: z.enum(["TEACHER", "ASSISTANT"]),
+  staff_type: z.enum(["TEACHER", "ASSISTANT"]).optional(),
   zalo_name: z
     .string()
     .trim()
@@ -114,7 +114,7 @@ export type StaffFormValues = z.infer<typeof staffFormSchema>;
 export const staffResponseSchema = z.object({
   id: z.string().uuid(),
   full_name: z.string().trim().min(1).max(255),
-  staff_type: z.enum(["TEACHER", "ASSISTANT"]),
+  staff_type: z.enum(["TEACHER", "ASSISTANT"]).nullable().nullish().default(null),
   zalo_name: z.string().trim().min(1).max(100).nullable(),
   phone: z.string().max(32).nullable(),
   email: z.string().trim().max(320).nullable().nullish().default(null),
@@ -130,6 +130,7 @@ export const staffResponseSchema = z.object({
         id: z.string().uuid(),
         name: z.string().trim().min(1),
         is_active: z.boolean(),
+        role: z.enum(["TEACHER", "ASSISTANT"]).nullable().nullish().default(null),
       }),
     )
     .default([]),
@@ -145,7 +146,7 @@ export const teacherOptionResponseListSchema = z.array(
   z.object({
     id: z.string().uuid(),
     full_name: z.string().trim().min(1).max(255),
-    staff_type: z.enum(["TEACHER", "ASSISTANT"]),
+    staff_type: z.enum(["TEACHER", "ASSISTANT"]).nullable().nullish().default(null),
     email: z.string().trim().max(320).nullable().nullish().default(null),
   }),
 );

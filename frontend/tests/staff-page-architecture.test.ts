@@ -49,16 +49,16 @@ test("staff class assignments and attendance email connection stay visible to ma
   assert.match(tableSource, /canManage \? <ColumnHeader>Kết nối Email/);
 });
 
-test("staff form aligns name and role while assignments span the full form row", () => {
+test("staff form contains name while assignments span the form row without role selector", () => {
   assert.match(formSource, /<FormDialogShell/);
-  assert.match(formSource, /grid grid-cols-1 items-start gap-3 sm:grid-cols-2/);
-  assert.match(formSource, /<SegmentedControl/);
+  assert.doesNotMatch(formSource, /<SegmentedControl/);
+  assert.doesNotMatch(formSource, /label="Vai trò"/);
   assert.match(formSource, /width=\{staff \? "md" : "standard"\}/);
   assert.match(
     formSource,
-    /label="Họ và tên"[\s\S]*?label="Vai trò"[\s\S]*?Đang phụ trách:/,
+    /label="Họ và tên"[\s\S]*?Đang phụ trách:/,
   );
-  assert.match(formSource, /helper-text min-w-0 select-none text-gray-500 sm:col-span-2/);
+  assert.match(formSource, /helper-text min-w-0 select-none text-gray-500/);
   assert.match(formSource, /aria-describedby=\{fullNameDescription\}/);
   assert.equal(
     (formSource.match(/autoComplete=\{savedInfoAutocomplete\.disabled\}/g) ?? []).length,
@@ -91,7 +91,8 @@ test("staff workspace rail includes permitted actions and matches standard sizin
   assert.match(workspaceSource, /role="tablist"/);
   assert.match(workspaceSource, /aria-selected=\{active\}/);
   assert.match(workspaceSource, /aria-controls="staff-workspace-panel"/);
-  assert.match(workspaceSource, /isTeacher/);
+  assert.match(workspaceSource, /Hãy gỡ nhân sự khỏi các lớp đang hoạt động trước/);
+  assert.doesNotMatch(workspaceSource, /isTeacher/);
   assert.match(
     workspaceSource,
     /sm:h-\[min\(680px,calc\(100dvh-2rem\)\)\].*sm:max-w-\[640px\]/,

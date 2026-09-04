@@ -38,7 +38,11 @@ export default function AttendancePage() {
   }, [isLoading, user]);
 
   if (isLoading || !user || user.role !== "teacher") {
-    return <div className="flex min-h-dvh items-center justify-center text-sm text-gray-500"><LoadingLabel label="Đang tải" /></div>;
+    return <AttendancePageSkeleton />;
+  }
+
+  if (attendanceQuery.isPending && attendanceQuery.data === undefined) {
+    return <AttendancePageSkeleton />;
   }
 
   const checkins = new Map((attendanceQuery.data?.checkins ?? []).map((item) => [item.key, item]));
@@ -110,4 +114,15 @@ export default function AttendancePage() {
 
 function formatTime(value: Date) {
   return new Intl.DateTimeFormat("vi-VN", { hour: "2-digit", minute: "2-digit", hour12: false }).format(value);
+}
+
+function AttendancePageSkeleton() {
+  return (
+    <main className="min-h-dvh animate-pulse bg-gray-50 px-4 py-5 sm:px-6" aria-hidden="true">
+      <div className="mx-auto w-full max-w-2xl">
+        <div className="flex items-start justify-between gap-4"><div><div className="h-4 w-28 rounded bg-gray-200" /><div className="mt-3 h-7 w-40 rounded bg-gray-200" /><div className="mt-2 h-4 w-48 rounded bg-gray-100" /></div><div className="h-11 w-28 rounded-xl bg-gray-200" /></div>
+        <div className="mt-6 rounded-2xl border border-gray-200 bg-white p-4 sm:p-5"><div className="h-6 w-48 rounded bg-gray-200" /><div className="mt-2 h-4 w-36 rounded bg-gray-100" /><div className="mt-6 space-y-3">{Array.from({ length: 4 }, (_, index) => <div key={index} className="h-24 rounded-xl bg-gray-100" />)}</div></div>
+      </div>
+    </main>
+  );
 }

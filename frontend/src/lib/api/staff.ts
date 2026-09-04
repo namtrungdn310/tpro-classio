@@ -8,8 +8,12 @@ import type { StaffCreate, StaffResponse, StaffType, StaffUpdate, TeacherOptionR
 import { z } from "zod";
 
 const payrollRateSchema = z.object({
-  id: z.string().uuid(), rate_amount: z.number().int(), effective_from: z.string(),
-  effective_to: z.string().nullable(), version: z.number().int(),
+  id: z.string().uuid(),
+  rate_amount: z.number().int(),
+  assignment_role: z.enum(["TEACHER", "ASSISTANT"]).nullable().nullish().default(null),
+  effective_from: z.string(),
+  effective_to: z.string().nullable(),
+  version: z.number().int(),
 });
 const payrollSettlementSchema = z.object({
   id: z.string().uuid(), total_amount: z.number().int(), cutoff_at: z.string(),
@@ -85,16 +89,20 @@ type GetStaffParams = {
 export async function getStaffMembers(params: GetStaffParams = {}): Promise<StaffResponse[]> {
   const { data } = await apiClient.get<StaffResponse[]>("/staff", {
     params: {
-      staff_type: params.staff_type,
+      staff_type: params.staff_type || undefined,
       is_active: params.is_active === null ? undefined : (params.is_active ?? true),
     },
   });
   return staffResponseListSchema.parse(data);
 }
 
-export async function getActiveTeacherOptions(): Promise<TeacherOptionResponse[]> {
-  const { data } = await apiClient.get<TeacherOptionResponse[]>("/staff/teacher-options");
+export async function getActiveStaffOptions(): Promise<TeacherOptionResponse[]> {
+  const { data } = await apiClient.get<TeacherOptionResponse[]>("/staff/options");
   return teacherOptionResponseListSchema.parse(data);
+}
+
+export async function getActiveTeacherOptions(): Promise<TeacherOptionResponse[]> {
+  return getActiveStaffOptions();
 }
 
 export async function createStaffMember(data: StaffCreate): Promise<StaffResponse> {
@@ -151,7 +159,13 @@ export async function reverseAttendance(
 
 export async function createStaffCompensationRate(
   id: string,
-  payload: { rate_amount: number; effective_from: string; effective_to?: string | null },
+  payload: {
+    rate_amount: number;
+    assignment_role?: StaffType | null;
+    effective_from: string;
+    effective_to?: string | null;
+    reason?: string | null;
+  },
 ) {
   const { data } = await apiClient.post(`/staff/${id}/compensation-rates`, payload);
   return payrollRateSchema.parse(data);

@@ -1,5 +1,5 @@
 import { exportExcelWorkbook, sanitizeExcelFileName } from "@/lib/excel/workbook";
-import { getStaffTypeLabel, type PreparedStaffRecord } from "@/lib/staff/presentation";
+import type { PreparedStaffRecord } from "@/lib/staff/presentation";
 import type { StaffAttendanceHistory, StaffPayrollSummary } from "@/lib/api/staff";
 
 const ACCOUNT_LABELS: Record<string, string> = {
@@ -14,10 +14,10 @@ export async function exportStaff(
   records: PreparedStaffRecord[],
   scopeLabel: string,
 ) {
-  const rows = records.map(({ staff, activeClasses }, index) => ({
+  const rows = records.map(({ staff, activeClasses, summaryRoles }, index) => ({
     STT: index + 1,
     "Họ và tên": staff.full_name,
-    "Vai trò": getStaffTypeLabel(staff.staff_type),
+    "Vai trò": summaryRoles,
     "Trạng thái": staff.is_active ? "Đang làm việc" : "Đã nghỉ",
     "Email chấm công": staff.email ?? "",
     "Kết nối chấm công": ACCOUNT_LABELS[staff.attendance_account_status] ?? "Chưa kết nối",

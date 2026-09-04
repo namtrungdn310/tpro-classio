@@ -2,18 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import {
-  RiWallet3Line as Payroll,
-  RiPencilLine as Pencil,
-  RiArrowGoBackLine as RotateCcw,
-  RiUserUnfollowLine as UserRoundX,
-} from "react-icons/ri";
 import { StaffFormDialog } from "@/components/staff/staff-form-dialog";
 import { StaffPayrollContent } from "@/components/staff/staff-payroll-dialog";
 import { ConfirmationDialog } from "@/components/ui/confirmation-dialog";
 import { Button } from "@/components/ui/button";
 import { FormDialogHeader } from "@/components/ui/form-dialog-header";
 import { PendingActionButton } from "@/components/ui/pending-action-button";
+import { UnsavedChangesNotice } from "@/components/ui/unsaved-changes-notice";
 import { useModalDialog } from "@/lib/hooks/useModalDialog";
 import type { ContactSuggestionSource } from "@/lib/forms/use-contact-pair-suggestion";
 import type { PreparedStaffRecord } from "@/lib/staff/presentation";
@@ -50,7 +45,6 @@ export function StaffWorkspaceDialog({
   onStatusChange,
 }: StaffWorkspaceDialogProps) {
   const staff = record?.staff ?? null;
-  const isTeacher = staff?.staff_type === "TEACHER";
   const [mode, setMode] = useState<StaffWorkspaceMode>(initialMode);
   const [displayMode, setDisplayMode] = useState<StaffWorkspaceMode>(initialMode);
   const [leaving, setLeaving] = useState(false);
@@ -159,14 +153,13 @@ export function StaffWorkspaceDialog({
     return null;
   }
 
-  const roleLabel = staff.staff_type === "TEACHER" ? "Giáo viên" : "Trợ giảng";
+  const roleLabel = record.summaryRoles || "Chưa phân công";
   const headerSubtitle = `${staff.full_name} · ${roleLabel}${staff.phone ? ` · ${staff.phone}` : ""}`;
 
   const rail = (
     <StaffWorkspaceRail
       mode={mode}
       dirty={dirty}
-      isTeacher={isTeacher}
       isActive={staff.is_active}
       onSelect={changeMode}
     />
@@ -219,7 +212,6 @@ export function StaffWorkspaceDialog({
             <MobileStaffRail
               mode={mode}
               dirty={dirty}
-              isTeacher={isTeacher}
               isActive={staff.is_active}
               onSelect={changeMode}
             />
@@ -274,27 +266,25 @@ export function StaffWorkspaceDialog({
                 />
               </div>
 
-              {isTeacher ? (
-                <div
-                  data-workspace-mode="status"
-                  className={cn(
-                    "absolute inset-0 flex min-h-0 flex-col",
-                    displayMode === "status"
-                      ? "z-10 opacity-100"
-                      : "pointer-events-none invisible z-0 opacity-0",
-                  )}
-                  aria-hidden={displayMode !== "status"}
-                  inert={displayMode !== "status" ? true : undefined}
-                >
-                  <StaffStatusPanel
-                    record={record}
-                    dirty={dirty}
-                    isStatusPending={isStatusPending}
-                    onClose={requestShellClose}
-                    onConfirm={() => onStatusChange(record)}
-                  />
-                </div>
-              ) : null}
+              <div
+                data-workspace-mode="status"
+                className={cn(
+                  "absolute inset-0 flex min-h-0 flex-col",
+                  displayMode === "status"
+                    ? "z-10 opacity-100"
+                    : "pointer-events-none invisible z-0 opacity-0",
+                )}
+                aria-hidden={displayMode !== "status"}
+                inert={displayMode !== "status" ? true : undefined}
+              >
+                <StaffStatusPanel
+                  record={record}
+                  dirty={dirty}
+                  isStatusPending={isStatusPending}
+                  onClose={requestShellClose}
+                  onConfirm={() => onStatusChange(record)}
+                />
+              </div>
             </div>
           </div>
           <div className="workspace-action-rail-in absolute left-full top-0 z-20 ml-3 hidden min-[900px]:block">
@@ -307,9 +297,10 @@ export function StaffWorkspaceDialog({
         <ConfirmationDialog
           open
           title="Thay đổi chưa được lưu"
-          description="Bạn có thay đổi chưa được lưu trong biểu mẫu nhân sự. Rời khỏi sẽ bỏ qua các thay đổi này."
+          description="Nếu rời khỏi, các thay đổi trong biểu mẫu sẽ bị mất."
           confirmLabel="Rời khỏi"
-          cancelLabel="Ở lại"
+          cancelLabel="Tiếp tục chỉnh sửa"
+          tone="danger"
           isPending={isSaving}
           onCancel={() => setConfirmDiscardOpen(false)}
           onConfirm={() => {
@@ -326,46 +317,33 @@ export function StaffWorkspaceDialog({
 function StaffWorkspaceRail({
   mode,
   dirty,
-  isTeacher,
   isActive,
   onSelect,
 }: {
   mode: StaffWorkspaceMode;
   dirty: boolean;
-  isTeacher: boolean;
   isActive: boolean;
   onSelect: (mode: StaffWorkspaceMode) => void;
 }) {
   const items: Array<{
     mode: StaffWorkspaceMode;
     label: string;
-    icon: React.ReactNode;
     danger?: boolean;
   }> = [
     {
       mode: "edit",
       label: "Sửa hồ sơ",
-      icon: <Pencil className="h-[18px] w-[18px]" aria-hidden="true" />,
     },
     {
       mode: "payroll",
       label: "Thù lao",
-      icon: <Payroll className="h-[18px] w-[18px]" aria-hidden="true" />,
     },
-  ];
-
-  if (isTeacher) {
-    items.push({
+    {
       mode: "status",
       label: isActive ? "Ngừng hoạt động" : "Kích hoạt lại",
-      icon: isActive ? (
-        <UserRoundX className="h-[18px] w-[18px]" aria-hidden="true" />
-      ) : (
-        <RotateCcw className="h-[18px] w-[18px]" aria-hidden="true" />
-      ),
       danger: isActive,
-    });
-  }
+    },
+  ];
 
   return (
     <div
@@ -387,13 +365,12 @@ function StaffWorkspaceRail({
         const nextIndex = (currentIndex + direction + buttons.length) % buttons.length;
         buttons[nextIndex]?.focus();
       }}
-      className="flex w-[188px] shrink-0 flex-col gap-1 rounded-xl border border-gray-200 bg-white p-2 shadow-xl shadow-gray-900/15"
+      className="flex w-max max-w-[calc(100vw-2rem)] shrink-0 flex-col gap-1 rounded-xl border border-gray-200 bg-white p-1.5 shadow-xl shadow-gray-900/15"
     >
       {items.map((item) => (
         <StaffRailTabButton
           key={item.mode}
           label={item.label}
-          icon={item.icon}
           danger={item.danger}
           active={mode === item.mode}
           dirty={item.mode === "edit" && dirty}
@@ -407,46 +384,33 @@ function StaffWorkspaceRail({
 function MobileStaffRail({
   mode,
   dirty,
-  isTeacher,
   isActive,
   onSelect,
 }: {
   mode: StaffWorkspaceMode;
   dirty: boolean;
-  isTeacher: boolean;
   isActive: boolean;
   onSelect: (mode: StaffWorkspaceMode) => void;
 }) {
   const items: Array<{
     mode: StaffWorkspaceMode;
     label: string;
-    icon: React.ReactNode;
     danger?: boolean;
   }> = [
     {
       mode: "edit",
       label: "Sửa hồ sơ",
-      icon: <Pencil className="h-4 w-4" aria-hidden="true" />,
     },
     {
       mode: "payroll",
       label: "Thù lao",
-      icon: <Payroll className="h-4 w-4" aria-hidden="true" />,
     },
-  ];
-
-  if (isTeacher) {
-    items.push({
+    {
       mode: "status",
       label: isActive ? "Ngừng HĐ" : "Kích hoạt",
-      icon: isActive ? (
-        <UserRoundX className="h-4 w-4" aria-hidden="true" />
-      ) : (
-        <RotateCcw className="h-4 w-4" aria-hidden="true" />
-      ),
       danger: isActive,
-    });
-  }
+    },
+  ];
 
   return (
     <div
@@ -458,7 +422,6 @@ function MobileStaffRail({
         <MobileStaffRailTabButton
           key={item.mode}
           label={item.label}
-          icon={item.icon}
           danger={item.danger}
           active={mode === item.mode}
           dirty={item.mode === "edit" && dirty}
@@ -471,14 +434,12 @@ function MobileStaffRail({
 
 function StaffRailTabButton({
   label,
-  icon,
   danger = false,
   active,
   dirty = false,
   onSelect,
 }: {
   label: string;
-  icon: React.ReactNode;
   danger?: boolean;
   active: boolean;
   dirty?: boolean;
@@ -495,7 +456,7 @@ function StaffRailTabButton({
       tabIndex={active ? 0 : -1}
       onClick={onSelect}
       className={cn(
-        "font-ui relative flex h-11 min-h-11 w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 text-left text-[14px] font-semibold leading-5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40",
+        "font-ui relative flex h-9 min-h-9 w-full cursor-pointer items-center justify-start overflow-hidden rounded-lg pl-4 pr-3.5 py-1.5 text-left text-[14px] font-semibold leading-5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40",
         active
           ? danger
             ? "bg-red-50 text-red-700"
@@ -509,17 +470,16 @@ function StaffRailTabButton({
         <span
           aria-hidden="true"
           className={cn(
-            "absolute inset-y-2 left-0.5 w-0.5 rounded-full",
+            "absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full",
             danger ? "bg-red-600" : "bg-primary",
           )}
         />
       ) : null}
-      {icon}
-      <span className="min-w-0 flex-1 whitespace-nowrap">{label}</span>
+      <span className="whitespace-nowrap">{label}</span>
       {dirty ? (
         <span
           aria-label="Có thay đổi chưa lưu"
-          className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400"
+          className="ml-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400"
         />
       ) : null}
     </button>
@@ -528,14 +488,12 @@ function StaffRailTabButton({
 
 function MobileStaffRailTabButton({
   label,
-  icon,
   danger = false,
   active,
   dirty = false,
   onSelect,
 }: {
   label: string;
-  icon: React.ReactNode;
   danger?: boolean;
   active: boolean;
   dirty?: boolean;
@@ -549,7 +507,7 @@ function MobileStaffRailTabButton({
       aria-controls="staff-workspace-panel"
       onClick={onSelect}
       className={cn(
-        "font-ui relative inline-flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2.5 text-[13px] font-semibold leading-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40",
+        "font-ui relative inline-flex h-8 shrink-0 cursor-pointer items-center rounded-md px-2.5 text-[13px] font-semibold leading-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40",
         active
           ? danger
             ? "bg-red-600 text-white"
@@ -559,12 +517,11 @@ function MobileStaffRailTabButton({
             : "text-gray-600 hover:bg-primary-soft/70 hover:text-primary",
       )}
     >
-      {icon}
-      {label}
+      <span className="whitespace-nowrap">{label}</span>
       {dirty ? (
         <span
-          aria-hidden="true"
-          className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-amber-400"
+          aria-label="Có thay đổi chưa lưu"
+          className="ml-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400"
         />
       ) : null}
     </button>
@@ -585,7 +542,7 @@ function StaffStatusPanel({
   onConfirm: () => void;
 }) {
   const staff = record.staff;
-  const hasActiveClasses = staff.is_active && record.activeClasses.length > 0;
+  const hasActiveClasses = staff.is_active && record.assignedClasses.some((c) => c.is_active);
 
   return (
     <div className="scrollbar-hidden min-h-0 flex-1 overflow-y-auto bg-gray-50 px-5 py-4">
@@ -599,7 +556,7 @@ function StaffStatusPanel({
             {staff.full_name}
           </h2>
           <p className="mt-1 text-[13px] font-medium leading-[18px] text-gray-600">
-            Vai trò: Giáo viên · Trạng thái:{" "}
+            Vai trò: {record.summaryRoles || "Chưa phân công"} · Trạng thái:{" "}
             <span
               className={cn(
                 "font-semibold",
@@ -611,19 +568,24 @@ function StaffStatusPanel({
           </p>
           {record.assignedClasses.length > 0 ? (
             <p className="mt-1 text-[13px] font-medium leading-[18px] text-gray-600">
-              Lớp phụ trách: {record.assignedClasses.map((c) => c.name).join(", ")}
+              Lớp phụ trách:{" "}
+              {record.assignedClasses
+                .map((c) => `${c.name}${c.role ? ` (${c.role === "TEACHER" ? "GV" : "TG"})` : ""}`)
+                .join(", ")}
             </p>
           ) : null}
         </section>
 
-        {dirty ? (
-          <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
-            <p className="helper-text text-amber-900">
+        <UnsavedChangesNotice
+          hasChanges={dirty}
+          isSaving={isStatusPending}
+          message={
+            <>
               Bạn đang có thay đổi chưa lưu trong biểu mẫu. Các thay đổi này sẽ không được áp
               dụng nếu chuyển trạng thái.
-            </p>
-          </div>
-        ) : null}
+            </>
+          }
+        />
 
         <section className="space-y-3 rounded-xl border border-gray-200 bg-white p-4 shadow-sm shadow-gray-200/30">
           <h3 className={cn(
@@ -636,14 +598,13 @@ function StaffStatusPanel({
             {staff.is_active ? (
               hasActiveClasses ? (
                 <span className="font-medium text-destructive">
-                  Giáo viên đang phụ trách {record.activeClasses.map((c) => c.name).join(", ")}. Hãy
-                  gỡ giáo viên khỏi các lớp này trước khi ngừng hoạt động.
+                  Hãy gỡ nhân sự khỏi các lớp đang hoạt động trước.
                 </span>
               ) : (
-                `Giáo viên ${staff.full_name} sẽ được ẩn khỏi danh sách đang hoạt động. Hồ sơ và lịch sử chấm công vẫn được giữ nguyên và có thể kích hoạt lại bất kỳ lúc nào.`
+                `Nhân sự ${staff.full_name} sẽ được chuyển sang danh sách ngừng hoạt động. Hồ sơ và lịch sử chấm công vẫn được giữ nguyên và có thể kích hoạt lại bất kỳ lúc nào.`
               )
             ) : (
-              `Kích hoạt lại giáo viên ${staff.full_name} để tiếp tục phân công vào lớp học và ghi nhận thù lao.`
+              `Kích hoạt lại nhân sự ${staff.full_name} để tiếp tục phân công vào lớp học và ghi nhận thù lao.`
             )}
           </p>
 
@@ -661,7 +622,7 @@ function StaffStatusPanel({
               type="button"
               isPending={isStatusPending}
               pendingLabel={staff.is_active ? "Đang ngừng" : "Đang kích hoạt"}
-              disabled={hasActiveClasses || isStatusPending}
+              disabled={Boolean(staff.is_active && hasActiveClasses) || isStatusPending}
               onClick={onConfirm}
               className={cn(
                 "h-8 rounded-md px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50",

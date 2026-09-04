@@ -7,9 +7,8 @@ import type {
 } from "@/lib/types";
 import { useClickableRowProps } from "@/lib/ui/click-guard";
 import { formatCurrency } from "@/lib/utils/format";
-import { getStaffTypeLabel, type PreparedStaffRecord } from "@/lib/staff/presentation";
+import type { PreparedStaffRecord } from "@/lib/staff/presentation";
 import {
-  getClassAssistantIds,
   getClassScheduleSlots,
   getClassScheduleText,
   getClassTeacherIds,
@@ -133,7 +132,7 @@ function StaffTableRow({
       <DataCell>
         <p className="break-words font-semibold text-gray-950">{staff.full_name}</p>
         <p className="mt-0.5 select-none text-[13px] font-medium leading-4 text-gray-500">
-          {getStaffTypeLabel(staff.staff_type)}
+          {record.summaryRoles}
         </p>
       </DataCell>
       {canViewPrivate ? (
@@ -189,7 +188,7 @@ function StaffCard({
         <div className="min-w-0">
           <h2 className="break-words text-base font-semibold text-gray-950">{staff.full_name}</h2>
           <p className="mt-0.5 select-none text-[13px] font-medium text-gray-500">
-            {getStaffTypeLabel(staff.staff_type)}
+            {record.summaryRoles}
           </p>
         </div>
       </div>
@@ -236,15 +235,9 @@ export function formatStaffAssignedClassSchedule(
   }
 
   const staffSlots = allSlots.filter((slot) => {
-    if (staff.staff_type === "TEACHER") {
-      const teacherIds = getSlotEffectiveTeacherIds(slot, getClassTeacherIds(class_));
-      return teacherIds.includes(staff.id);
-    }
+    const teacherIds = getSlotEffectiveTeacherIds(slot, getClassTeacherIds(class_));
     const assistantIds = getSlotEffectiveAssistantIds(slot);
-    if (slot.assistant_ids !== undefined) {
-      return assistantIds.includes(staff.id);
-    }
-    return getClassAssistantIds(class_).includes(staff.id);
+    return teacherIds.includes(staff.id) || assistantIds.includes(staff.id);
   });
 
   const targetSlots = staffSlots.length > 0 ? staffSlots : allSlots;
@@ -272,7 +265,14 @@ function ClassAssignments({
 
         return (
           <div key={classItem.id} className="text-[13px] leading-snug break-words">
-            <span className="font-semibold text-gray-950">{classItem.name}</span>
+            <span className="font-semibold text-gray-950">
+              {classItem.name}
+              {classItem.role ? (
+                <span className="font-normal text-gray-500">
+                  {" "}({classItem.role === "TEACHER" ? "GV" : "TG"})
+                </span>
+              ) : null}
+            </span>
             {scheduleLabel ? (
               <span className="font-normal text-gray-600">: {scheduleLabel}</span>
             ) : null}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FormDialogBody, FormDialogFooter, FormDialogShell } from "@/components/ui/form-dialog-shell";
 import { FormField } from "@/components/ui/form-field";
@@ -10,10 +10,10 @@ import { PendingActionButton } from "@/components/ui/pending-action-button";
 import { LoadingLabel } from "@/components/ui/loading-label";
 import { ExcelExportButton } from "@/components/ui/excel-export-button";
 import { SmartMoneyInput } from "@/components/ui/smart-money-input";
+import { ManualDateInput, isValidIsoDate } from "@/components/ui/manual-date-input";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { formTextControlClassName } from "@/components/ui/form-text-control";
 import { savedInfoAutocomplete } from "@/lib/forms/saved-info-policy";
-import { collapseSelectionOnKeyboardFocus } from "@/lib/forms/keyboard-focus";
 import { createManualAttendance, createStaffCompensationRate, getManualAttendanceTargets, getStaffAttendanceHistory, getStaffPayroll, reverseAttendance, reverseStaffPayrollSettlement, settleStaffPayroll, type ManualAttendanceTarget } from "@/lib/api/staff";
 import { getApiErrorMessage } from "@/lib/api/errors";
 import { getBankAccounts } from "@/lib/api/banking";
@@ -82,6 +82,7 @@ export function StaffPayrollContent({
     [bankAccountsQuery.data?.accounts],
   );
   const [rate, setRate] = useState<number | null>(null);
+  const [assignmentRole, setAssignmentRole] = useState<"TEACHER" | "ASSISTANT" | null>(null);
   const [effectiveFrom, setEffectiveFrom] = useState<string | null>(() => getTodayInputValue());
   const [method, setMethod] = useState<"bank_transfer" | "cash">("bank_transfer");
   const [settlementAccountId, setSettlementAccountId] = useState("");
@@ -106,7 +107,12 @@ export function StaffPayrollContent({
     );
   }, [activeBankAccounts, method, settlementAccountId]);
   const rateMutation = useMutation({
-    mutationFn: () => createStaffCompensationRate(staffId, { rate_amount: rate ?? 0, effective_from: effectiveFrom ?? "" }),
+    mutationFn: () =>
+      createStaffCompensationRate(staffId, {
+        rate_amount: rate ?? 0,
+        effective_from: effectiveFrom ?? "",
+        assignment_role: assignmentRole,
+      }),
     onSuccess: async () => { setRate(null); setError(""); await queryClient.invalidateQueries({ queryKey: key }); },
     onError: (cause) => setError(getApiErrorMessage(cause, "Không thể lưu mức thù lao.")),
   });
@@ -183,7 +189,11 @@ export function StaffPayrollContent({
         <FormSection
           label="Thiết lập thù lao"
           order={1}
-          summary={summary?.rates[0] ? `${money.format(summary.rates[0].rate_amount)}đ / buổi` : "Chưa thiết lập"}
+          summary={
+            summary?.rates && summary.rates.length > 0
+              ? `${summary.rates.length} mức thù lao`
+              : "Chưa thiết lập"
+          }
         >
           <div className="rounded-lg border border-gray-200 bg-white px-3.5 py-3">
             <p className="form-label-text text-gray-600">Cần thanh toán</p>
@@ -191,7 +201,31 @@ export function StaffPayrollContent({
               {money.format(summary?.balance ?? 0)}đ
             </p>
           </div>
-          <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
+          {summary?.rates && summary.rates.length > 0 ? (
+            <div className="space-y-1.5 rounded-lg border border-gray-200 bg-gray-50/70 p-3 text-xs">
+              <p className="font-semibold text-gray-700">Mức thù lao đang áp dụng:</p>
+              <div className="flex flex-wrap gap-2">
+                {summary.rates.map((r) => {
+                  const roleText =
+                    r.assignment_role === "TEACHER"
+                      ? "Khi làm giáo viên"
+                      : r.assignment_role === "ASSISTANT"
+                        ? "Khi làm trợ giảng"
+                        : "Mức mặc định";
+                  return (
+                    <span
+                      key={r.id}
+                      className="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-2 py-1 font-medium text-gray-800"
+                    >
+                      <span className="text-gray-500">{roleText}:</span>
+                      <span className="font-semibold text-primary">{money.format(r.rate_amount)}đ</span>
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+          <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-3">
             <FormField label="Mức lương từng buổi">
               <SmartMoneyInput
                 value={rate}
@@ -201,11 +235,26 @@ export function StaffPayrollContent({
                 className={formTextControlClassName}
               />
             </FormField>
+            <FormField label="Vai trò áp dụng" labelId="payroll-role-select">
+              <SegmentedControl
+                ariaLabelledBy="payroll-role-select"
+                selected={assignmentRole ?? "ALL"}
+                onSelect={(value) =>
+                  setAssignmentRole(value === "ALL" ? null : (value as "TEACHER" | "ASSISTANT"))
+                }
+                options={[
+                  { value: "ALL", label: "Mặc định" },
+                  { value: "TEACHER", label: "GV" },
+                  { value: "ASSISTANT", label: "TG" },
+                ]}
+              />
+            </FormField>
             <FormField label="Áp dụng từ">
-              <PayrollDateInput
+              <ManualDateInput
                 value={effectiveFrom}
                 onChange={setEffectiveFrom}
                 disabled={busy}
+                ariaLabel="Ngày bắt đầu áp dụng mức thù lao"
               />
             </FormField>
           </div>
@@ -314,7 +363,7 @@ export function StaffPayrollContent({
             <h3 className="text-base font-semibold text-gray-900">Lịch sử chấm công</h3>
             <div className="flex items-center gap-2">
               {attendanceHistory.isFetching && attendanceHistory.data ? (
-                <LoadingLabel label="Đang cập nhật" />
+                <LoadingLabel label="Đang tải" />
               ) : null}
               <ExcelExportButton
                 disabled={!summary || !attendanceHistory.data}
@@ -491,109 +540,6 @@ export function StaffPayrollContent({
       </FormDialogBody>
       <FormDialogFooter right={<><button type="button" onClick={onClose} disabled={busy} className="h-8 rounded-md border border-gray-200 px-3 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">Hủy</button><PendingActionButton type="button" isPending={settlementMutation.isPending} pendingLabel="Đang tất toán" disabled={!summary?.balance || rateMutation.isPending || reversalMutation.isPending || bankAccountsQuery.isPending || (method === "bank_transfer" && !settlementAccountId)} onClick={() => settlementMutation.mutate()} className="h-8 rounded-md bg-primary px-3 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50">Tất toán</PendingActionButton></>} />
     </div>
-  );
-}
-
-function PayrollDateInput({
-  value,
-  onChange,
-  disabled,
-}: {
-  value: string | null;
-  onChange: (value: string | null) => void;
-  disabled?: boolean;
-}) {
-  const [inputValue, setInputValue] = useState("");
-  const lastSyncedValue = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (value === lastSyncedValue.current) return;
-    lastSyncedValue.current = value;
-    const normalizedValue = value ?? "";
-    if (isValidIsoDate(normalizedValue)) {
-      const [year, month, day] = normalizedValue.split("-");
-      setInputValue(`${day}/${month}/${year}`);
-    } else {
-      setInputValue("");
-    }
-  }, [value]);
-
-  function formatAsDate(raw: string) {
-    const clean = raw.replace(/\D/g, "").slice(0, 8);
-    return [clean.slice(0, 2), clean.slice(2, 4), clean.slice(4, 8)]
-      .filter(Boolean)
-      .join("/");
-  }
-
-  function updateParent(displayValue: string) {
-    const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(displayValue);
-    if (match) {
-      const [, day, month, year] = match;
-      const iso = `${year}-${month}-${day}`;
-      if (isValidIsoDate(iso)) {
-        lastSyncedValue.current = iso;
-        onChange(iso);
-        return;
-      }
-    }
-    const pendingValue = displayValue.trim() ? displayValue : null;
-    lastSyncedValue.current = pendingValue;
-    onChange(pendingValue);
-  }
-
-  function handleChange(event: ChangeEvent<HTMLInputElement>) {
-    const formatted = formatAsDate(event.target.value);
-    setInputValue(formatted);
-    updateParent(formatted);
-  }
-
-  function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
-    const input = event.currentTarget;
-    if (event.key !== "Backspace") return;
-    const start = input.selectionStart;
-    if (start === null || input.selectionStart !== input.selectionEnd || start === 0) return;
-    if (input.value[start - 1] !== "/") return;
-    event.preventDefault();
-    const next = input.value.slice(0, start - 2) + input.value.slice(start);
-    const formatted = formatAsDate(next);
-    setInputValue(formatted);
-    updateParent(formatted);
-    window.setTimeout(() => input.setSelectionRange(Math.max(0, start - 2), Math.max(0, start - 2)), 0);
-  }
-
-  const guide = "dd/mm/yyyy";
-  return (
-    <div className={`${formTextControlClassName} relative flex items-center overflow-hidden`}>
-      <div className="pointer-events-none absolute left-3 flex select-none whitespace-pre text-left text-sm" aria-hidden="true">
-        <span className="text-transparent">{inputValue}</span>
-        <span className="text-gray-300">{guide.slice(inputValue.length)}</span>
-      </div>
-      <input
-        type="text"
-        inputMode="numeric"
-        autoComplete={savedInfoAutocomplete.disabled}
-        aria-label="Ngày bắt đầu áp dụng mức thù lao"
-        maxLength={10}
-        value={inputValue}
-        onChange={handleChange}
-        onKeyDown={handleKeyDown}
-        onFocus={collapseSelectionOnKeyboardFocus}
-        disabled={disabled}
-        className="relative z-10 h-full w-full bg-transparent text-sm text-gray-900 outline-none"
-      />
-    </div>
-  );
-}
-
-function isValidIsoDate(value: string) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  if (!match) return false;
-  const [, year, month, day] = match;
-  const parsed = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
-  return (
-    parsed.getUTCFullYear() === Number(year) &&
-    parsed.getUTCMonth() === Number(month) - 1 &&
-    parsed.getUTCDate() === Number(day)
   );
 }
 

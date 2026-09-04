@@ -8,6 +8,7 @@ import {
   RiSearchLine as SearchX,
 } from "react-icons/ri";
 import { HeaderControlsPortal } from "@/components/layout/header-controls-portal";
+import { HeaderLoadingStatus } from "@/components/layout/header-loading-status";
 import { HeaderFilterControls } from "@/components/layout/header-filter-controls";
 import { useToast } from "@/components/providers/toast-provider";
 import { StaffFormDialog } from "@/components/staff/staff-form-dialog";
@@ -32,39 +33,38 @@ import {
   filterAndSortStaff,
   prepareStaffRecords,
   type PreparedStaffRecord,
-  type StaffStatusFilter,
 } from "@/lib/staff/presentation";
 import { staffQueryKeys } from "@/lib/staff/query-keys";
 import { exportStaff } from "@/lib/staff/export";
 import { classQueryKeys } from "@/lib/classes/query-keys";
 import { invalidateDomainQueries } from "@/lib/query/invalidation";
-import type { ClassResponse, StaffCreate, StaffResponse, StaffType, StaffUpdate } from "@/lib/types";
+import type { ClassResponse, StaffCreate, StaffResponse, StaffUpdate } from "@/lib/types";
 
 const EMPTY_STAFF: StaffResponse[] = [];
 
-export type StaffScope = "teachers" | "assistants" | "inactive";
+export type StaffScope = "assigned" | "unassigned" | "inactive";
 
 const STAFF_SCOPE_TABS = [
   {
-    scope: "teachers" as const,
-    label: "Giáo viên",
+    scope: "assigned" as const,
+    label: "Đang phân công",
     dotClass: "bg-emerald-500",
-    emptyTitle: "Chưa có giáo viên",
-    emptyDescription: "Thêm giáo viên đầu tiên để phân công vào lớp học và quản lý thù lao.",
+    emptyTitle: "Chưa có nhân sự đang phân công",
+    emptyDescription: "Các nhân sự được phân công vào lớp đang hoạt động sẽ xuất hiện ở đây.",
   },
   {
-    scope: "assistants" as const,
-    label: "Trợ giảng",
-    dotClass: "bg-emerald-500",
-    emptyTitle: "Chưa có trợ giảng",
-    emptyDescription: "Thêm trợ giảng để hỗ trợ các buổi học và chấm công.",
+    scope: "unassigned" as const,
+    label: "Chưa phân công",
+    dotClass: "bg-amber-500",
+    emptyTitle: "Chưa có nhân sự chờ phân công",
+    emptyDescription: "Nhân sự mới hoặc nhân sự chưa có lớp phụ trách sẽ xuất hiện ở đây.",
   },
   {
     scope: "inactive" as const,
     label: "Ngừng hoạt động",
     dotClass: "bg-gray-400",
     emptyTitle: "Chưa có nhân sự ngừng hoạt động",
-    emptyDescription: "Các giáo viên hoặc trợ giảng đã ngừng hoạt động sẽ xuất hiện ở đây.",
+    emptyDescription: "Các nhân sự đã ngừng hoạt động sẽ xuất hiện ở đây.",
   },
 ] as const;
 
@@ -74,10 +74,9 @@ export default function StaffPage() {
   const canViewPrivate = canManage;
   const queryClient = useQueryClient();
   const notify = useToast();
-  const [storedScope, setScope] = usePersistentState<StaffScope>("tpro:staff:scope", "teachers");
+  const [storedScope, setScope] = usePersistentState<StaffScope>("tpro:staff:scope", "assigned");
   const [search, setSearch] = usePersistentState("tpro:staff:search", "");
   const deferredSearch = useDeferredValue(search);
-  const [staffType, setStaffType] = useState<StaffType | "">("");
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [workspace, setWorkspace] = useState<{
@@ -85,7 +84,7 @@ export default function StaffPage() {
     initialMode: StaffWorkspaceMode;
   } | null>(null);
 
-  const scope = STAFF_SCOPE_TABS.some((tab) => tab.scope === storedScope) ? storedScope : "teachers";
+  const scope = STAFF_SCOPE_TABS.some((tab) => tab.scope === storedScope) ? storedScope : "assigned";
 
   useEffect(() => {
     if (scope !== storedScope) setScope(scope);
@@ -95,15 +94,14 @@ export default function StaffPage() {
     queryKey: staffQueryKeys.list,
     queryFn: () => getStaffMembers({ is_active: null }),
     enabled: Boolean(user),
-    staleTime: 60_000,
-    refetchOnMount: true,
+    staleTime: 10 * 60_000,
   });
 
   const classesQuery = useQuery({
     queryKey: classQueryKeys.list("operational"),
     queryFn: () => getClasses({ scope: "operational" }),
     enabled: Boolean(user),
-    staleTime: 60_000,
+    staleTime: 10 * 60_000,
   });
 
   const classesById = useMemo(() => {
@@ -136,11 +134,7 @@ export default function StaffPage() {
       closeCreateForm();
       notify.success("Đã thêm nhân sự.");
       refreshDependencies();
-      if (createdStaff.staff_type === "ASSISTANT") {
-        setScope("assistants");
-      } else {
-        setScope("teachers");
-      }
+      setScope("unassigned");
     },
   });
 
@@ -216,36 +210,27 @@ export default function StaffPage() {
   );
 
   const scopeCounts = useMemo(() => {
-    let teachers = 0;
-    let assistants = 0;
+    let assigned = 0;
+    let unassigned = 0;
     let inactive = 0;
     for (const item of staff) {
       if (!item.is_active) {
         inactive += 1;
-      } else if (item.staff_type === "TEACHER") {
-        teachers += 1;
-      } else if (item.staff_type === "ASSISTANT") {
-        assistants += 1;
+      } else if (item.assigned_classes.some((c) => c.is_active)) {
+        assigned += 1;
+      } else {
+        unassigned += 1;
       }
     }
-    return { teachers, assistants, inactive };
+    return { assigned, unassigned, inactive };
   }, [staff]);
 
   const filteredStaff = useMemo(() => {
-    const status: StaffStatusFilter = scope === "inactive" ? "INACTIVE" : "ACTIVE";
-    const typeFilter: StaffType | "" =
-      scope === "teachers"
-        ? "TEACHER"
-        : scope === "assistants"
-          ? "ASSISTANT"
-          : staffType;
-
     return filterAndSortStaff(preparedStaff, {
       search: deferredSearch,
-      staffType: typeFilter,
-      status,
+      scope,
     });
-  }, [deferredSearch, preparedStaff, scope, staffType]);
+  }, [deferredSearch, preparedStaff, scope]);
 
   const hasStaffData = staffQuery.data !== undefined;
   const hasClassesData = classesQuery.data !== undefined;
@@ -261,7 +246,7 @@ export default function StaffPage() {
   const hasCachedError =
     (staffQuery.isError && hasStaffData) ||
     (classesQuery.isError && hasClassesData);
-  const hasFilters = Boolean(search.trim() || (scope === "inactive" && staffType));
+  const hasFilters = Boolean(search.trim());
   const currentScope = STAFF_SCOPE_TABS.find((tab) => tab.scope === scope) ?? STAFF_SCOPE_TABS[0];
 
   function retryStaffData() {
@@ -283,7 +268,6 @@ export default function StaffPage() {
 
   function clearFilters() {
     setSearch("");
-    setStaffType("");
   }
 
   function selectScope(nextScope: StaffScope) {
@@ -305,21 +289,7 @@ export default function StaffPage() {
       searchValue={search}
       onSearchChange={setSearch}
       onClear={clearFilters}
-      filters={
-        scope === "inactive"
-          ? [
-              {
-                label: "Vai trò",
-                value: staffType,
-                onChange: (value) => setStaffType(value as StaffType | ""),
-                options: [
-                  { label: "Giáo viên", value: "TEACHER" },
-                  { label: "Trợ giảng", value: "ASSISTANT" },
-                ],
-              },
-            ]
-          : []
-      }
+      filters={[]}
     />
   );
 
@@ -339,6 +309,9 @@ export default function StaffPage() {
           {filterControls}
           {exportButton}
           {addButton}
+          <HeaderLoadingStatus
+            isLoading={isInitialLoading || staffQuery.isFetching || classesQuery.isFetching}
+          />
         </div>
       </HeaderControlsPortal>
 
@@ -466,7 +439,6 @@ export default function StaffPage() {
         <StaffFormDialog
           assignedClassNames={[]}
           contactSuggestionSources={contactSuggestionSources}
-          initialStaffType={scope === "assistants" ? "ASSISTANT" : "TEACHER"}
           isSaving={createMutation.isPending}
           staff={null}
           onClose={closeCreateForm}
@@ -501,7 +473,7 @@ export default function StaffPage() {
 
       {canManage && scope !== "inactive" ? (
         <QuickActionFab
-          label={scope === "assistants" ? "Thêm trợ giảng" : "Thêm giáo viên"}
+          label="Thêm nhân sự"
           onClick={openCreateForm}
         />
       ) : null}
