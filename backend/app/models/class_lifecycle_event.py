@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, ForeignKey, Text, func, text
+from sqlalchemy import Date, DateTime, ForeignKey, SmallInteger, Text, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -26,6 +26,10 @@ class ClassLifecycleEvent(WorkspaceScoped, Base):
     event_type: Mapped[str] = mapped_column(Text, nullable=False)
     previous_end_date: Mapped[date | None] = mapped_column(Date)
     next_end_date: Mapped[date | None] = mapped_column(Date)
+    previous_start_date: Mapped[date | None] = mapped_column(Date)
+    next_start_date: Mapped[date | None] = mapped_column(Date)
+    previous_billing_cycle_weeks: Mapped[int | None] = mapped_column(SmallInteger)
+    next_billing_cycle_weeks: Mapped[int | None] = mapped_column(SmallInteger)
     reason: Mapped[str | None] = mapped_column(Text)
     actor_user_id: Mapped[str | None] = mapped_column(
         UUID(as_uuid=False),

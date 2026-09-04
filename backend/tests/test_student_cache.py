@@ -68,3 +68,28 @@ async def test_get_students_always_queries_database() -> None:
     db.execute.assert_awaited()
     # Không có module-level cache nào để kiểm tra.
     assert not hasattr(student_service, "_students_cache")
+
+
+@pytest.mark.asyncio
+async def test_class_roster_orders_by_student_code_sequence() -> None:
+    db = AsyncMock()
+    db.execute.return_value = ScalarResult([])
+
+    await student_service.get_students(db, class_id=uuid4(), limit=10)
+
+    statement = db.execute.await_args.args[0]
+    sql = str(statement)
+    assert "ORDER BY students.student_code ASC NULLS LAST, students.id ASC" in sql
+    assert "students.created_at DESC" not in sql
+
+
+@pytest.mark.asyncio
+async def test_non_class_student_scopes_keep_recent_profile_order() -> None:
+    db = AsyncMock()
+    db.execute.return_value = ScalarResult([])
+
+    await student_service.get_students(db, limit=10)
+
+    statement = db.execute.await_args.args[0]
+    sql = str(statement)
+    assert "ORDER BY students.created_at DESC, students.id ASC" in sql

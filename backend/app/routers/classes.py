@@ -9,6 +9,10 @@ from app.core.dependencies import Principal, require_management
 from app.core.rate_limit import enforce_rate_limit
 from app.schemas.class_ import (
     ClassCopyTemplateResponse,
+    ClassBillingCyclePreviewRequest,
+    ClassBillingCyclePreviewResponse,
+    ClassBillingCycleUpdate,
+    ClassBillingCycleUpdateResponse,
     ClassContinuationCreate,
     ClassContinuationCreateResponse,
     ClassContinuationPreviewResponse,
@@ -16,6 +20,12 @@ from app.schemas.class_ import (
     ClassEndDatePreviewRequest,
     ClassEndDatePreviewResponse,
     ClassEndDateUpdate,
+    ClassStartDatePreviewRequest,
+    ClassStartDatePreviewResponse,
+    ClassStartDateUpdate,
+    ClassStopPreviewRequest,
+    ClassStopPreviewResponse,
+    ClassStopRequest,
     ClassHistoryResponse,
     ClassResponse,
     ClassScope,
@@ -24,10 +34,13 @@ from app.schemas.class_ import (
     ClassUpdate,
     ScheduleAvailabilityRequest,
     ScheduleAvailabilityResponse,
+    StaffAvailabilityPreviewRequest,
+    StaffAvailabilityPreviewResponse,
 )
 from app.services.class_conflict_service import (
     ScheduleDataInvalidError,
     get_class_schedule_availability,
+    preview_staff_availability,
     validate_availability_request_staff,
 )
 from app.services.class_service import (
@@ -40,12 +53,89 @@ from app.services.class_service import (
     get_class_scope_summary,
     get_classes,
     preview_class_end_date,
+    preview_class_start_date,
+    preview_class_stop,
     preview_class_continuation,
     update_class,
     update_class_end_date,
+    update_class_start_date,
+    stop_class,
+)
+from app.services.class_billing_cycle_service import (
+    preview_class_billing_cycle,
+    update_class_billing_cycle,
 )
 
 router = APIRouter(tags=["classes"])
+
+
+@router.post(
+    "/staff-availability",
+    response_model=StaffAvailabilityPreviewResponse,
+)
+async def preview_staff_availability_route(
+    payload: StaffAvailabilityPreviewRequest,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> StaffAvailabilityPreviewResponse:
+    """Check selected staff only after the weekly schedule has been chosen."""
+    await enforce_rate_limit(
+        db,
+        scope="class_staff_availability",
+        subject=principal.user_id,
+        max_attempts=60,
+        window_seconds=60,
+    )
+    try:
+        return await preview_staff_availability(db, payload)
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = (
+            status.HTTP_409_CONFLICT
+            if detail.startswith("CLASS_CHANGED")
+            else status.HTTP_422_UNPROCESSABLE_CONTENT
+        )
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+
+
+@router.post(
+    "/{id}/billing-cycle/preview",
+    response_model=ClassBillingCyclePreviewResponse,
+)
+async def preview_class_billing_cycle_route(
+    id: UUID,
+    payload: ClassBillingCyclePreviewRequest,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> ClassBillingCyclePreviewResponse:
+    try:
+        preview = await preview_class_billing_cycle(db, id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    if preview is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy lớp học")
+    return preview
+
+
+@router.post(
+    "/{id}/billing-cycle",
+    response_model=ClassBillingCycleUpdateResponse,
+)
+async def update_class_billing_cycle_route(
+    id: UUID,
+    payload: ClassBillingCycleUpdate,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> ClassBillingCycleUpdateResponse:
+    try:
+        result = await update_class_billing_cycle(
+            db, id, payload, actor_user_id=principal.user_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy lớp học")
+    return result
 
 
 @router.post(
@@ -101,7 +191,7 @@ async def list_classes(
     type: ClassType | None = Query(default=None),
     is_active: bool | None = Query(default=None),
     scope: ClassScope = Query(default="operational"),
-    limit: int | None = Query(default=None, ge=1, le=200),
+    limit: int | None = Query(default=200, ge=1, le=200),
     offset: int | None = Query(default=None, ge=0),
     db: AsyncSession = Depends(get_db),
     principal: Principal = Depends(require_management),
@@ -385,7 +475,82 @@ async def update_class_route(
     return updated
 
 
-@router.patch("/{id}/end-date", response_model=ClassResponse)
+@router.post("/{id}/start-date/preview", response_model=ClassStartDatePreviewResponse)
+async def preview_class_start_date_route(
+    id: UUID,
+    payload: ClassStartDatePreviewRequest,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> ClassStartDatePreviewResponse:
+    try:
+        preview = await preview_class_start_date(db, id, payload)
+    except ValueError as exc:
+        detail = str(exc)
+        code = status.HTTP_409_CONFLICT if "không thể" in detail.casefold() or "vừa được cập nhật" in detail else status.HTTP_422_UNPROCESSABLE_CONTENT
+        raise HTTPException(status_code=code, detail=detail) from exc
+    if preview is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy lớp học")
+    return preview
+
+
+@router.patch("/{id}/start-date", response_model=ClassResponse)
+@router.post("/{id}/start-date/apply", response_model=ClassResponse)
+async def update_class_start_date_route(
+    id: UUID,
+    payload: ClassStartDateUpdate,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> ClassResponse:
+    try:
+        class_ = await update_class_start_date(
+            db, id, payload, actor_user_id=principal.user_id
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        code = status.HTTP_409_CONFLICT if "không thể" in detail.casefold() or "vừa được cập nhật" in detail else status.HTTP_422_UNPROCESSABLE_CONTENT
+        raise HTTPException(status_code=code, detail=detail) from exc
+    if class_ is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy lớp học")
+    updated = await get_class_response(db, id)
+    assert updated is not None
+    return updated
+
+
+@router.post("/{id}/stop/preview", response_model=ClassStopPreviewResponse)
+async def preview_class_stop_route(
+    id: UUID,
+    payload: ClassStopPreviewRequest,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> ClassStopPreviewResponse:
+    try:
+        preview = await preview_class_stop(db, id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    if preview is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy lớp học")
+    return preview
+
+
+@router.post("/{id}/stop", response_model=ClassResponse)
+async def stop_class_route(
+    id: UUID,
+    payload: ClassStopRequest,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> ClassResponse:
+    try:
+        class_ = await stop_class(db, id, payload, actor_user_id=principal.user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    if class_ is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy lớp học")
+    updated = await get_class_response(db, id)
+    assert updated is not None
+    return updated
+
+
+@router.patch("/{id}/end-date", response_model=ClassResponse, deprecated=True)
 async def update_class_end_date_route(
     id: UUID,
     payload: ClassEndDateUpdate,

@@ -9,17 +9,28 @@ enrollment + one cycle 0; VOID/SUPERSEDED reconcile never deletes.
 
 import asyncio
 import os
-from datetime import date
-from uuid import uuid4
+from datetime import date, timedelta
+from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
+from sqlalchemy.orm import selectinload
 
 from app.core.billing_schedule import cycle_base_due_date
 from app.core.business_time import business_today
 from app.core.database import AsyncSessionLocal
+from app.models.billing_anchor_revision import BillingAnchorRevision
+from app.models.enrollment import Enrollment
 from app.schemas.enrollment import EnrollmentCreate
+from app.schemas.class_ import ClassBillingCyclePreviewRequest, ClassBillingCycleUpdate
+from app.schemas.billing_anchor import BillingReviewResolveRequest
+from app.services.billing_anchor_service import resolve_billing_review
+from app.services.class_billing_cycle_service import (
+    preview_class_billing_cycle,
+    update_class_billing_cycle,
+)
 from app.services.enrollment_service import create_enrollment
+from app.services.fee_cycle_service import ensure_enrollment_cycles
 from app.services.fee_service import sync_fee_records_for_period
 
 pytestmark = [
@@ -176,6 +187,144 @@ async def test_monthly_recurrence_and_lazy_bounded_generation() -> None:
         assert [row.due_date for row in rows] == expected
 
 
+async def test_package_duration_change_preserves_current_cycle_and_reviews_new_due() -> None:
+    today = business_today()
+    anchor = today - timedelta(days=35)
+    async with AsyncSessionLocal() as db:
+        class_id, _ = await _make_operational_class(
+            db,
+            class_type="COURSE",
+            cycle_weeks=4,
+            start=anchor,
+        )
+        student_id = await _make_student(db, "duration-change")
+        enrollment = await create_enrollment(
+            db,
+            EnrollmentCreate(
+                student_id=student_id,
+                class_id=class_id,
+                custom_fee=None,
+                enrollment_date=anchor,
+            ),
+        )
+        initial_review_id = await db.scalar(
+            select(BillingAnchorRevision.id).where(
+                BillingAnchorRevision.enrollment_id == str(enrollment.id),
+                BillingAnchorRevision.state == "PENDING",
+            )
+        )
+        assert initial_review_id is not None
+        await resolve_billing_review(
+            db,
+            UUID(str(initial_review_id)),
+            BillingReviewResolveRequest(decision="CONFIRM"),
+            actor_user_id=None,
+        )
+        enrollment_row = await db.scalar(
+            select(Enrollment)
+            .where(Enrollment.id == str(enrollment.id))
+            .options(
+                selectinload(Enrollment.class_),
+                selectinload(Enrollment.current_billing_revision),
+            )
+        )
+        assert enrollment_row is not None
+        await ensure_enrollment_cycles(
+            db,
+            enrollment_row,
+            up_to=anchor + timedelta(days=84),
+        )
+        await db.commit()
+
+        before_rows = (
+            await db.execute(
+                text(
+                    "select id, coverage_start, coverage_end, status from public.fee_records "
+                    "where enrollment_id = :id order by cycle_no"
+                ),
+                {"id": str(enrollment.id)},
+            )
+        ).all()
+        current = next(
+            row for row in before_rows if row.coverage_start <= today < row.coverage_end
+        )
+        future_ids = {
+            str(row.id) for row in before_rows if row.coverage_start >= anchor + timedelta(days=56)
+        }
+        assert future_ids
+
+        preview = await preview_class_billing_cycle(
+            db,
+            UUID(class_id),
+            ClassBillingCyclePreviewRequest(
+                billing_cycle_weeks=6,
+                expected_version=1,
+            ),
+        )
+        assert preview is not None
+        assert preview.students[0].transition_on == anchor + timedelta(days=56)
+
+        result = await update_class_billing_cycle(
+            db,
+            UUID(class_id),
+            ClassBillingCycleUpdate(
+                billing_cycle_weeks=6,
+                expected_version=1,
+                expected_fingerprint=preview.preview_fingerprint,
+                request_id=uuid4(),
+                reason="Điều chỉnh chương trình kiểm thử",
+            ),
+            actor_user_id=None,
+        )
+        assert result is not None
+        assert result.class_.billing_cycle_weeks == 6
+        assert result.pending_review_count == 1
+
+        rows = (
+            await db.execute(
+                text(
+                    "select id, status, review_required, coverage_start, coverage_end, "
+                    "billing_cycle_weeks_snapshot, billing_revision_id "
+                    "from public.fee_records where enrollment_id = :id"
+                ),
+                {"id": str(enrollment.id)},
+            )
+        ).all()
+        current_after = next(row for row in rows if str(row.id) == str(current.id))
+        assert current_after.status == "UNPAID"
+        assert all(
+            next(row for row in rows if str(row.id) == record_id).status == "SUPERSEDED"
+            for record_id in future_ids
+        )
+        replacement = next(row for row in rows if row.review_required)
+        assert replacement.coverage_start == anchor + timedelta(days=56)
+        assert replacement.coverage_end == anchor + timedelta(days=98)
+        assert replacement.billing_cycle_weeks_snapshot == 6
+
+        review_id = await db.scalar(
+            text(
+                "select id from public.billing_anchor_revisions "
+                "where class_billing_cycle_revision_id = :id"
+            ),
+            {"id": str(result.revision_id)},
+        )
+        review = await resolve_billing_review(
+            db,
+            UUID(str(review_id)),
+            BillingReviewResolveRequest(decision="CONFIRM"),
+            actor_user_id=None,
+        )
+        assert review is not None
+        assert review.state == "CONFIRMED"
+        assert all(not fee.cancellable or fee.status == "UNPAID" for fee in review.fees)
+        assert await db.scalar(
+            text(
+                "select state from public.class_billing_cycle_revisions where id = :id"
+            ),
+            {"id": str(result.revision_id)},
+        ) == "CONFIRMED"
+
+
 async def test_legacy_enrollment_gap_cycle_zero_is_never_generated() -> None:
     """Legacy enrollment (cycles 1..n từ backfill 056) không bao giờ nhận
     cycle 0 hồi tố; generator tiếp tục max(cycle_no)+1."""
@@ -289,7 +438,10 @@ async def test_50_concurrent_enrollments_exactly_one_cycle_zero() -> None:
 
 async def test_void_reconcile_never_deletes_protected() -> None:
     async with AsyncSessionLocal() as db:
-        class_id, _ = await _make_operational_class(db)
+        # Anchor cycle 0 in the period being reconciled. Using the helper's
+        # default (tomorrow) is ambiguous on the last day of a month because
+        # that fee correctly belongs to the next period.
+        class_id, _ = await _make_operational_class(db, start=business_today())
         student_id = await _make_student(db, "void")
         enrollment = await create_enrollment(
             db,

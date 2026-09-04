@@ -57,6 +57,16 @@ def make_class_create(**overrides: object) -> ClassCreate:
     return ClassCreate(**payload)
 
 
+def test_class_create_accepts_past_start_without_end_date() -> None:
+    payload = make_class_create(
+        start_date=business_today() - timedelta(days=365),
+        end_date=None,
+    )
+
+    assert payload.start_date == business_today() - timedelta(days=365)
+    assert payload.end_date is None
+
+
 def test_class_continuation_rejects_duplicate_students() -> None:
     student_id = uuid4()
     with pytest.raises(ValidationError, match="trùng học viên"):
@@ -229,10 +239,11 @@ def test_intake_class_needs_only_its_entered_name_and_opening_period() -> None:
 
     assert payload.program_name is None
     assert class_.program_name is None
+    opening = payload.start_date.strftime("%m/%Y")
     assert get_class_labels(class_) == (
         "IELTS 7.0 - A",
-        "IELTS · Mở lớp 08/2026",
-        "IELTS 7.0 - A · IELTS · Mở lớp 08/2026",
+        f"IELTS · Mở lớp {opening}",
+        f"IELTS 7.0 - A · IELTS · Mở lớp {opening}",
     )
 
 
@@ -263,9 +274,11 @@ def test_class_update_rejects_explicit_null_for_required_columns(field: str) -> 
         ClassUpdate(**{field: None})
 
 
-def test_class_create_requires_at_least_one_teacher() -> None:
-    with pytest.raises(ValidationError):
-        make_class_create(teacher_ids=[])
+def test_class_create_allows_staff_to_be_assigned_later() -> None:
+    payload = make_class_create(teacher_ids=[], assistant_ids=[])
+
+    assert payload.teacher_ids == []
+    assert payload.assistant_ids == []
 
 
 @pytest.mark.parametrize("schedule", [None, {}, {"text": "", "slots": []}])
@@ -513,11 +526,12 @@ def test_class_create_rejects_end_date_before_start_date() -> None:
 
 
 @pytest.mark.parametrize("teacher_ids", [[], None])
-def test_class_update_rejects_explicit_empty_teacher_list(
+def test_class_update_accepts_explicit_empty_teacher_list(
     teacher_ids: list[UUID] | None,
 ) -> None:
-    with pytest.raises(ValidationError):
-        ClassUpdate(teacher_ids=teacher_ids)
+    payload = ClassUpdate(teacher_ids=teacher_ids)
+
+    assert payload.teacher_ids == teacher_ids
 
 
 def test_class_update_preserves_end_date_concurrency_contract() -> None:
@@ -543,27 +557,11 @@ def test_monthly_class_update_accepts_an_explicit_null_week_cycle() -> None:
     assert payload.billing_cycle_weeks is None
 
 
-@pytest.mark.asyncio
-async def test_class_update_rejects_explicit_null_legacy_teacher() -> None:
-    class_id = uuid4()
-    persisted_class = make_persisted_class(id=str(class_id))
-    db = AsyncMock()
+def test_class_update_accepts_clearing_legacy_primary_teacher() -> None:
+    payload = ClassUpdate(teacher_id=None)
 
-    with (
-        patch(
-            "app.services.class_service.get_class",
-            new=AsyncMock(return_value=persisted_class),
-        ) as get_class,
-        patch(
-            "app.services.class_service._get_class_assistant_ids",
-            new=AsyncMock(return_value=[]),
-        ),
-    ):
-        with pytest.raises(ValueError, match="ít nhất một giáo viên"):
-            await update_class(db, class_id, ClassUpdate(teacher_id=None))
-
-    get_class.assert_awaited_once_with(db, class_id, for_update=True)
-    db.commit.assert_not_awaited()
+    assert "teacher_id" in payload.model_fields_set
+    assert payload.teacher_id is None
 
 
 @pytest.mark.asyncio

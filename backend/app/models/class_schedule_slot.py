@@ -140,3 +140,45 @@ class ClassScheduleSlotTeacherEvent(WorkspaceScoped, Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class ClassScheduleSlotStaffRevision(WorkspaceScoped, Base):
+    """Effective-dated assignment truth used by attendance and audit reads.
+
+    ``class_schedule_slot_staff`` remains the compact current projection for
+    legacy clients.  Revisions prevent a later replacement from granting or
+    removing attendance rights for occurrences that already happened.
+    """
+
+    __tablename__ = "class_schedule_slot_staff_revisions"
+
+    id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    class_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("classes.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    slot_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("class_schedule_slots.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    staff_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("staff_members.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    role: Mapped[str] = mapped_column(Text, nullable=False)
+    effective_from: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    effective_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    actor_user_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("profiles.id", ondelete="SET NULL")
+    )
+    reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

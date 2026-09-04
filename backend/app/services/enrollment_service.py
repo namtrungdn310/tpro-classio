@@ -1,8 +1,8 @@
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -15,6 +15,7 @@ from app.models.student import Student
 from app.schemas.enrollment import (
     EnrollmentCreate,
     EnrollmentResponse,
+    EnrollmentScheduleSlotResponse,
     EnrollmentUpdate,
 )
 from app.core.billing import (
@@ -23,6 +24,7 @@ from app.core.billing import (
 )
 from app.core.billing_schedule import month_end
 from app.core.business_time import business_today
+from app.core.enrollment_lifecycle import effective_enrollment_state
 from app.core.class_lifecycle import (
     is_operational_class,
     operational_class_predicate,
@@ -40,6 +42,7 @@ async def close_enrollment_financial_projection(
     *,
     actor_user_id: str | None,
     reason: str,
+    close_on: date | None = None,
 ) -> None:
     """Close mutable fees and revoke stale QR references for a membership.
 
@@ -71,7 +74,16 @@ async def close_enrollment_financial_projection(
     if not records:
         return
 
-    mutable = [record for record in records if not is_fee_record_protected(record)]
+    mutable = [
+        record
+        for record in records
+        if not is_fee_record_protected(record)
+        and (
+            close_on is None
+            or (record.coverage_start or record.base_due_date or record.due_date)
+            >= close_on
+        )
+    ]
     if not mutable:
         return
     # A notified unpaid row remains a real debt after the membership closes,
@@ -104,7 +116,11 @@ def _clear_dependent_caches() -> None:
     return None
 
 
-def _to_response(enrollment: Enrollment) -> EnrollmentResponse:
+def _to_response(
+    enrollment: Enrollment,
+    *,
+    selected_slots: list[ClassScheduleSlot] | None = None,
+) -> EnrollmentResponse:
     return EnrollmentResponse(
         id=enrollment.id,
         student_id=enrollment.student_id,
@@ -114,17 +130,36 @@ def _to_response(enrollment: Enrollment) -> EnrollmentResponse:
         else None,
         status=enrollment.status,
         enrollment_date=enrollment.enrollment_date,
+        ended_on=enrollment.ended_on,
+        effective_state=effective_enrollment_state(enrollment),
+        billing_anchor_version=int(enrollment.billing_anchor_version or 0),
+        ended_at=enrollment.ended_at,
+        end_reason=enrollment.end_reason,
         selected_slot_ids=[
             UUID(selection.slot_id)
             for selection in (enrollment.slot_selections or [])
             if selection.effective_until is None
+        ],
+        selected_slots=[
+            EnrollmentScheduleSlotResponse(
+                id=UUID(slot.id),
+                weekday=slot.weekday,
+                local_start=slot.local_start,
+                local_end=slot.local_end,
+            )
+            for slot in (selected_slots or [])
         ],
         class_name=enrollment.class_.name if enrollment.class_ else "",
         class_category=enrollment.class_.class_category if enrollment.class_ else None,
         class_grade_mode=enrollment.class_.grade_mode if enrollment.class_ else None,
         class_grade_level=enrollment.class_.grade_level if enrollment.class_ else None,
         class_start_date=enrollment.class_.start_date if enrollment.class_ else None,
-        class_end_date=enrollment.class_.end_date if enrollment.class_ else None,
+        class_end_date=None,
+        previous_class_id=(
+            UUID(enrollment.class_.previous_class_id)
+            if enrollment.class_ and enrollment.class_.previous_class_id
+            else None
+        ),
         effective_fee=get_enrollment_fee_amount(enrollment),
     )
 
@@ -169,19 +204,20 @@ def resolve_enrollment_date(class_: Class, requested: date | None) -> date:
     today = business_today()
     if class_.identity_scheme not in {"ACADEMIC_YEAR", "INTAKE"}:
         return requested or today
-    if class_.start_date is None or class_.end_date is None:
+    if class_.start_date is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Lớp học chưa có phạm vi ngày hợp lệ",
+            detail="Lớp học chưa có ngày bắt đầu hợp lệ",
         )
-    latest = class_.end_date - timedelta(days=1)
     resolved = requested or max(today, class_.start_date)
-    if resolved < class_.start_date or resolved > latest:
+    if resolved < class_.start_date or (
+        class_.stopped_on is not None and resolved >= class_.stopped_on
+    ):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
-                "Ngày bắt đầu của học viên phải nằm trong thời gian lớp học "
-                "và trước ngày kết thúc ít nhất một ngày"
+                "Ngày bắt đầu của học viên phải từ ngày lớp bắt đầu và trước "
+                "ngày lớp ngừng hoạt động"
             ),
         )
     return resolved
@@ -196,6 +232,7 @@ async def _create_slot_selections(
     actor_user_id: str | None = None,
     effective_from: date | None = None,
     known_active_slot_ids: list[str] | None = None,
+    excluded_enrollment_ids: set[str] | None = None,
 ) -> None:
     """Tạo selection effective-dated cho enrollment (1..4 unique slot cùng
     lớp, effective tại enrollment date). Mặc định: toàn bộ slot đang hiệu lực."""
@@ -247,6 +284,7 @@ async def _create_slot_selections(
         selected_slot_ids=requested,
         enrollment_id=str(enrollment.id),
         effective_from=reference,
+        excluded_enrollment_ids=excluded_enrollment_ids,
     )
     for slot_id in requested:
         db.add(
@@ -268,6 +306,7 @@ async def _ensure_student_schedule_available(
     selected_slot_ids: list[str],
     enrollment_id: str | None,
     effective_from: date,
+    excluded_enrollment_ids: set[str] | None = None,
 ) -> None:
     """Reject recurring sessions that overlap another active enrollment.
 
@@ -276,8 +315,9 @@ async def _ensure_student_schedule_available(
     direct API callers as well as the student and continuation screens.
     """
 
-    if not selected_slot_ids or class_.start_date is None or class_.end_date is None:
+    if not selected_slot_ids or class_.start_date is None:
         return
+    target_end = class_.stopped_on or date.max
     target_result = await db.execute(
         select(ClassScheduleSlot).where(
             ClassScheduleSlot.id.in_(selected_slot_ids),
@@ -316,22 +356,24 @@ async def _ensure_student_schedule_available(
         )
         .where(
             Enrollment.student_id == student_id,
-            Enrollment.status == "active",
+            Enrollment.status != "cancelled",
             Class.cancelled_at.is_(None),
             Class.start_date.is_not(None),
-            Class.end_date.is_not(None),
-            Class.start_date < class_.end_date,
-            Class.end_date > class_.start_date,
-            EnrollmentSlotSelection.effective_from < class_.end_date,
+            Class.stopped_at.is_(None),
+            Enrollment.enrollment_date < target_end,
+            or_(Enrollment.ended_on.is_(None), Enrollment.ended_on > effective_from),
+            EnrollmentSlotSelection.effective_from < target_end,
             (EnrollmentSlotSelection.effective_until.is_(None))
-            | (EnrollmentSlotSelection.effective_until > class_.start_date),
-            ClassScheduleSlot.effective_from < class_.end_date,
+            | (EnrollmentSlotSelection.effective_until > effective_from),
+            ClassScheduleSlot.effective_from < target_end,
             (ClassScheduleSlot.effective_until.is_(None))
-            | (ClassScheduleSlot.effective_until > class_.start_date),
+            | (ClassScheduleSlot.effective_until > effective_from),
         )
     )
     if enrollment_id is not None:
         query = query.where(Enrollment.id != enrollment_id)
+    if excluded_enrollment_ids:
+        query = query.where(Enrollment.id.notin_(sorted(excluded_enrollment_ids)))
     rows = (await db.execute(query)).all()
     for class_name, weekday, start, end in rows:
         for target_day, target_start, target_end in target_ranges:
@@ -400,6 +442,108 @@ async def _replace_slot_selections(
     )
 
 
+async def close_enrollment_slot_selections(
+    db: AsyncSession,
+    enrollment: Enrollment,
+    *,
+    ended_on: date,
+) -> None:
+    """Close entitlement ranges at the same exclusive membership boundary."""
+
+    selections = list(
+        (
+            await db.scalars(
+                select(EnrollmentSlotSelection)
+                .where(
+                    EnrollmentSlotSelection.enrollment_id == enrollment.id,
+                    EnrollmentSlotSelection.effective_until.is_(None),
+                )
+                .with_for_update()
+            )
+        ).all()
+    )
+    for selection in selections:
+        selection.effective_until = max(selection.effective_from, ended_on)
+    if selections:
+        await db.flush()
+
+
+async def realign_open_slot_selections(
+    db: AsyncSession,
+    enrollment: Enrollment,
+    class_: Class,
+    *,
+    previous_start: date,
+    next_start: date,
+) -> None:
+    """Keep current attendance entitlements aligned with an edited start date."""
+
+    selections = list(
+        (
+            await db.scalars(
+                select(EnrollmentSlotSelection)
+                .where(
+                    EnrollmentSlotSelection.enrollment_id == enrollment.id,
+                    EnrollmentSlotSelection.effective_until.is_(None),
+                )
+                .with_for_update()
+            )
+        ).all()
+    )
+    if not selections:
+        return
+    slot_ids = [selection.slot_id for selection in selections]
+    valid_ids = set(
+        (
+            await db.scalars(
+                select(ClassScheduleSlot.id).where(
+                    ClassScheduleSlot.id.in_(slot_ids),
+                    ClassScheduleSlot.class_id == class_.id,
+                    ClassScheduleSlot.effective_from <= next_start,
+                    or_(
+                        ClassScheduleSlot.effective_until.is_(None),
+                        ClassScheduleSlot.effective_until > next_start,
+                    ),
+                )
+            )
+        ).all()
+    )
+    if valid_ids != set(slot_ids):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "SLOT_NOT_EFFECTIVE_ON_DATE",
+                "message": (
+                    "Lịch học hiện tại không có hiệu lực tại ngày bắt đầu mới; "
+                    "vui lòng chọn lại buổi học."
+                ),
+                "class_id": str(class_.id),
+            },
+        )
+    await _ensure_student_schedule_available(
+        db,
+        student_id=str(enrollment.student_id),
+        class_=class_,
+        selected_slot_ids=slot_ids,
+        enrollment_id=str(enrollment.id),
+        effective_from=next_start,
+    )
+    for selection in selections:
+        # Only the initial open range can safely move backwards. A later range
+        # represents a real schedule revision and must be reselected explicitly.
+        if next_start < selection.effective_from and selection.effective_from != previous_start:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "SLOT_HISTORY_REVIEW_REQUIRED",
+                    "message": "Lịch học đã từng thay đổi; vui lòng chọn lại buổi học.",
+                    "class_id": str(class_.id),
+                },
+            )
+        selection.effective_from = next_start
+    await db.flush()
+
+
 async def enroll_locked_student(
     db: AsyncSession,
     *,
@@ -411,6 +555,10 @@ async def enroll_locked_student(
     actor_user_id: str | None = None,
     known_new_class: bool = False,
     known_active_slot_ids: list[str] | None = None,
+    excluded_conflict_enrollment_ids: set[str] | None = None,
+    billing_review_required: bool = False,
+    billing_change_kind: str | None = None,
+    billing_reason: str | None = None,
 ) -> Enrollment:
     """Create one membership period inside the caller's transaction.
 
@@ -452,7 +600,15 @@ async def enroll_locked_student(
 
     # R6: cycle 0 tạo cùng transaction ghi danh (due = enrollment date,
     # UNPAID, unnotified) + các cycle tương lai trong tháng hiện tại.
-    await create_cycle_zero(db, enrollment, assume_new=known_new_class)
+    await create_cycle_zero(
+        db,
+        enrollment,
+        assume_new=known_new_class,
+        actor_user_id=actor_user_id,
+        force_review=billing_review_required,
+        change_kind=billing_change_kind,
+        reason=billing_reason,
+    )
     await ensure_enrollment_cycles(
         db,
         enrollment,
@@ -466,6 +622,7 @@ async def enroll_locked_student(
         selected_slot_ids,
         actor_user_id=actor_user_id,
         known_active_slot_ids=known_active_slot_ids,
+        excluded_enrollment_ids=excluded_conflict_enrollment_ids,
     )
     return enrollment
 
@@ -540,13 +697,53 @@ async def get_student_enrollments(
         .options(selectinload(Enrollment.class_))
         .order_by(Enrollment.created_at.desc()),
     )
-    return [_to_response(enrollment) for enrollment in result.scalars().all()]
+    enrollments = list(result.scalars().all())
+    selection_ids_by_enrollment: dict[str, list[str]] = {}
+    slot_ids: set[str] = set()
+    for enrollment in enrollments:
+        selections = list(enrollment.slot_selections or [])
+        if enrollment.status == "active":
+            selections = [
+                selection
+                for selection in selections
+                if selection.effective_until is None
+            ]
+        enrollment_slot_ids = list(
+            dict.fromkeys(selection.slot_id for selection in selections)
+        )
+        selection_ids_by_enrollment[enrollment.id] = enrollment_slot_ids
+        slot_ids.update(enrollment_slot_ids)
+
+    slots_by_id: dict[str, ClassScheduleSlot] = {}
+    if slot_ids:
+        slots = list(
+            (
+                await db.scalars(
+                    select(ClassScheduleSlot).where(ClassScheduleSlot.id.in_(slot_ids))
+                )
+            ).all()
+        )
+        slots_by_id = {slot.id: slot for slot in slots}
+
+    return [
+        _to_response(
+            enrollment,
+            selected_slots=[
+                slots_by_id[slot_id]
+                for slot_id in selection_ids_by_enrollment[enrollment.id]
+                if slot_id in slots_by_id
+            ],
+        )
+        for enrollment in enrollments
+    ]
 
 
 async def update_enrollment(
     db: AsyncSession,
     id: UUID,
     data: EnrollmentUpdate,
+    *,
+    actor_user_id: str | None = None,
 ) -> EnrollmentResponse | None:
     enrollment = await _get_enrollment(db, id)
     if enrollment is None:
@@ -606,24 +803,6 @@ async def update_enrollment(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="Ngày bắt đầu không được để trống",
             )
-        # R6-D10: nếu đã có history protected (notified/paid/refund),
-        # không được rewrite — cần reason + impact preview/correction.
-        protected = await db.scalar(
-            select(FeeRecord.id)
-            .where(
-                FeeRecord.enrollment_id == enrollment.id,
-                (FeeRecord.status == "PAID") | (FeeRecord.notified_at.is_not(None)),
-            )
-            .limit(1)
-        )
-        if protected is not None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=(
-                    "Ghi danh đã có kỳ học phí đã báo/đã nộp; không thể đổi "
-                    "ngày bắt đầu — cần correction/compensating workflow"
-                ),
-            )
         resolved_date = resolve_enrollment_date(
             enrollment.class_,
             data.enrollment_date,
@@ -635,7 +814,30 @@ async def update_enrollment(
             select(Class.id).where(Class.id == enrollment.class_id).with_for_update()
         )
         await ensure_enrollment_allowed(db, enrollment.class_, resolved_date)
-        enrollment.enrollment_date = resolved_date
+        if resolved_date != enrollment.enrollment_date:
+            from app.services.billing_anchor_service import reanchor_enrollment_billing
+
+            previous_start = enrollment.enrollment_date
+            await reanchor_enrollment_billing(
+                db,
+                enrollment,
+                new_anchor=resolved_date,
+                reason=(
+                    data.billing_change_reason
+                    or "Điều chỉnh ngày bắt đầu từ hồ sơ học viên"
+                ),
+                actor_user_id=actor_user_id,
+                request_id=data.billing_request_id,
+                expected_version=data.expected_billing_version,
+            )
+            if "selected_slot_ids" not in fields and previous_start is not None:
+                await realign_open_slot_selections(
+                    db,
+                    enrollment,
+                    enrollment.class_,
+                    previous_start=previous_start,
+                    next_start=resolved_date,
+                )
 
     if "selected_slot_ids" in fields:
         if data.selected_slot_ids is None:
@@ -691,14 +893,34 @@ async def drop_enrollment(
         return None
 
     if enrollment.status == "active":
-        enrollment.status = "dropped"
+        today = business_today()
+        from app.services.fee_cycle_service import ensure_final_cycle_for_stop
+
+        never_started = bool(
+            enrollment.enrollment_date is not None
+            and enrollment.enrollment_date > today
+        )
+        if not never_started:
+            await ensure_final_cycle_for_stop(db, enrollment, stopped_on=today)
+        enrollment.status = "cancelled" if never_started else "dropped"
+        enrollment.ended_on = None if never_started else today
         enrollment.ended_at = datetime.now(timezone.utc)
-        enrollment.end_reason = "Học viên rời lớp"
+        enrollment.end_reason = (
+            "Hủy ghi danh trước ngày bắt đầu"
+            if never_started
+            else "Học viên rời lớp"
+        )
+        await close_enrollment_slot_selections(
+            db,
+            enrollment,
+            ended_on=enrollment.enrollment_date if never_started else today,
+        )
         await close_enrollment_financial_projection(
             db,
             enrollment,
             actor_user_id=actor_user_id,
-            reason="Học viên rời lớp",
+            reason=enrollment.end_reason,
+            close_on=enrollment.enrollment_date if never_started else today,
         )
 
     await db.commit()

@@ -52,7 +52,7 @@ def test_course_cycle_prefers_exact_custom_week_value() -> None:
     assert get_course_weeks(3, billing_cycle_weeks=10) == 10
 
 
-def test_fee_is_not_due_outside_the_class_date_range() -> None:
+def test_fee_is_not_due_after_class_is_explicitly_stopped() -> None:
     enrollment = SimpleNamespace(
         enrollment_date=date(2026, 6, 5),
         class_=SimpleNamespace(
@@ -60,6 +60,7 @@ def test_fee_is_not_due_outside_the_class_date_range() -> None:
             billing_cycle_months=1,
             start_date=date(2026, 7, 10),
             end_date=date(2026, 8, 31),
+            stopped_on=date(2026, 8, 31),
         ),
     )
 

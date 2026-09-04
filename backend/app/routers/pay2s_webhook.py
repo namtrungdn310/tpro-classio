@@ -23,7 +23,7 @@ async def show_pay2s_payment_return() -> HTMLResponse:
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>TPRO English · Thanh toán học phí</title>
   <style>
-    :root { color-scheme: light; font-family: Arial, sans-serif; }
+    :root { font-family: Arial, sans-serif; }
     body { margin: 0; min-height: 100vh; display: grid; place-items: center;
       background: #f5f7fb; color: #172033; }
     main { width: min(420px, calc(100% - 40px)); padding: 32px;

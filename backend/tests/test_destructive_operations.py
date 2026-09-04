@@ -112,7 +112,7 @@ async def test_delete_class_preserves_history_and_never_deactivates_profiles() -
     )
     db = AsyncMock()
     db.add = Mock()
-    db.execute.return_value = ScalarResult([orphan.id])
+    db.execute.return_value = ScalarResult([enrollment])
     db.scalar.return_value = 0
 
     with (
@@ -125,14 +125,17 @@ async def test_delete_class_preserves_history_and_never_deactivates_profiles() -
             new=AsyncMock(return_value=[orphan]),
         ),
         patch(
-            "app.services.class_service._reconcile_current_class_fees",
-            new=AsyncMock(return_value=[enrollment]),
-        ) as reconcile,
+            "app.services.class_service.close_enrollment_financial_projection",
+            new=AsyncMock(),
+        ),
+        patch(
+            "app.services.class_service.close_enrollment_slot_selections",
+            new=AsyncMock(),
+        ),
     ):
         deleted = await delete_class(db, class_id)
 
     assert deleted is class_
-    reconcile.assert_awaited_once_with(db, class_)
     assert class_.is_active is False
     assert enrollment.status == "cancelled"
     assert enrollment.ended_at is not None
@@ -183,6 +186,18 @@ async def test_archive_student_requires_reason_and_preserves_profile() -> None:
         patch(
             "app.services.student_service.append_student_lifecycle_event",
             new=Mock(),
+        ),
+        patch(
+            "app.services.fee_cycle_service.ensure_final_cycle_for_stop",
+            new=AsyncMock(),
+        ),
+        patch(
+            "app.services.student_service.close_enrollment_financial_projection",
+            new=AsyncMock(),
+        ),
+        patch(
+            "app.services.student_service.close_enrollment_slot_selections",
+            new=AsyncMock(),
         ),
     ):
         archived = await archive_student(

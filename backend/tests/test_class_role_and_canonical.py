@@ -50,10 +50,10 @@ async def test_get_class_teacher_ids_filters_staff_role() -> None:
 
     teacher_ids = await _get_class_teacher_ids(db, make_class())
 
-    # SQL phải join staff_members và lọc TEACHER (bound param staff_type).
+    # Vai trò thuộc liên kết lớp, không còn thuộc hồ sơ nhân sự.
     query = str(db.execute.await_args.args[0])
-    assert "staff_members" in query
-    assert "staff_type" in query
+    assert "class_teachers.role" in query
+    assert "staff_type" not in query
     assert teacher_ids == [teacher_id]
 
 
@@ -141,16 +141,18 @@ def test_normalize_requires_explicit_teacher_and_keeps_empty_assistant() -> None
     assert first.day == "Thứ 2" and first.start == "18:00" and first.end == "19:30"
 
 
-def test_normalize_rejects_legacy_slot_without_teacher_assignment() -> None:
+def test_normalize_keeps_unstaffed_slot_for_later_assignment() -> None:
     schedule = ClassSchedule(
         slots=[ClassScheduleSlot(day="Thứ 2", start="18:00", end="19:30")]
     )
-    with pytest.raises(ValueError, match="ít nhất một giáo viên"):
-        normalize_schedule_assignments(
-            schedule,
-            teacher_ids=[str(uuid4())],
-            assistant_ids=[],
-        )
+    canonical = normalize_schedule_assignments(
+        schedule,
+        teacher_ids=[str(uuid4())],
+        assistant_ids=[],
+    )
+
+    assert canonical is not None
+    assert canonical.slots[0].teacher_ids == []
 
 
 def test_normalize_dedupes_ids_in_stable_order() -> None:
@@ -219,13 +221,18 @@ def test_normalize_rejects_slot_assistant_outside_class_pool() -> None:
         )
 
 
-def test_normalize_rejects_slot_without_any_teacher() -> None:
+def test_normalize_accepts_slot_without_any_staff() -> None:
     schedule = ClassSchedule(
         slots=[ClassScheduleSlot(day="Thứ 2", start="18:00", end="19:30")]
     )
 
-    with pytest.raises(ValueError, match="ít nhất một giáo viên"):
-        normalize_schedule_assignments(schedule, teacher_ids=[], assistant_ids=[])
+    canonical = normalize_schedule_assignments(
+        schedule, teacher_ids=[], assistant_ids=[]
+    )
+
+    assert canonical is not None
+    assert canonical.slots[0].teacher_ids == []
+    assert canonical.slots[0].assistant_ids == []
 
 
 def test_class_schema_rejects_teacher_assistant_overlap() -> None:
@@ -289,9 +296,10 @@ async def test_sync_class_teachers_does_not_touch_assistant_links() -> None:
     class_.teacher_id = teacher.id
     await _sync_class_teachers(db, class_, [teacher.id], actor_user_id=str(uuid4()))
 
-    # Query link hiện tại phải lọc TEACHER — SQL chứa staff_type (bound param).
+    # Query link hiện tại lọc vai trò ngay trên liên kết lớp.
     query = str(db.execute.await_args_list[1].args[0])
-    assert "staff_type" in query
+    assert "class_teachers.role" in query
+    assert "staff_type" not in query
     assert "FOR UPDATE" in query
     # Teacher không đổi → không xóa/thêm link → không audit event giả.
     assert not any(

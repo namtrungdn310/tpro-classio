@@ -27,8 +27,6 @@ def _student_response() -> StudentResponse:
         hidden_fields=[
             "birth_date",
             "student_contact",
-            "enrollment_date",
-            "custom_fee",
         ],
         status="active",
         list_state="CURRENT",
@@ -57,8 +55,8 @@ def test_redaction_hides_selected_fields_without_mutating_admin_response() -> No
     assert viewer_response.birth_date is None
     assert viewer_response.student_phone is None
     assert viewer_response.student_zalo is None
-    assert viewer_response.active_enrollments[0].enrollment_date is None
-    assert viewer_response.active_enrollments[0].custom_fee is None
+    assert viewer_response.active_enrollments[0].enrollment_date == date(2026, 7, 1)
+    assert viewer_response.active_enrollments[0].custom_fee == 750_000
     assert viewer_response.school == "THCS Trưng Vương"
     assert admin_response.birth_date == date(2012, 4, 3)
     assert admin_response.active_enrollments[0].custom_fee == 750_000

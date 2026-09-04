@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 from app.core.phone import normalize_vietnam_phone
 from app.core.search import normalize_search_text
 from app.core.class_lifecycle import is_operational_class
+from app.core.enrollment_lifecycle import enrollment_visible_current_or_scheduled
 from app.core.student_lifecycle import derive_student_list_state
 from app.models.enrollment import Enrollment
 from app.models.student import Student
@@ -155,7 +156,7 @@ def _previous_classes(student: Student) -> list[StudentPreviousClass]:
 
 def _already_in_target_class(student: Student, target_class_id: str) -> bool:
     return any(
-        enrollment.status == "active"
+        enrollment_visible_current_or_scheduled(enrollment)
         and enrollment.class_id == target_class_id
         and enrollment.class_ is not None
         and is_operational_class(enrollment.class_)

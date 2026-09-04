@@ -32,6 +32,9 @@ class StaffCompensationRate(WorkspaceScoped, Base):
         ForeignKey("staff_members.id", ondelete="RESTRICT"),
         nullable=False,
     )
+    # NULL is the backward-compatible default rate.  A role-specific row wins
+    # when the same person teaches one class and assists another.
+    assignment_role: Mapped[str | None] = mapped_column(Text)
     rate_amount: Mapped[int] = mapped_column(BigInteger, nullable=False)
     effective_from: Mapped[date] = mapped_column(Date, nullable=False)
     effective_to: Mapped[date | None] = mapped_column(Date)

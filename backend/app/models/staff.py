@@ -23,7 +23,11 @@ class StaffMember(WorkspaceScoped, Base):
         server_default=text("gen_random_uuid()"),
     )
     full_name: Mapped[str] = mapped_column(Text, nullable=False)
-    staff_type: Mapped[str] = mapped_column(Text, nullable=False)
+    # Deprecated compatibility projection.  Teaching/assistant roles are
+    # contextual to a class assignment (ClassTeacher.role), not to the staff
+    # profile.  Existing rows keep their value while new role-neutral staff
+    # may store NULL during the expand/contract rollout.
+    staff_type: Mapped[str | None] = mapped_column(Text, nullable=True)
     zalo_name: Mapped[str | None] = mapped_column(Text)
     phone: Mapped[str | None] = mapped_column(Text)
     email: Mapped[str | None] = mapped_column(Text)

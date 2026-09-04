@@ -38,17 +38,35 @@ DEFAULT_CHECKIN_WINDOW_AFTER_HOURS = 24
 
 
 async def _resolve_rate(
-    db: AsyncSession, staff_id: str, occurrence_date
+    db: AsyncSession,
+    staff_id: str,
+    occurrence_date,
+    role: str | None = None,
 ) -> StaffCompensationRate | None:
+    role_filter = (
+        (StaffCompensationRate.assignment_role == role)
+        | (StaffCompensationRate.assignment_role.is_(None))
+        if role is not None
+        else StaffCompensationRate.assignment_role.is_(None)
+    )
     result = await db.execute(
         select(StaffCompensationRate)
         .where(
             StaffCompensationRate.staff_id == staff_id,
+            role_filter,
             StaffCompensationRate.effective_from <= occurrence_date,
             (StaffCompensationRate.effective_to.is_(None))
             | (StaffCompensationRate.effective_to > occurrence_date),
         )
-        .order_by(StaffCompensationRate.effective_from.desc())
+        .order_by(
+            (
+                (StaffCompensationRate.assignment_role == role).desc()
+                if role is not None
+                else StaffCompensationRate.effective_from.desc()
+            ),
+            StaffCompensationRate.effective_from.desc(),
+            StaffCompensationRate.version.desc(),
+        )
         .limit(1)
     )
     return result.scalar_one_or_none()
@@ -141,13 +159,13 @@ async def check_in(
             detail="Buổi gốc đã hoãn; chỉ chấm buổi bù hợp lệ",
         )
 
-    rate = await _resolve_rate(db, staff_id, start_local.date())
+    role = "TEACHER" if occurrence.staff_role == "TEACHER" else "ASSISTANT"
+    rate = await _resolve_rate(db, staff_id, start_local.date(), role=role)
     if rate is None:
         raise HTTPException(
             status_code=409,
             detail="Chưa có mức lương hiệu lực cho nhân sự này tại ngày buổi học",
         )
-    role = "TEACHER" if occurrence.staff_role == "TEACHER" else "ASSISTANT"
     entry = StaffAttendanceEntry(
         staff_id=staff_id,
         occurrence_class_id=occurrence.class_id,
@@ -213,7 +231,10 @@ async def list_manual_attendance_targets(
     """Admin/dev picker: real sessions assigned to this staff that are not yet
     clocked in, from a few days in the past through the near future."""
     from app.models.class_ import Class
-    from app.models.class_schedule_slot import ClassScheduleSlot, ClassScheduleSlotStaff
+    from app.models.class_schedule_slot import (
+        ClassScheduleSlot,
+        ClassScheduleSlotStaffRevision,
+    )
     from app.services.attendance_occurrence_service import attendance_occurrence_id
     from app.services.schedule_slot_service import load_class_slots_bulk
     from app.core.occurrence import expand_weekly_occurrences
@@ -239,19 +260,25 @@ async def list_manual_attendance_targets(
             Class.id,
             Class.name,
             Class.start_date,
-            Class.end_date,
+            Class.stopped_on,
             ClassScheduleSlot.id,
-            ClassScheduleSlotStaff.role,
+            ClassScheduleSlotStaffRevision.role,
+            ClassScheduleSlotStaffRevision.effective_from,
+            ClassScheduleSlotStaffRevision.effective_until,
         )
         .join(ClassScheduleSlot, ClassScheduleSlot.class_id == Class.id)
         .join(
-            ClassScheduleSlotStaff,
-            ClassScheduleSlotStaff.slot_id == ClassScheduleSlot.id,
+            ClassScheduleSlotStaffRevision,
+            ClassScheduleSlotStaffRevision.slot_id == ClassScheduleSlot.id,
         )
         .where(
-            ClassScheduleSlotStaff.staff_id == str(staff_id),
+            ClassScheduleSlotStaffRevision.staff_id == str(staff_id),
+            ClassScheduleSlotStaffRevision.effective_from < range_end,
+            (ClassScheduleSlotStaffRevision.effective_until.is_(None))
+            | (ClassScheduleSlotStaffRevision.effective_until > range_start),
             Class.is_active.is_(True),
             Class.cancelled_at.is_(None),
+            Class.stopped_at.is_(None),
             ClassScheduleSlot.effective_from <= today,
             (ClassScheduleSlot.effective_until.is_(None))
             | (ClassScheduleSlot.effective_until > today),
@@ -259,7 +286,7 @@ async def list_manual_attendance_targets(
     )
 
     class_meta: dict[str, tuple[str, object, object]] = {}
-    assigned_roles: dict[str, str] = {}
+    assignment_windows: dict[str, list[tuple[str, datetime, datetime | None]]] = {}
     for (
         class_id,
         class_name,
@@ -267,10 +294,14 @@ async def list_manual_attendance_targets(
         end_date,
         slot_id,
         role,
+        assignment_from,
+        assignment_until,
     ) in assigned_rows.all():
         class_key = str(class_id)
         class_meta[class_key] = (class_name, start_date, end_date)
-        assigned_roles[str(slot_id)] = role
+        assignment_windows.setdefault(str(slot_id), []).append(
+            (role, assignment_from, assignment_until)
+        )
 
     if not class_meta:
         return []
@@ -332,8 +363,20 @@ async def list_manual_attendance_targets(
         )
         for occurrence in expanded:
             slot_id = str(occurrence.source_slot_id or "")
-            if not slot_id or slot_id not in assigned_roles:
+            if not slot_id or slot_id not in assignment_windows:
                 continue
+            assignment = next(
+                (
+                    window
+                    for window in assignment_windows[slot_id]
+                    if window[1] <= occurrence.original_start_at
+                    and (window[2] is None or window[2] > occurrence.original_start_at)
+                ),
+                None,
+            )
+            if assignment is None:
+                continue
+            assignment_role = assignment[0]
             # Sessions from today onward stay in the regular attendance screen;
             # this picker is only the short backfill window.
             if occurrence.original_start_at >= today_start:
@@ -351,14 +394,29 @@ async def list_manual_attendance_targets(
                     and (
                         item.effective_to is None or item.effective_to > occurrence_date
                     )
+                    and item.assignment_role == assignment_role
                 ),
                 None,
             )
+            if rate is None:
+                rate = next(
+                    (
+                        item
+                        for item in rates
+                        if item.effective_from <= occurrence_date
+                        and (
+                            item.effective_to is None
+                            or item.effective_to > occurrence_date
+                        )
+                        and item.assignment_role is None
+                    ),
+                    None,
+                )
             targets.append(
                 ManualAttendanceTarget(
                     occurrence_id=attendance_occurrence_id(occurrence.key),
                     class_name=class_name,
-                    role=assigned_roles[slot_id],
+                    role=assignment_role,
                     occurrence_start_at=occurrence.original_start_at,
                     occurrence_end_at=occurrence.original_end_at,
                     kind=occurrence.kind,
@@ -435,13 +493,13 @@ async def manual_check_in(
         )
 
     start_local = occurrence.original_start_at.astimezone(BUSINESS_TIMEZONE)
-    rate = await _resolve_rate(db, str(staff_id), start_local.date())
+    role = "TEACHER" if occurrence.staff_role == "TEACHER" else "ASSISTANT"
+    rate = await _resolve_rate(db, str(staff_id), start_local.date(), role=role)
     if rate is None:
         raise HTTPException(
             status_code=409,
             detail="Chưa có mức lương hiệu lực cho nhân sự này tại ngày buổi học",
         )
-    role = "TEACHER" if occurrence.staff_role == "TEACHER" else "ASSISTANT"
     now = datetime.now(timezone.utc)
     entry = StaffAttendanceEntry(
         staff_id=str(staff_id),

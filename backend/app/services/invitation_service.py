@@ -69,7 +69,7 @@ async def create_invitation(
         if not staff_id:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail="Lời mời tài khoản giáo viên bắt buộc phải chọn nhân sự.",
+                detail="Lời mời tài khoản chấm công bắt buộc phải chọn nhân sự.",
             )
         await db.execute(
             text("select pg_advisory_xact_lock(hashtextextended(:staff_id, 0))"),
@@ -87,10 +87,10 @@ async def create_invitation(
             {"staff_id": str(staff_id), "workspace_id": str(workspace_id)},
         )
         staff = await db.get(StaffMember, staff_id)
-        if staff is None or not staff.is_active or staff.staff_type != "TEACHER":
+        if staff is None or not staff.is_active:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail="Nhân sự giáo viên không hợp lệ hoặc đã ngừng hoạt động.",
+                detail="Nhân sự không hợp lệ hoặc đã ngừng hoạt động.",
             )
         # R8: only staff profiles with a recorded email can be invited to log
         # in; the invited email must match the profile email exactly.  Staff
@@ -98,12 +98,12 @@ async def create_invitation(
         if not staff.email:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail="Hồ sơ giáo viên chưa có email; hãy cập nhật email trước khi mời.",
+                detail="Hồ sơ nhân sự chưa có email; hãy cập nhật email trước khi mời.",
             )
         if staff.email.strip().lower() != normalized_email:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail="Email mời phải khớp với email đã lưu trong hồ sơ giáo viên.",
+                detail="Email mời phải khớp với email đã lưu trong hồ sơ nhân sự.",
             )
         # Check if staff is already linked
         existing_link = await db.scalar(

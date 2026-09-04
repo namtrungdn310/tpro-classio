@@ -2,6 +2,7 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.class_lifecycle import operational_class_predicate
+from app.core.enrollment_lifecycle import enrollment_current_or_scheduled_predicate
 from app.models.enrollment import Enrollment
 from app.models.staff import StaffMember
 from app.models.student import Student
@@ -39,7 +40,7 @@ async def lookup_contact_suggestion(
         hidden_field = f"{lookup.owner}_contact"
         has_current_class = Student.enrollments.any(
             and_(
-                Enrollment.status == "active",
+                enrollment_current_or_scheduled_predicate(),
                 Enrollment.class_.has(operational_class_predicate()),
             )
         )

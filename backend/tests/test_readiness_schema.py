@@ -3,12 +3,26 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.main import (
+    _REQUIRED_SCHEMA_COLUMNS,
+    _REQUIRED_SCHEMA_FUNCTIONS,
     _REQUIRED_SCHEMA_RELATIONS,
     _REQUIRED_SCHEMA_TRIGGERS,
     _readiness_result,
     missing_required_schema_features,
     missing_required_schema_relations,
 )
+
+
+def test_schema_readiness_requires_contextual_staffing_migration() -> None:
+    assert "class_schedule_slot_staff_revisions" in _REQUIRED_SCHEMA_RELATIONS
+    assert "class_teachers:class_teachers_validate_staff" in _REQUIRED_SCHEMA_TRIGGERS
+    assert (
+        "class_schedule_slot_staff:class_schedule_slot_staff_validate_assignment"
+        in _REQUIRED_SCHEMA_TRIGGERS
+    )
+    assert "public.contextual_class_staff_version()" in _REQUIRED_SCHEMA_FUNCTIONS
+    assert "class_teachers:role" in _REQUIRED_SCHEMA_COLUMNS
+    assert "staff_compensation_rates:assignment_role" in _REQUIRED_SCHEMA_COLUMNS
 
 
 @pytest.mark.asyncio

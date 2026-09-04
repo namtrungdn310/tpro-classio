@@ -1,9 +1,8 @@
 """R6-D03/V03 — lifecycle cutover integration tests (disposable DB).
 
-Run with RUN_DB_INTEGRATION=1. Proves: a class completes at its planned end
-even with pending make-ups; completing/cancelling never deactivates student
-profiles; suspension/make-up never changes class end date; FINALIZING and
-operational_end_date are absent from runtime responses.
+Run with RUN_DB_INTEGRATION=1. Proves: a legacy planned end no longer closes a
+class; cancellation never deactivates student profiles; pending make-ups and
+history remain readable; the runtime exposes the open-ended lifecycle status.
 """
 
 import os
@@ -86,7 +85,7 @@ def _class_payload(teacher_id: str) -> ClassCreate:
     )
 
 
-async def test_class_completes_with_pending_makeup_and_keeps_history() -> None:
+async def test_legacy_end_date_does_not_complete_class_or_hide_history() -> None:
     async with AsyncSessionLocal() as db:
         teacher_id = str(uuid4())
         await _make_staff(db, teacher_id, "GV LC CUTOVER", "TEACHER")
@@ -192,24 +191,27 @@ async def test_class_completes_with_pending_makeup_and_keeps_history() -> None:
         )
         await db.commit()
 
-        # Worker hoàn tất lớp dù còn pending makeup.
+        # Compatibility worker is deliberately a no-op: an old end_date must
+        # never stop a class after the open-ended lifecycle cutover.
         async with AsyncSessionLocal() as worker:
             completed = await complete_expired_classes(worker)
-            assert completed >= 1
+            assert completed == 0
             await worker.commit()
 
         async with AsyncSessionLocal() as check:
             row = (
                 await check.execute(
-                    text(
-                        "select is_active, completed_at from public.classes "
-                        "where id = :id"
-                    ),
+                        text(
+                            "select is_active, completed_at, stopped_at "
+                            "from public.classes "
+                            "where id = :id"
+                        ),
                     {"id": class_id},
                 )
             ).one()
-            assert row.is_active is False
-            assert row.completed_at is not None
+            assert row.is_active is True
+            assert row.completed_at is None
+            assert row.stopped_at is None
             # Profile vẫn active — không auto-deactivate.
             profile = (
                 await check.execute(
@@ -227,7 +229,7 @@ async def test_class_completes_with_pending_makeup_and_keeps_history() -> None:
             # Response không còn operational_end_date / FINALIZING.
             response = await get_class_response(check, UUID(class_id))
             assert response is not None
-            assert response.effective_status == "COMPLETED"
+            assert response.effective_status == "ACTIVE"
             assert "operational_end_date" not in response.model_dump()
 
 
@@ -299,8 +301,9 @@ async def test_effective_status_never_returns_finalizing() -> None:
         is_active=True,
         cancelled_at=None,
         completed_at=None,
+        stopped_at=None,
         start_date=date(2026, 1, 1),
         end_date=date(2026, 6, 30),
     )
-    assert effective_class_status(class_, today=date(2026, 7, 1)) == "COMPLETED"
+    assert effective_class_status(class_, today=date(2026, 7, 1)) == "ACTIVE"
     assert effective_class_status(class_, today=date(2026, 6, 30)) == "ACTIVE"

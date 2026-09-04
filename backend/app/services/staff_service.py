@@ -36,10 +36,12 @@ def _staff_projection_statement():
         select(
             ClassTeacher.teacher_id.label("teacher_id"),
             ClassTeacher.class_id.label("class_id"),
+            ClassTeacher.role.label("assignment_role"),
         ),
         select(
             Class.teacher_id.label("teacher_id"),
             Class.id.label("class_id"),
+            literal("TEACHER").label("assignment_role"),
         ).where(Class.teacher_id.is_not(None)),
     ).subquery("staff_class_assignments")
     from app.core.business_time import business_today
@@ -51,6 +53,7 @@ def _staff_projection_statement():
             StaffCompensationRate.rate_amount.label("rate_amount"),
         )
         .where(
+            StaffCompensationRate.assignment_role.is_(None),
             StaffCompensationRate.effective_from <= business_today(),
             (StaffCompensationRate.effective_to.is_(None))
             | (StaffCompensationRate.effective_to > business_today()),
@@ -128,6 +131,7 @@ def _staff_projection_statement():
             Class.id.label("class_id"),
             Class.name.label("class_name"),
             operational_class_predicate().label("class_is_active"),
+            staff_class_assignments.c.assignment_role.label("assignment_role"),
         )
         .select_from(StaffMember)
         .outerjoin(
@@ -184,8 +188,13 @@ def _rows_to_responses(
                 id=row["class_id"],
                 name=str(row["class_name"]),
                 is_active=bool(row["class_is_active"]),
+                role=row.get("assignment_role"),
             )
-            entry["assigned_classes"].append(assigned_class)
+            if not any(
+                item.id == assigned_class.id and item.role == assigned_class.role
+                for item in entry["assigned_classes"]
+            ):
+                entry["assigned_classes"].append(assigned_class)
 
     return [StaffResponse.model_validate(entry) for entry in grouped.values()]
 
@@ -206,7 +215,6 @@ async def _query_staff_responses(
     if staff_id is not None:
         statement = statement.where(StaffMember.id == str(staff_id))
     statement = statement.order_by(
-        StaffMember.staff_type.desc(),
         StaffMember.full_name.asc(),
         StaffMember.id.asc(),
         Class.is_active.desc(),
@@ -253,10 +261,7 @@ async def get_active_teacher_options(
             StaffMember.staff_type,
             StaffMember.email,
         )
-        .where(
-            StaffMember.staff_type.in_(["TEACHER", "ASSISTANT"]),
-            StaffMember.is_active.is_(True),
-        )
+        .where(StaffMember.is_active.is_(True))
         .order_by(StaffMember.full_name.asc(), StaffMember.id.asc())
     )
     return [
@@ -309,7 +314,17 @@ async def _read_assigned_classes(
         ClassTeacher.teacher_id == staff_id
     )
     statement = (
-        select(Class.id, Class.name, Class.is_active)
+        select(
+            Class.id,
+            Class.name,
+            Class.is_active,
+            ClassTeacher.role,
+        )
+        .outerjoin(
+            ClassTeacher,
+            (ClassTeacher.class_id == Class.id)
+            & (ClassTeacher.teacher_id == staff_id),
+        )
         .where(
             or_(
                 Class.teacher_id == staff_id,
@@ -321,10 +336,23 @@ async def _read_assigned_classes(
     if active_only:
         statement = statement.where(operational_class_predicate())
     result = await db.execute(statement)
-    return [
-        StaffClassResponse(id=row.id, name=row.name, is_active=row.is_active)
-        for row in result.all()
-    ]
+    assignments: list[StaffClassResponse] = []
+    seen: set[tuple[str, str]] = set()
+    for row in result.all():
+        role = row.role or "TEACHER"
+        key = (str(row.id), role)
+        if key in seen:
+            continue
+        seen.add(key)
+        assignments.append(
+            StaffClassResponse(
+                id=row.id,
+                name=row.name,
+                is_active=row.is_active,
+                role=role,
+            )
+        )
+    return assignments
 
 
 def _class_conflict_message(prefix: str, classes: list[StaffClassResponse]) -> str:
@@ -352,6 +380,9 @@ def _read_lifecycle_conflict(detail: str) -> str | None:
         "teacher assigned to an active class cannot be deactivated": (
             "Hãy thay giáo viên cho các lớp đang hoạt động trước"
         ),
+        "assigned staff on an active class cannot be deactivated": (
+            "Hãy kết thúc phân công ở các lớp đang hoạt động trước"
+        ),
         "staff records must be archived instead of deleted": (
             "Nhân sự phải được ngừng hoạt động thay vì xoá khỏi lịch sử"
         ),
@@ -378,7 +409,6 @@ async def update_staff_member(
         return None
 
     payload = data.model_dump(exclude_unset=True)
-    next_staff_type = payload.get("staff_type", staff.staff_type)
     next_is_active = payload.get("is_active", staff.is_active)
     next_zalo_name = payload.get("zalo_name", staff.zalo_name)
     next_phone = payload.get("phone", staff.phone)
@@ -389,21 +419,7 @@ async def update_staff_member(
         owner="nhân sự",
     )
 
-    if staff.staff_type == "TEACHER" and next_staff_type != "TEACHER":
-        assignments = await _read_assigned_classes(
-            db,
-            str(staff.id),
-            active_only=False,
-        )
-        if assignments:
-            raise StaffConflictError(
-                _class_conflict_message(
-                    "Không thể đổi loại vì nhân sự vẫn được gắn với lớp",
-                    assignments,
-                )
-            )
-
-    if staff.is_active and not next_is_active and staff.staff_type == "TEACHER":
+    if staff.is_active and not next_is_active:
         active_assignments = await _read_assigned_classes(
             db,
             str(staff.id),
@@ -412,7 +428,7 @@ async def update_staff_member(
         if active_assignments:
             raise StaffConflictError(
                 _class_conflict_message(
-                    "Hãy thay giáo viên cho các lớp đang hoạt động trước",
+                    "Hãy kết thúc phân công ở các lớp đang hoạt động trước",
                     active_assignments,
                 )
             )
@@ -431,19 +447,18 @@ async def archive_staff_member(db: AsyncSession, id: UUID) -> StaffMember | None
     if not staff.is_active:
         return staff
 
-    if staff.staff_type == "TEACHER":
-        active_assignments = await _read_assigned_classes(
-            db,
-            str(staff.id),
-            active_only=True,
-        )
-        if active_assignments:
-            raise StaffConflictError(
-                _class_conflict_message(
-                    "Hãy thay giáo viên cho các lớp đang hoạt động trước",
-                    active_assignments,
-                )
+    active_assignments = await _read_assigned_classes(
+        db,
+        str(staff.id),
+        active_only=True,
+    )
+    if active_assignments:
+        raise StaffConflictError(
+            _class_conflict_message(
+                "Hãy kết thúc phân công ở các lớp đang hoạt động trước",
+                active_assignments,
             )
+        )
 
     staff.is_active = False
     await _commit_staff_changes(db)

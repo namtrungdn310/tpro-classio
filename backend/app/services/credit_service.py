@@ -70,14 +70,29 @@ async def _first_unprotected_renewal_cycle(
     # deterministic target cycle.  This preserves the monthly/calendar rule
     # and the exact 4-week (= 28-day) package rule.
     class_ = enrollment.class_
+    revision = enrollment.__dict__.get("current_billing_revision")
+    billing_type = (
+        revision.billing_type_snapshot
+        if revision is not None
+        else getattr(class_, "type", "MONTHLY")
+    )
     cycle_weeks = (
-        max(int(getattr(class_, "billing_cycle_weeks", 1) or 1), 1)
-        if getattr(class_, "type", None) == "COURSE"
+        max(
+            int(
+                revision.billing_cycle_weeks_snapshot
+                if revision is not None
+                else getattr(class_, "billing_cycle_weeks", 1)
+                or 1
+            ),
+            1,
+        )
+        if billing_type == "COURSE"
         else None
     )
+    anchor = revision.anchor_date if revision is not None else enrollment.enrollment_date
     first_renewal_due = cycle_base_due_date(
-        enrollment.enrollment_date,
-        getattr(class_, "type", "MONTHLY"),
+        anchor,
+        billing_type,
         cycle_weeks,
         1,
     )
@@ -119,12 +134,12 @@ async def _first_unprotected_renewal_cycle(
         )
         next_cycle = max_cycle + 1
         next_start = cycle_base_due_date(
-            enrollment.enrollment_date,
-            getattr(class_, "type", "MONTHLY"),
+            anchor,
+            billing_type,
             cycle_weeks,
             next_cycle,
         )
-        if not cycle_exists(next_start, getattr(class_, "end_date", None)):
+        if not cycle_exists(next_start, getattr(class_, "stopped_on", None)):
             return None
         # Move the generation window forward.  The next loop re-reads the
         # authoritative rows, so retries remain idempotent.
@@ -147,11 +162,11 @@ async def grant_whole_class_credit(
     events: list[EnrollmentServiceCreditEvent] = []
     stale_fee_ids: list[str] = []
     for enrollment in enrollments:
-        if enrollment.status != "active":
+        if enrollment.status == "cancelled":
             continue
         overlap = membership_overlap_days(
             enrollment.enrollment_date,
-            (enrollment.ended_at.date() if enrollment.ended_at is not None else None),
+            enrollment.ended_on,
             suspended_from,
             resume_on,
         )

@@ -128,6 +128,7 @@ class PasswordResetOtpResponse(BaseModel):
 
 class UserMe(BaseModel):
     id: str
+    workspace_id: str
     email: str
     role: str
     username: str | None = None

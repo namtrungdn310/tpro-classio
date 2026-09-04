@@ -4,23 +4,24 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.core.business_time import business_today
-
 ClassType = Literal["MONTHLY", "COURSE"]
 ClassIdentityScheme = Literal["LEGACY", "ACADEMIC_YEAR", "INTAKE"]
 ClassCategory = Literal["GENERAL", "SPECIALIZED", "IELTS", "CUSTOM"]
 ClassGradeMode = Literal["GRADE", "NONE"]
 ClassEducationLevel = Literal["PRIMARY", "MIDDLE", "HIGH"]
 ClassEffectiveStatus = Literal[
-    "LEGACY", "SCHEDULED", "ACTIVE", "COMPLETED", "CANCELLED"
+    "LEGACY", "SCHEDULED", "ACTIVE", "STOPPED", "CANCELLED"
 ]
 ClassNextFeeDueState = Literal["OVERDUE", "UPCOMING", "NONE"]
+ClassStaffingStatus = Literal["UNASSIGNED", "PARTIAL", "READY"]
 ScheduleAvailabilityScope = Literal["selected_staff", "all_classes"]
 ClassScope = Literal[
     "operational",
     "active",
     "enrollable",
+    "assignable",
     "scheduled",
+    "stopped",
     "completed",
     "cancelled",
 ]
@@ -33,7 +34,7 @@ ClassDay = Literal[
     "Thứ 7",
     "Chủ Nhật",
 ]
-MAX_BILLING_CYCLE_WEEKS = 32_767
+MAX_BILLING_CYCLE_WEEKS = 260
 
 
 class ClassScheduleSlot(BaseModel):
@@ -154,8 +155,6 @@ class ClassCreate(ClassBase):
 
     @model_validator(mode="after")
     def validate_create_configuration(self) -> "ClassCreate":
-        if not self.teacher_ids and self.teacher_id is None:
-            raise ValueError("Vui lòng chọn ít nhất một giáo viên")
         if self.schedule is None or (
             not self.schedule.slots and not self.schedule.text.strip()
         ):
@@ -177,9 +176,6 @@ class ClassCreate(ClassBase):
             end_date=self.end_date,
             allow_legacy=False,
         )
-        today = business_today()
-        if self.start_date is not None and self.start_date < today:
-            raise ValueError("Ngày bắt đầu không được trước ngày hôm nay")
         return self
 
 
@@ -256,14 +252,6 @@ class ClassUpdate(BaseModel):
     ) -> list[UUID] | None:
         return None if value is None else list(dict.fromkeys(value))
 
-    @model_validator(mode="after")
-    def validate_explicit_teacher_selection(self) -> "ClassUpdate":
-        if "teacher_ids" in self.model_fields_set and not self.teacher_ids:
-            if "teacher_id" not in self.model_fields_set or self.teacher_id is None:
-                raise ValueError("Vui lòng chọn ít nhất một giáo viên")
-        return self
-
-
 class ClassEndDateUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -293,6 +281,107 @@ class ClassEndDatePreviewResponse(BaseModel):
     preview_expires_at: datetime
 
 
+class ClassStartDatePreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    start_date: date
+    expected_version: int = Field(ge=1)
+    default_decision: str | None = None
+    enrollment_decisions: dict[UUID, str] | None = None
+    class_patch: "ClassUpdate | None" = None
+
+
+class ClassStartDateUpdate(ClassStartDatePreviewRequest):
+    reason: str = Field(min_length=3, max_length=500)
+    expected_fingerprint: str = Field(min_length=32, max_length=64)
+    request_id: UUID | None = None
+    enrollment_overrides: list[dict[str, object]] = Field(default_factory=list)
+
+
+class ClassStartDatePreviewResponse(BaseModel):
+    previous_start_date: date
+    next_start_date: date
+    affected_enrollment_count: int
+    protected_fee_record_count: int
+    blocking_history_count: int
+    moves_earlier: bool
+    creates_retroactive_fees: Literal[False] = False
+    version: int
+    preview_fingerprint: str
+    preview_expires_at: datetime
+    can_apply: bool = True
+    blocking_reason: str | None = None
+    earliest_historical_activity_date: date | None = None
+    affected_enrollments: list[dict[str, object]] = Field(default_factory=list)
+
+
+class ClassBillingCyclePreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    billing_cycle_weeks: int = Field(ge=1, le=MAX_BILLING_CYCLE_WEEKS)
+    expected_version: int = Field(ge=1)
+
+
+class ClassBillingCycleUpdate(ClassBillingCyclePreviewRequest):
+    reason: str = Field(min_length=3, max_length=500)
+    request_id: UUID
+    expected_fingerprint: str = Field(min_length=32, max_length=64)
+
+
+class ClassBillingCycleStudentImpact(BaseModel):
+    enrollment_id: UUID
+    student_id: UUID
+    student_name: str
+    student_code: str | None = None
+    transition_on: date
+    previous_next_due_date: date
+    next_due_date: date
+    protected_fee_count: int = Field(ge=0)
+    superseded_fee_count: int = Field(ge=0)
+
+
+class ClassBillingCyclePreviewResponse(BaseModel):
+    class_id: UUID
+    previous_weeks: int = Field(ge=1, le=MAX_BILLING_CYCLE_WEEKS)
+    next_weeks: int = Field(ge=1, le=MAX_BILLING_CYCLE_WEEKS)
+    affected_enrollment_count: int = Field(ge=0)
+    retained_current_cycle_count: int = Field(ge=0)
+    superseded_fee_count: int = Field(ge=0)
+    protected_fee_count: int = Field(ge=0)
+    open_payment_request_count: int = Field(ge=0)
+    pending_review_count: int = Field(ge=0)
+    affected_periods: list[str] = Field(default_factory=list)
+    students: list[ClassBillingCycleStudentImpact] = Field(default_factory=list)
+    version: int = Field(ge=1)
+    preview_fingerprint: str
+    preview_expires_at: datetime
+
+
+class ClassStopPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_version: int = Field(ge=1)
+
+
+class ClassStopRequest(ClassStopPreviewRequest):
+    reason: str = Field(min_length=3, max_length=500)
+    request_id: UUID
+    expected_fingerprint: str = Field(min_length=32, max_length=64)
+
+
+class ClassStopPreviewResponse(BaseModel):
+    stopped_on: date
+    active_enrollment_count: int
+    future_mutable_fee_record_count: int
+    retained_fee_record_count: int
+    unresolved_makeup_count: int
+    final_fee_count: int = 0
+    final_package_review_count: int = 0
+    version: int
+    preview_fingerprint: str
+    preview_expires_at: datetime
+
+
 class ScheduleAvailabilityRequest(BaseModel):
     """Yêu cầu lịch bận dành riêng cho form lớp — payload tối thiểu, không
     chứa thông tin liên hệ nhân sự."""
@@ -301,14 +390,14 @@ class ScheduleAvailabilityRequest(BaseModel):
 
     class_id: UUID | None = None
     start_date: date
-    end_date: date
+    end_date: date | None = None
     scope: ScheduleAvailabilityScope = "selected_staff"
     teacher_ids: list[UUID] = Field(default_factory=list, max_length=10)
     assistant_ids: list[UUID] = Field(default_factory=list, max_length=10)
 
     @model_validator(mode="after")
     def validate_availability_request(self) -> "ScheduleAvailabilityRequest":
-        if self.end_date <= self.start_date:
+        if self.end_date is not None and self.end_date <= self.start_date:
             raise ValueError("Ngày kết thúc phải sau ngày bắt đầu")
         if (
             self.scope == "selected_staff"
@@ -341,6 +430,63 @@ class ScheduleAvailabilityResponse(BaseModel):
     conflicts: list[ScheduleAvailabilityConflict] = Field(default_factory=list)
 
 
+class StaffAvailabilityPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    class_id: UUID | None = None
+    expected_version: int | None = Field(default=None, ge=1)
+    start_date: date
+    end_date: date | None = None
+    schedule: ClassSchedule
+    candidate_staff_ids: list[UUID] = Field(min_length=1, max_length=100)
+
+    @field_validator("candidate_staff_ids")
+    @classmethod
+    def deduplicate_candidates(cls, value: list[UUID]) -> list[UUID]:
+        return list(dict.fromkeys(value))
+
+    @model_validator(mode="after")
+    def validate_candidate_assignments(self) -> "StaffAvailabilityPreviewRequest":
+        teacher_ids = {
+            staff_id for slot in self.schedule.slots for staff_id in slot.teacher_ids
+        }
+        assistant_ids = {
+            staff_id for slot in self.schedule.slots for staff_id in slot.assistant_ids
+        }
+        if teacher_ids & assistant_ids:
+            raise ValueError(
+                "Một nhân sự không thể vừa là giáo viên vừa là trợ giảng trong cùng lớp"
+            )
+        assigned_ids = teacher_ids | assistant_ids
+        if set(self.candidate_staff_ids) != assigned_ids:
+            raise ValueError(
+                "Danh sách nhân sự cần kiểm tra phải khớp phân công trong lịch học"
+            )
+        return self
+
+
+class StaffAvailabilityConflictResponse(BaseModel):
+    class_id: UUID
+    class_name: str
+    day: ClassDay
+    start: str
+    end: str
+    source: Literal["REGULAR", "MAKEUP"] = "REGULAR"
+
+
+class StaffAvailabilityCandidateResponse(BaseModel):
+    staff_id: UUID
+    role: Literal["TEACHER", "ASSISTANT"]
+    available: bool
+    conflicts: list[StaffAvailabilityConflictResponse] = Field(default_factory=list)
+
+
+class StaffAvailabilityPreviewResponse(BaseModel):
+    can_apply: bool
+    preview_fingerprint: str = Field(min_length=64, max_length=64)
+    candidates: list[StaffAvailabilityCandidateResponse]
+
+
 class ClassHistoryTeacherEvent(BaseModel):
     teacher_id: UUID
     teacher_name: str
@@ -354,6 +500,8 @@ class ClassHistoryEnrollment(BaseModel):
     student_id: UUID
     student_name: str
     enrollment_date: date | None
+    ended_on: date | None = None
+    effective_state: Literal["SCHEDULED", "CURRENT", "ENDED", "CANCELLED"] = "ENDED"
     ended_at: datetime | None
     status: Literal["active", "dropped", "completed", "cancelled"]
 
@@ -362,6 +510,10 @@ class ClassHistoryEvent(BaseModel):
     event_type: str
     previous_end_date: date | None
     next_end_date: date | None
+    previous_start_date: date | None = None
+    next_start_date: date | None = None
+    previous_billing_cycle_weeks: int | None = None
+    next_billing_cycle_weeks: int | None = None
     reason: str | None
     occurred_at: datetime
 
@@ -408,6 +560,9 @@ class ClassHistoryResponse(BaseModel):
     effective_status: ClassEffectiveStatus
     start_date: date | None
     end_date: date | None
+    stopped_on: date | None = None
+    stopped_at: datetime | None = None
+    stopped_reason: str | None = None
     schedule: ClassSchedule | None
     schedule_slots: list[ClassHistoryScheduleSlot] = Field(default_factory=list)
     teachers: list[ClassHistoryTeacherEvent]
@@ -422,6 +577,7 @@ class ClassScopeSummary(BaseModel):
     operational: int = Field(ge=0)
     active: int = Field(ge=0)
     scheduled: int = Field(ge=0)
+    stopped: int = Field(default=0, ge=0)
     completed: int = Field(ge=0)
     cancelled: int = Field(ge=0)
 
@@ -441,10 +597,8 @@ def validate_class_identity(
         if allow_legacy:
             return
         raise ValueError("Vui lòng chọn loại lớp")
-    if start_date is None or end_date is None:
-        raise ValueError("Vui lòng chọn ngày bắt đầu và ngày kết thúc")
-    if end_date <= start_date:
-        raise ValueError("Ngày kết thúc phải sau ngày bắt đầu")
+    if start_date is None:
+        raise ValueError("Vui lòng chọn ngày bắt đầu")
     if class_category is None:
         raise ValueError("Vui lòng chọn loại lớp")
     expected_scheme = "INTAKE" if class_category == "IELTS" else "ACADEMIC_YEAR"
@@ -500,6 +654,13 @@ class ClassActiveSuspension(BaseModel):
     reason_code: str
 
 
+class ClassStaffAssignmentResponse(BaseModel):
+    staff_id: UUID
+    full_name: str
+    role: Literal["TEACHER", "ASSISTANT"]
+    slot_ids: list[UUID] = Field(default_factory=list)
+
+
 class ClassResponse(ClassBase):
     id: UUID
     is_active: bool
@@ -516,18 +677,41 @@ class ClassResponse(ClassBase):
     primary_label: str
     secondary_label: str | None = None
     effective_status: ClassEffectiveStatus
-    can_edit_end_date: bool
+    can_edit_end_date: bool = False
+    can_edit_start_date: bool = False
+    can_stop: bool = False
     can_edit: bool = False
+    can_edit_billing_mode: bool = False
+    can_edit_package_duration: bool = False
     can_cancel: bool = False
     can_view_history: bool = True
     next_fee_due_date: date | None = None
     next_fee_due_state: ClassNextFeeDueState = "NONE"
     cancelled_at: datetime | None = None
+    stopped_on: date | None = None
+    stopped_at: datetime | None = None
+    stopped_reason: str | None = None
     unresolved_makeup_count: int = 0
     active_suspension: ClassActiveSuspension | None = None
     previous_class_id: UUID | None = None
+    staff_assignments: list[ClassStaffAssignmentResponse] = Field(default_factory=list)
+    staffing_status: ClassStaffingStatus = "UNASSIGNED"
+    unassigned_slot_ids: list[UUID] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ClassBillingCycleUpdateResponse(BaseModel):
+    revision_id: UUID
+    previous_weeks: int
+    next_weeks: int
+    affected_enrollment_count: int = Field(ge=0)
+    superseded_fee_count: int = Field(ge=0)
+    protected_fee_count: int = Field(ge=0)
+    revoked_payment_request_count: int = Field(ge=0)
+    pending_review_count: int = Field(ge=0)
+    affected_periods: list[str] = Field(default_factory=list)
+    class_: ClassResponse
 
 
 class ClassCopyTemplateResponse(BaseModel):
@@ -582,7 +766,7 @@ class ClassContinuationPreviewResponse(BaseModel):
     source_class_id: UUID
     source_version: int = Field(ge=1)
     suggested_start_date: date
-    suggested_end_date: date
+    suggested_end_date: date | None = None
     template: ClassCopyTemplateResponse
     students: list[ClassContinuationStudentCandidate]
 

@@ -98,7 +98,10 @@ async def test_archive_and_restore_preserve_code() -> None:
         restored = await restore_student(
             db,
             UUID(str(created.id)),
-            StudentRestoreRequest(reason="Gia đình quay lại"),
+            StudentRestoreRequest(
+                reason="Gia đình quay lại",
+                expected_updated_at=archived.updated_at,
+            ),
             actor_user_id=None,
         )
         assert restored is not None
@@ -115,6 +118,24 @@ async def test_server_search_by_code_exact_and_prefix() -> None:
 
         exact, _ = await get_students(db, search=code, limit=10)
         assert any(str(item.id) == str(created.id) for item in exact)
+
+        # The table displays the immutable code with separators. Searching
+        # from that copied display value must resolve the same profile.
+        formatted = f"{code[:2]}-{code[2:6]}-{code[6:10]}-{code[10:]}"
+        formatted_hits, _ = await get_students(db, search=formatted, limit=10)
+        assert any(str(item.id) == str(created.id) for item in formatted_hits)
+
+        # Allow the numeric code body as a convenience when an admin copies
+        # only the digits from a printed/exported student code.
+        numeric_hits, _ = await get_students(db, search=code[2:], limit=10)
+        assert any(str(item.id) == str(created.id) for item in numeric_hits)
+
+        # A short serial such as ``16`` is also valid when copied from the
+        # middle of the formatted code ``TP-0000-0016-6``.
+        serial = code[2:-1]
+        short_serial = serial.lstrip("0") or "0"
+        short_serial_hits, _ = await get_students(db, search=short_serial, limit=10)
+        assert any(str(item.id) == str(created.id) for item in short_serial_hits)
 
         prefix, _ = await get_students(db, search=code[:8], limit=10)
         assert any(str(item.id) == str(created.id) for item in prefix)

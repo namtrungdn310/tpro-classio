@@ -173,6 +173,15 @@ async def list_active_teacher_options(
     return await get_active_teacher_options(db)
 
 
+@router.get("/options", response_model=list[TeacherOptionResponse])
+async def list_active_staff_options(
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> list[TeacherOptionResponse]:
+    """Role-neutral alias used by the schedule-first class workflow."""
+    return await get_active_teacher_options(db)
+
+
 @router.get("", response_model=list[StaffResponse])
 async def list_staff_members(
     staff_type: StaffType | None = Query(default=None),

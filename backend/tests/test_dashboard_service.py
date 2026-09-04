@@ -36,6 +36,8 @@ class _DashboardResult:
             weekly_session_count=26,
             active_teacher_count=4,
             active_assistant_count=2,
+            active_staff_count=7,
+            unstaffed_class_count=3,
             total_amount=Decimal("32000000"),
             gross_collected_amount=Decimal("24000000"),
             refunded_amount=Decimal("1000000"),
@@ -77,6 +79,8 @@ async def test_dashboard_returns_operational_and_real_fee_metrics(monkeypatch) -
     assert session.parameters == {"today": today, "period": "2026-07"}
     assert overview.summary.active_student_count == 32
     assert overview.summary.active_assistant_count == 2
+    assert overview.summary.active_staff_count == 7
+    assert overview.summary.unstaffed_class_count == 3
     assert overview.fees.total_amount == 32_000_000
     assert overview.fees.gross_collected_amount == 24_000_000
     assert overview.fees.refunded_amount == 1_000_000

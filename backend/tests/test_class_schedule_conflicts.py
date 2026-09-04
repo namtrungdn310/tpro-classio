@@ -5,7 +5,10 @@ from uuid import uuid4
 import pytest
 
 from app.models.staff import StaffMember
-from app.services.class_conflict_service import _validate_staff_schedule_availability
+from app.services.class_conflict_service import (
+    _load_overlapping_class_memberships,
+    _validate_staff_schedule_availability,
+)
 from app.services.class_service import _date_ranges_overlap
 
 
@@ -53,10 +56,10 @@ def make_conflict_row(
     class_id: str,
     class_name: str,
     schedule: dict | None,
-    member_id: str,
+    member_id: str | None,
     start_date: date | None = None,
     end_date: date | None = None,
-    member_role: str = "TEACHER",
+    member_role: str | None = "TEACHER",
     class_category: str | None = None,
     grade_level: int | None = None,
 ) -> tuple:
@@ -139,6 +142,54 @@ def call_validator(
         start_date=start_date,
         end_date=end_date,
     )
+
+
+@pytest.mark.asyncio
+async def test_candidate_membership_merges_slot_staff_before_staff_filtering() -> None:
+    """Legacy slot assignments must still select the occupied class.
+
+    This protects selected-staff availability when class_teachers has not yet
+    been repaired: filtering only by the junction would silently miss the
+    conflict before the later membership merge can run.
+    """
+    assistant = make_staff("ASSISTANT")
+    other_class_id = str(uuid4())
+    db = AsyncMock()
+    db.execute.side_effect = [
+        QueryResult(
+            rows=[
+                make_conflict_row(
+                    other_class_id,
+                    "Lớp dữ liệu cũ",
+                    {
+                        "slots": [
+                            {
+                                "day": "Thứ 3",
+                                "start": "18:00",
+                                "end": "19:30",
+                                "assistant_ids": [assistant.id],
+                            }
+                        ]
+                    },
+                    None,
+                    member_role=None,
+                )
+            ]
+        ),
+        QueryResult(rows=[(other_class_id, assistant.id, "ASSISTANT")]),
+    ]
+
+    memberships = await _load_overlapping_class_memberships(
+        db,
+        class_id=str(uuid4()),
+        requested_ids=[assistant.id],
+    )
+
+    assert memberships[other_class_id]["members"] == [(assistant.id, "ASSISTANT")]
+    candidate_sql = str(db.execute.await_args_list[0].args[0])
+    assert "UNION" in candidate_sql
+    assert "class_teachers" in candidate_sql
+    assert "class_schedule_slot_staff" in candidate_sql
 
 
 @pytest.mark.asyncio
@@ -378,7 +429,7 @@ async def test_accepts_same_weekly_slot_when_class_date_ranges_do_not_overlap() 
     # Date overlap được lọc ngay trong SQL (không tải toàn bộ active classes).
     query = db.execute.await_args_list[1].args[0]
     compiled = str(query)
-    assert "end_date" in compiled
+    assert "stopped_on" in compiled
     assert "start_date" in compiled
     assert "IS NULL" in compiled
 

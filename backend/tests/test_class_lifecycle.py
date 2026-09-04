@@ -16,12 +16,13 @@ def make_class(**overrides):
         "end_date": date(2027, 5, 31),
         "cancelled_at": None,
         "completed_at": None,
+        "stopped_at": None,
     }
     values.update(overrides)
     return SimpleNamespace(**values)
 
 
-def test_structured_class_visibility_uses_inclusive_final_teaching_day() -> None:
+def test_structured_class_remains_active_after_legacy_planned_end() -> None:
     class_ = make_class()
 
     assert effective_class_status(class_, today=date(2026, 7, 31)) == "SCHEDULED"
@@ -31,8 +32,8 @@ def test_structured_class_visibility_uses_inclusive_final_teaching_day() -> None
     assert effective_class_status(class_, today=date(2027, 5, 31)) == "ACTIVE"
     assert is_active_class_today(class_, today=date(2027, 5, 31))
 
-    assert effective_class_status(class_, today=date(2027, 6, 1)) == "COMPLETED"
-    assert not is_operational_class(class_, today=date(2027, 6, 1))
+    assert effective_class_status(class_, today=date(2027, 6, 1)) == "ACTIVE"
+    assert is_operational_class(class_, today=date(2027, 6, 1))
 
 
 def test_legacy_class_stays_operational_until_explicitly_configured() -> None:
@@ -47,7 +48,7 @@ def test_legacy_class_stays_operational_until_explicitly_configured() -> None:
     assert is_active_class_today(class_, today=date(2030, 1, 1))
 
 
-def test_cancelled_and_completed_markers_take_precedence() -> None:
+def test_cancelled_and_stopped_markers_take_precedence() -> None:
     assert (
         effective_class_status(
             make_class(cancelled_at=object(), completed_at=object()),
@@ -60,19 +61,14 @@ def test_cancelled_and_completed_markers_take_precedence() -> None:
             make_class(completed_at=object()),
             today=date(2026, 9, 1),
         )
-        == "COMPLETED"
+        == "STOPPED"
     )
 
 
-def test_pending_makeups_do_not_extend_status_after_planned_end() -> None:
-    """R6: make-up obligations never change lifecycle status; the class is
-    COMPLETED at its planned end and pending make-ups stay in history."""
-    class_ = make_class()
+def test_explicit_stop_closes_open_ended_class() -> None:
+    class_ = make_class(stopped_at=object(), is_active=False)
 
-    assert effective_class_status(class_, today=date(2027, 6, 1)) == "COMPLETED"
-    # Không còn tham số unresolved_makeups trong contract lifecycle.
-    assert "unresolved_makeups" not in effective_class_status.__annotations__
-    # COMPLETED không thuộc operational scope.
+    assert effective_class_status(class_, today=date(2027, 6, 1)) == "STOPPED"
     assert is_operational_class(class_, today=date(2027, 6, 1)) is False
 
 

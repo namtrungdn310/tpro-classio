@@ -8,6 +8,8 @@ class DashboardOperationsSummary(BaseModel):
     weekly_session_count: int
     active_teacher_count: int
     active_assistant_count: int
+    active_staff_count: int = 0
+    unstaffed_class_count: int = 0
 
 
 class DashboardFeeSummary(BaseModel):

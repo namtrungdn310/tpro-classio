@@ -21,6 +21,7 @@ class StaffCompensationRateCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     rate_amount: int = Field(gt=0, le=999_999_999)
+    assignment_role: StaffType | None = None
     effective_from: date
     effective_to: date | None = None
     reason: str | None = Field(default=None, max_length=500)
@@ -37,6 +38,7 @@ class StaffCompensationRateResponse(BaseModel):
 
     id: UUID
     rate_amount: int
+    assignment_role: StaffType | None = None
     effective_from: date
     effective_to: date | None
     version: int
@@ -125,7 +127,8 @@ class StaffBase(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     full_name: str = Field(min_length=1, max_length=255)
-    staff_type: StaffType
+    # Deprecated compatibility field. Roles are selected per class.
+    staff_type: StaffType | None = None
     zalo_name: str | None = Field(default=None, max_length=100)
     phone: str | None = Field(default=None, max_length=32)
     email: str | None = Field(default=None, max_length=320)
@@ -179,7 +182,7 @@ class StaffUpdate(BaseModel):
     @classmethod
     def reject_null_for_required_columns(cls, value: object) -> object:
         if isinstance(value, dict):
-            required_columns = {"full_name", "staff_type", "is_active"}
+            required_columns = {"full_name", "is_active"}
             null_fields = sorted(
                 field
                 for field in required_columns
@@ -211,6 +214,7 @@ class StaffClassResponse(BaseModel):
     id: UUID
     name: str
     is_active: bool
+    role: StaffType | None = None
 
 
 class StaffResponse(StaffBase):
@@ -229,7 +233,7 @@ class StaffResponse(StaffBase):
 class TeacherOptionResponse(BaseModel):
     id: UUID
     full_name: str
-    staff_type: Literal["TEACHER", "ASSISTANT"]
+    staff_type: Literal["TEACHER", "ASSISTANT"] | None = None
     email: str | None = None
 
 

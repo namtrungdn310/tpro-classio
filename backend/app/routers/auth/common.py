@@ -575,6 +575,7 @@ async def issue_internal_token(
     access_token = create_access_token(
         {
             "sub": str(profile.id),
+            "workspace_id": str(profile.workspace_id),
             "role": profile.role,
             "email": email,
             "username": profile.username,

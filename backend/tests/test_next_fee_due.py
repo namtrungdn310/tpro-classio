@@ -226,8 +226,9 @@ def test_four_week_package_deferral_uses_28_day_anchor_not_calendar_month():
     assert due_date == date(2026, 9, 21)
 
 
-def test_next_due_date_never_exceeds_class_end_date():
+def test_next_due_date_never_exceeds_explicit_stop_date():
     class_ = make_class(end_date=date(2026, 7, 20))
+    class_.stopped_on = date(2026, 7, 20)
     enrollment = make_enrollment(
         class_,
         date(2026, 6, 6),

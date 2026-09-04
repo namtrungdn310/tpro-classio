@@ -7,10 +7,12 @@ every command rechecks inside its transaction.
 """
 
 from datetime import date, datetime, timedelta
+import hashlib
+import json
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, union
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.business_time import BUSINESS_TIMEZONE
@@ -18,6 +20,10 @@ from app.core.occurrence import (
     INDEX_TO_WEEKDAY,
 )
 from app.models.class_ import Class
+from app.models.class_schedule_slot import (
+    ClassScheduleSlot as ClassScheduleSlotRecord,
+    ClassScheduleSlotStaff,
+)
 from app.models.class_teacher import ClassTeacher
 from app.models.makeup import ClassSessionException, ClassSessionStaffSnapshot
 from app.models.staff import StaffMember
@@ -25,6 +31,10 @@ from app.schemas.class_ import (
     ClassSchedule,
     ClassScheduleSlot,
     ScheduleAvailabilityConflict,
+    StaffAvailabilityCandidateResponse,
+    StaffAvailabilityConflictResponse,
+    StaffAvailabilityPreviewRequest,
+    StaffAvailabilityPreviewResponse,
 )
 from app.services.schedule_slot_service import expand_class_occurrences
 from app.schemas.makeup import ConflictDetail, MakeupDomainError
@@ -111,11 +121,13 @@ async def _load_overlapping_class_memberships(
     """Nạp mọi lớp HOẠT ĐỘNG có ít nhất một nhân sự thuộc tập yêu cầu và khoảng
     ngày giao với khoảng yêu cầu. Loại completed/cancelled và class đang sửa
     ngay trong SQL; membership kèm role nhân sự được LEFT JOIN trong cùng một
-    round-trip (không cần query membership riêng)."""
+    round-trip. Candidate selection and effective membership both merge the
+    class-level junction with canonical per-slot assignments so legacy drift
+    can neither hide a conflict nor produce a false invalid-data error."""
     date_filters = []
     if requested_start_date is not None:
         date_filters.append(
-            or_(Class.end_date.is_(None), Class.end_date >= requested_start_date)
+            or_(Class.stopped_on.is_(None), Class.stopped_on >= requested_start_date)
         )
     if requested_end_date is not None:
         date_filters.append(
@@ -132,9 +144,9 @@ async def _load_overlapping_class_memberships(
             Class.grade_level,
             Class.schedule,
             Class.start_date,
-            Class.end_date,
+            Class.stopped_on,
             ClassTeacher.teacher_id.label("member_id"),
-            StaffMember.staff_type.label("member_role"),
+            ClassTeacher.role.label("member_role"),
         )
         .outerjoin(ClassTeacher, ClassTeacher.class_id == Class.id)
         .outerjoin(StaffMember, StaffMember.id == ClassTeacher.teacher_id)
@@ -142,18 +154,27 @@ async def _load_overlapping_class_memberships(
             Class.is_active.is_(True),
             Class.cancelled_at.is_(None),
             Class.completed_at.is_(None),
+            Class.stopped_at.is_(None),
             *date_filters,
         )
     )
     if requested_ids is not None:
-        # Giữ toàn bộ lớp có ít nhất một nhân sự yêu cầu trong junction, nhưng
-        # vẫn trả đủ membership của lớp đó (dùng EXISTS, không lọc member).
-        statement = statement.where(
-            Class.id.in_(
-                select(ClassTeacher.class_id).where(
-                    ClassTeacher.teacher_id.in_(requested_ids)
-                )
+        # Keep a class when the requested staff appears in either source.  The
+        # slot source is essential for legacy rows whose canonical schedule was
+        # written before the class-level junction was repaired.
+        member_class_ids = select(ClassTeacher.class_id).where(
+            ClassTeacher.teacher_id.in_(requested_ids)
+        )
+        slot_class_ids = (
+            select(ClassScheduleSlotRecord.class_id)
+            .join(
+                ClassScheduleSlotStaff,
+                ClassScheduleSlotStaff.slot_id == ClassScheduleSlotRecord.id,
             )
+            .where(ClassScheduleSlotStaff.staff_id.in_(requested_ids))
+        )
+        statement = statement.where(
+            Class.id.in_(union(member_class_ids, slot_class_ids))
         )
 
     result = await db.execute(statement)
@@ -185,6 +206,31 @@ async def _load_overlapping_class_memberships(
         )
         if member_id is not None and member_role is not None:
             entry["members"].append((str(member_id), member_role))
+
+    if rows_by_class:
+        slot_staff_statement = (
+            select(
+                ClassScheduleSlotRecord.class_id,
+                ClassScheduleSlotStaff.staff_id,
+                ClassScheduleSlotStaff.role,
+            )
+            .join(
+                ClassScheduleSlotRecord,
+                ClassScheduleSlotRecord.id == ClassScheduleSlotStaff.slot_id,
+            )
+            .join(StaffMember, StaffMember.id == ClassScheduleSlotStaff.staff_id)
+            .where(
+                ClassScheduleSlotRecord.class_id.in_(list(rows_by_class.keys())),
+            )
+        )
+        slot_staff_result = await db.execute(slot_staff_statement)
+        for class_id_val, staff_id_val, assignment_role in slot_staff_result.all():
+            key = str(class_id_val)
+            if key in rows_by_class:
+                member_pair = (str(staff_id_val), assignment_role)
+                if member_pair not in rows_by_class[key]["members"]:
+                    rows_by_class[key]["members"].append(member_pair)
+
     return rows_by_class
 
 
@@ -263,6 +309,8 @@ def _slot_models_from_relational_projection(
 async def _resolve_class_schedule_slots_bulk(
     db: AsyncSession,
     entries: list[dict],
+    *,
+    effective_at: date | None = None,
 ) -> dict[str, list[ClassScheduleSlot] | None]:
     """Resolve schedules for all conflict candidates without N+1 queries.
 
@@ -276,7 +324,11 @@ async def _resolve_class_schedule_slots_bulk(
     from app.services.schedule_slot_service import load_class_slots_bulk
 
     class_ids = [entry["id"] for entry in entries]
-    relational_by_class = await load_class_slots_bulk(db, class_ids)
+    relational_by_class = await load_class_slots_bulk(
+        db,
+        class_ids,
+        effective_at=effective_at,
+    )
     resolved: dict[str, list[ClassScheduleSlot] | None] = {}
     for entry in entries:
         class_id = entry["id"]
@@ -360,7 +412,11 @@ async def _collect_schedule_conflicts(
 
     conflicts: list[dict] = []
     entries = list(rows_by_class.values())
-    slots_by_class = await _resolve_class_schedule_slots_bulk(db, entries)
+    slots_by_class = await _resolve_class_schedule_slots_bulk(
+        db,
+        entries,
+        effective_at=start_date,
+    )
     for entry in entries:
         existing_slots = slots_by_class.get(entry["id"])
         if existing_slots is None:
@@ -397,9 +453,11 @@ async def _collect_schedule_conflicts(
                 )
                 if not overlaps:
                     continue
-                teacher_conflict = sorted(
-                    set(effective_teachers) & set(requested_teachers)
-                )
+                # Availability belongs to a person, not to their contextual
+                # role. A teacher in the draft is still busy when they assist
+                # another class, and vice versa.
+                occupied_staff = set(effective_teachers) | set(effective_assistants)
+                teacher_conflict = sorted(occupied_staff & set(requested_teachers))
                 if teacher_conflict:
                     conflicts.append(
                         {
@@ -412,9 +470,7 @@ async def _collect_schedule_conflicts(
                             "staff_ids": teacher_conflict,
                         }
                     )
-                assistant_conflict = sorted(
-                    set(effective_assistants) & set(requested_assistants)
-                )
+                assistant_conflict = sorted(occupied_staff & set(requested_assistants))
                 if assistant_conflict:
                     conflicts.append(
                         {
@@ -436,7 +492,10 @@ async def _lock_and_validate_staff(
     teacher_ids: list[str],
     assistant_ids: list[str],
 ) -> tuple[dict[str, StaffMember], dict[str, StaffMember]]:
-    """Khóa staff row theo ID ổn định (tránh deadlock) và kiểm tra role + active."""
+    """Khóa staff row theo ID ổn định và kiểm tra active.
+
+    Role is validated on the class assignment, never on the staff profile.
+    """
     all_ids = list(dict.fromkeys([*teacher_ids, *assistant_ids]))
     result = await db.execute(
         select(StaffMember)
@@ -451,12 +510,6 @@ async def _lock_and_validate_staff(
     inactive = [staff_id for staff_id in all_ids if not staff_by_id[staff_id].is_active]
     if inactive:
         raise ValueError("Nhân sự đã ngừng hoạt động không thể được phân công")
-    for teacher_id in teacher_ids:
-        if staff_by_id[teacher_id].staff_type != "TEACHER":
-            raise ValueError("Giáo viên không hợp lệ hoặc đã ngừng hoạt động")
-    for assistant_id in assistant_ids:
-        if staff_by_id[assistant_id].staff_type != "ASSISTANT":
-            raise ValueError("Trợ giảng không hợp lệ hoặc đã ngừng hoạt động")
     return (
         {staff_id: staff_by_id[staff_id] for staff_id in teacher_ids},
         {staff_id: staff_by_id[staff_id] for staff_id in assistant_ids},
@@ -497,14 +550,8 @@ async def validate_availability_request_staff(
     missing = [staff_id for staff_id in all_ids if staff_id not in staff_by_id]
     if missing:
         raise ValueError("Nhân sự không hợp lệ hoặc đã ngừng hoạt động")
-    for teacher_id in teacher_ids:
-        staff = staff_by_id[teacher_id]
-        if staff.staff_type != "TEACHER" or not staff.is_active:
-            raise ValueError("Giáo viên không hợp lệ hoặc đã ngừng hoạt động")
-    for assistant_id in assistant_ids:
-        staff = staff_by_id[assistant_id]
-        if staff.staff_type != "ASSISTANT" or not staff.is_active:
-            raise ValueError("Trợ giảng không hợp lệ hoặc đã ngừng hoạt động")
+    if any(not staff.is_active for staff in staff_by_id.values()):
+        raise ValueError("Nhân sự đã ngừng hoạt động không thể được phân công")
 
 
 async def get_class_schedule_availability(
@@ -514,7 +561,7 @@ async def get_class_schedule_availability(
     teacher_ids: list[str],
     assistant_ids: list[str],
     start_date: date,
-    end_date: date,
+    end_date: date | None,
     scope: str = "selected_staff",
 ) -> list[ScheduleAvailabilityConflict]:
     """Return occupied recurring class slots in the requested date range.
@@ -542,7 +589,11 @@ async def get_class_schedule_availability(
 
     blocks: list[ScheduleAvailabilityConflict] = []
     entries = list(rows_by_class.values())
-    slots_by_class = await _resolve_class_schedule_slots_bulk(db, entries)
+    slots_by_class = await _resolve_class_schedule_slots_bulk(
+        db,
+        entries,
+        effective_at=start_date,
+    )
     for entry in entries:
         existing_slots = slots_by_class.get(entry["id"])
         if existing_slots is None:
@@ -604,6 +655,110 @@ async def get_class_schedule_availability(
     return blocks
 
 
+async def preview_staff_availability(
+    db: AsyncSession,
+    payload: StaffAvailabilityPreviewRequest,
+) -> StaffAvailabilityPreviewResponse:
+    """Preview selected staff against a schedule-first class draft."""
+    class_id = str(payload.class_id) if payload.class_id else ""
+    class_version: int | None = None
+    if payload.class_id is not None:
+        class_ = await db.get(Class, class_id)
+        if class_ is None:
+            raise ValueError("Không tìm thấy lớp học đang chỉnh sửa")
+        class_version = int(class_.version)
+        if (
+            payload.expected_version is not None
+            and payload.expected_version != class_version
+        ):
+            raise ValueError("CLASS_CHANGED: Lớp vừa được cập nhật, vui lòng tải lại")
+
+    teacher_ids = list(
+        dict.fromkeys(
+            str(staff_id)
+            for slot in payload.schedule.slots
+            for staff_id in slot.teacher_ids
+        )
+    )
+    assistant_ids = list(
+        dict.fromkeys(
+            str(staff_id)
+            for slot in payload.schedule.slots
+            for staff_id in slot.assistant_ids
+        )
+    )
+    candidates = sorted({*teacher_ids, *assistant_ids})
+    await validate_availability_request_staff(
+        db,
+        teacher_ids=teacher_ids,
+        assistant_ids=assistant_ids,
+        class_id=class_id or None,
+        scope="selected_staff",
+    )
+    conflicts = await _collect_schedule_conflicts(
+        db,
+        class_id=class_id,
+        teacher_ids=teacher_ids,
+        assistant_ids=assistant_ids,
+        schedule=payload.schedule,
+        start_date=payload.start_date,
+        end_date=payload.end_date,
+    )
+    makeup_conflicts = await _collect_recurring_against_makeup_conflicts(
+        db,
+        class_id=class_id,
+        schedule=payload.schedule,
+        start_date=payload.start_date,
+        end_date=payload.end_date,
+    )
+    for item in makeup_conflicts:
+        item["source"] = "MAKEUP"
+    conflicts.extend(makeup_conflicts)
+
+    by_staff: dict[str, list[StaffAvailabilityConflictResponse]] = {
+        staff_id: [] for staff_id in candidates
+    }
+    for item in conflicts:
+        detail = StaffAvailabilityConflictResponse(
+            class_id=UUID(item["class_id"]),
+            class_name=item["class_name"],
+            day=item["day"],
+            start=item["start"],
+            end=item["end"],
+            source=item.get("source", "REGULAR"),
+        )
+        for staff_id in item["staff_ids"]:
+            if staff_id in by_staff and detail not in by_staff[staff_id]:
+                by_staff[staff_id].append(detail)
+
+    candidate_responses = [
+        StaffAvailabilityCandidateResponse(
+            staff_id=UUID(staff_id),
+            role="TEACHER" if staff_id in teacher_ids else "ASSISTANT",
+            available=not by_staff[staff_id],
+            conflicts=by_staff[staff_id],
+        )
+        for staff_id in candidates
+    ]
+    hash_payload = {
+        "class_id": class_id or None,
+        "class_version": class_version,
+        "start_date": payload.start_date.isoformat(),
+        "end_date": payload.end_date.isoformat() if payload.end_date else None,
+        "schedule": payload.schedule.model_dump(mode="json"),
+        "candidate_staff_ids": candidates,
+        "conflicts": [item.model_dump(mode="json") for item in candidate_responses],
+    }
+    fingerprint = hashlib.sha256(
+        json.dumps(hash_payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return StaffAvailabilityPreviewResponse(
+        can_apply=all(item.available for item in candidate_responses),
+        preview_fingerprint=fingerprint,
+        candidates=candidate_responses,
+    )
+
+
 async def _validate_staff_schedule_availability(
     db: AsyncSession,
     *,
@@ -614,8 +769,8 @@ async def _validate_staff_schedule_availability(
     start_date: date | None = None,
     end_date: date | None = None,
 ) -> None:
-    if not teacher_ids:
-        raise ValueError("Vui lòng chọn ít nhất một giáo viên")
+    if not teacher_ids and not assistant_ids:
+        return
 
     teacher_by_id, assistant_by_id = await _lock_and_validate_staff(
         db,
@@ -640,6 +795,15 @@ async def _validate_staff_schedule_availability(
         start_date=start_date,
         end_date=end_date,
     )
+    conflicts.extend(
+        await _collect_recurring_against_makeup_conflicts(
+            db,
+            class_id=class_id,
+            schedule=normalized_schedule,
+            start_date=start_date,
+            end_date=end_date,
+        )
+    )
     if not conflicts:
         return
 
@@ -655,6 +819,89 @@ async def _validate_staff_schedule_availability(
         f"{', '.join(staff_names)} đã có lịch lớp {first['class_name']} vào "
         f"{first['day']}, {first['start']}-{first['end']}"
     )
+
+
+async def _collect_recurring_against_makeup_conflicts(
+    db: AsyncSession,
+    *,
+    class_id: str,
+    schedule: ClassSchedule | None,
+    start_date: date | None,
+    end_date: date | None,
+) -> list[dict]:
+    """Check a recurring draft against dated makeup staff snapshots."""
+    if schedule is None or not schedule.slots:
+        return []
+    requested_ids = {
+        str(staff_id)
+        for slot in schedule.slots
+        for staff_id in [*slot.teacher_ids, *slot.assistant_ids]
+    }
+    if not requested_ids:
+        return []
+
+    filters = [
+        ClassSessionException.replacement_start_at.is_not(None),
+        ClassSessionException.replacement_end_at.is_not(None),
+        ClassSessionException.status == "MAKEUP_SCHEDULED",
+        ClassSessionException.replacement_end_at > datetime.now(BUSINESS_TIMEZONE),
+        ClassSessionStaffSnapshot.staff_id.in_(requested_ids),
+    ]
+    if start_date is not None:
+        filters.append(
+            ClassSessionException.replacement_start_at
+            >= datetime.combine(start_date, datetime.min.time(), tzinfo=BUSINESS_TIMEZONE)
+        )
+    if end_date is not None:
+        filters.append(
+            ClassSessionException.replacement_start_at
+            < datetime.combine(
+                end_date + timedelta(days=1),
+                datetime.min.time(),
+                tzinfo=BUSINESS_TIMEZONE,
+            )
+        )
+    result = await db.execute(
+        select(
+            ClassSessionException,
+            ClassSessionStaffSnapshot.staff_id,
+            Class.name,
+        )
+        .join(
+            ClassSessionStaffSnapshot,
+            ClassSessionStaffSnapshot.exception_id == ClassSessionException.id,
+        )
+        .join(Class, Class.id == ClassSessionException.class_id)
+        .where(*filters)
+    )
+    conflicts: list[dict] = []
+    for exception, staff_id, class_name in result.all():
+        local_start = exception.replacement_start_at.astimezone(BUSINESS_TIMEZONE)
+        local_end = exception.replacement_end_at.astimezone(BUSINESS_TIMEZONE)
+        day = INDEX_TO_WEEKDAY[local_start.weekday()]
+        busy_staff_id = str(staff_id)
+        for slot in schedule.slots:
+            slot_staff = {
+                str(value) for value in [*slot.teacher_ids, *slot.assistant_ids]
+            }
+            if busy_staff_id not in slot_staff or slot.day != day:
+                continue
+            if slot.start >= local_end.strftime("%H:%M") or local_start.strftime(
+                "%H:%M"
+            ) >= slot.end:
+                continue
+            conflicts.append(
+                {
+                    "class_id": str(exception.class_id),
+                    "class_name": class_name,
+                    "day": day,
+                    "start": local_start.strftime("%H:%M"),
+                    "end": local_end.strftime("%H:%M"),
+                    "conflict_type": "STAFF",
+                    "staff_ids": [busy_staff_id],
+                }
+            )
+    return conflicts
 
 
 async def check_makeup_conflicts(

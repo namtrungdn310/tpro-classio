@@ -13,7 +13,11 @@ FeeOperationAction = Literal[
     "refund",
     "refund_reversal",
     "sync",
+    "sync_void",
+    "supersede",
     "template_update",
+    "anchor_recalculation",
+    "billing_cycle_change",
 ]
 
 FeePaidPaymentMethod = Literal["bank_transfer", "cash"]

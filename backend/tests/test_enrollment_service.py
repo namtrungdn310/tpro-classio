@@ -11,6 +11,7 @@ from sqlalchemy.dialects import postgresql
 from app.models.class_ import Class
 from app.models.class_schedule_slot import ClassScheduleSlot
 from app.models.enrollment import Enrollment
+from app.models.enrollment_slot_selection import EnrollmentSlotSelection
 from app.models.student import Student
 from app.schemas.enrollment import EnrollmentUpdate
 from app.services.enrollment_service import (
@@ -19,6 +20,7 @@ from app.services.enrollment_service import (
     close_enrollment_financial_projection,
     drop_enrollment,
     enroll_locked_student,
+    get_student_enrollments,
     resolve_enrollment_date,
     update_enrollment,
 )
@@ -138,7 +140,15 @@ async def test_known_new_class_skips_repeated_membership_guards() -> None:
 
     db.scalar.assert_not_awaited()
     enrollment_guard.assert_not_awaited()
-    create_cycle_zero.assert_awaited_once_with(db, enrollment, assume_new=True)
+    create_cycle_zero.assert_awaited_once_with(
+        db,
+        enrollment,
+        assume_new=True,
+        actor_user_id=None,
+        force_review=False,
+        change_kind=None,
+        reason=None,
+    )
     assert ensure_cycles.await_args.kwargs["known_max_cycle"] == 0
     assert (
         create_selections.await_args.kwargs["known_active_slot_ids"] == active_slot_ids
@@ -252,6 +262,60 @@ async def test_closing_membership_keeps_qr_for_protected_outstanding_debt() -> N
 
 
 @pytest.mark.asyncio
+async def test_closing_class_voids_only_mutable_cycles_from_stop_date() -> None:
+    enrollment = make_enrollment()
+    current = SimpleNamespace(
+        id=str(uuid4()),
+        status="UNPAID",
+        voided_at=None,
+        coverage_start=date(2026, 8, 1),
+        base_due_date=date(2026, 8, 1),
+        due_date=date(2026, 8, 1),
+    )
+    future = SimpleNamespace(
+        id=str(uuid4()),
+        status="UNPAID",
+        voided_at=None,
+        coverage_start=date(2026, 9, 1),
+        base_due_date=date(2026, 9, 1),
+        due_date=date(2026, 9, 1),
+    )
+    db = SimpleNamespace(
+        scalars=AsyncMock(return_value=AsyncScalarRows([current, future])),
+        flush=AsyncMock(),
+    )
+    with (
+        patch(
+            "app.services.fee_reconciliation.is_fee_record_protected",
+            return_value=False,
+        ),
+        patch(
+            "app.services.payment_scaffold_service.revoke_open_payment_requests_for_fee_records",
+            new=AsyncMock(),
+        ) as revoke,
+        patch(
+            "app.services.fee_operation_service.snapshot_fee_record",
+            side_effect=lambda record: SimpleNamespace(id=record.id),
+        ),
+        patch(
+            "app.services.fee_operation_service.append_fee_operation",
+            new=AsyncMock(),
+        ),
+    ):
+        await close_enrollment_financial_projection(
+            db,
+            enrollment,
+            actor_user_id=None,
+            reason="Ngừng lớp",
+            close_on=date(2026, 9, 1),
+        )
+
+    assert current.status == "UNPAID"
+    assert future.status == "VOID"
+    assert revoke.await_args.args[1] == [future.id]
+
+
+@pytest.mark.asyncio
 async def test_update_rejects_dropped_enrollment() -> None:
     enrollment = make_enrollment(status="dropped")
     db = SimpleNamespace()
@@ -290,6 +354,14 @@ async def test_update_changes_only_the_selected_enrollment_date() -> None:
             "app.services.enrollment_service._reconcile_current_fee_records",
             new=AsyncMock(),
         ) as reconcile,
+        patch(
+            "app.services.billing_anchor_service.reanchor_enrollment_billing",
+            new=AsyncMock(side_effect=lambda _db, enrollment, **kwargs: setattr(enrollment, "enrollment_date", kwargs["new_anchor"])),
+        ),
+        patch(
+            "app.services.enrollment_service.realign_open_slot_selections",
+            new=AsyncMock(),
+        ),
         patch("app.services.enrollment_service._clear_dependent_caches"),
     ):
         response = await update_enrollment(
@@ -305,12 +377,13 @@ async def test_update_changes_only_the_selected_enrollment_date() -> None:
     db.commit.assert_awaited_once()
 
 
-def test_structured_enrollment_date_is_bounded_by_its_own_class() -> None:
+def test_structured_enrollment_date_is_open_ended_until_class_is_stopped() -> None:
     enrollment = make_enrollment()
     class_ = enrollment.class_
     class_.identity_scheme = "ACADEMIC_YEAR"
     class_.start_date = date(2026, 8, 3)
     class_.end_date = date(2026, 8, 10)
+    class_.stopped_on = None
 
     with patch(
         "app.services.enrollment_service.business_today",
@@ -319,10 +392,12 @@ def test_structured_enrollment_date_is_bounded_by_its_own_class() -> None:
         assert resolve_enrollment_date(class_, None) == date(2026, 8, 3)
         assert resolve_enrollment_date(class_, date(2026, 8, 9)) == date(2026, 8, 9)
 
-        with pytest.raises(HTTPException) as final_day_error:
-            resolve_enrollment_date(class_, date(2026, 8, 10))
+        assert resolve_enrollment_date(class_, date(2026, 8, 10)) == date(2026, 8, 10)
+        class_.stopped_on = date(2026, 8, 12)
+        with pytest.raises(HTTPException) as stopped_day_error:
+            resolve_enrollment_date(class_, date(2026, 8, 12))
 
-    assert final_day_error.value.status_code == 422
+    assert stopped_day_error.value.status_code == 422
 
 
 @pytest.mark.asyncio
@@ -351,6 +426,14 @@ async def test_drop_enrollment_never_deactivates_profile() -> None:
             "app.services.enrollment_service.close_enrollment_financial_projection",
             new=AsyncMock(),
         ) as reconcile,
+        patch(
+            "app.services.fee_cycle_service.ensure_final_cycle_for_stop",
+            new=AsyncMock(),
+        ),
+        patch(
+            "app.services.enrollment_service.close_enrollment_slot_selections",
+            new=AsyncMock(),
+        ),
         patch("app.services.enrollment_service._clear_dependent_caches"),
     ):
         response = await drop_enrollment(db, uuid4())
@@ -363,6 +446,60 @@ async def test_drop_enrollment_never_deactivates_profile() -> None:
         enrollment,
         actor_user_id=None,
         reason="Học viên rời lớp",
+        close_on=enrollment.ended_on,
     )
     db.add.assert_not_called()
     db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_student_history_loads_schedule_in_one_bounded_follow_up_query() -> None:
+    previous_class_id = str(uuid4())
+    class_ = Class(
+        id=str(uuid4()),
+        name="6C1 kế tiếp",
+        type="MONTHLY",
+        base_fee=Decimal("750000"),
+        billing_cycle_months=1,
+        start_date=date(2027, 6, 6),
+        end_date=date(2028, 6, 6),
+        previous_class_id=previous_class_id,
+        is_active=True,
+    )
+    slot = ClassScheduleSlot(
+        id=str(uuid4()),
+        class_id=class_.id,
+        weekday="Thứ 2",
+        local_start=time(13, 30),
+        local_end=time(15, 0),
+        effective_from=class_.start_date,
+    )
+    enrollment = Enrollment(
+        id=str(uuid4()),
+        student_id=str(uuid4()),
+        class_id=class_.id,
+        custom_fee=None,
+        status="active",
+        enrollment_date=class_.start_date,
+    )
+    enrollment.class_ = class_
+    enrollment.slot_selections = [
+        EnrollmentSlotSelection(
+            id=str(uuid4()),
+            enrollment_id=enrollment.id,
+            slot_id=slot.id,
+            effective_from=class_.start_date,
+        )
+    ]
+    db = SimpleNamespace(
+        execute=AsyncMock(return_value=IterableScalarResult([enrollment])),
+        scalars=AsyncMock(return_value=AsyncScalarRows([slot])),
+    )
+
+    responses = await get_student_enrollments(db, uuid4())
+
+    assert len(responses) == 1
+    assert str(responses[0].previous_class_id) == previous_class_id
+    assert responses[0].selected_slots[0].weekday == "Thứ 2"
+    db.execute.assert_awaited_once()
+    db.scalars.assert_awaited_once()

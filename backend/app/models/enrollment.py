@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, ForeignKey, Numeric, Text, func, text
+from sqlalchemy import Date, DateTime, ForeignKey, Integer, Numeric, Text, func, text
 from sqlalchemy.dialects.postgresql import ENUM, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -28,6 +28,16 @@ class Enrollment(WorkspaceScoped, Base):
         nullable=False,
     )
     enrollment_date: Mapped[date | None] = mapped_column(Date)
+    # Exclusive business boundary. This is the end of one student's class
+    # membership, not a planned class end date.
+    ended_on: Mapped[date | None] = mapped_column(Date)
+    current_billing_revision_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("billing_anchor_revisions.id", ondelete="RESTRICT"),
+    )
+    billing_anchor_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
     custom_fee: Mapped[Decimal | None] = mapped_column(Numeric(12, 0))
     status: Mapped[str] = mapped_column(
         ENUM(
@@ -56,6 +66,16 @@ class Enrollment(WorkspaceScoped, Base):
         back_populates="enrollment",
         cascade="all, delete-orphan",
         passive_deletes=True,
+    )
+    current_billing_revision = relationship(
+        "BillingAnchorRevision",
+        foreign_keys=[current_billing_revision_id],
+        post_update=True,
+    )
+    billing_anchor_revisions = relationship(
+        "BillingAnchorRevision",
+        foreign_keys="BillingAnchorRevision.enrollment_id",
+        back_populates="enrollment",
     )
     slot_selections = relationship(
         "EnrollmentSlotSelection",

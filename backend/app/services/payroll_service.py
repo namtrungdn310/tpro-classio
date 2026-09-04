@@ -117,6 +117,7 @@ async def create_staff_compensation_rate(
     )
     rate = StaffCompensationRate(
         staff_id=str(staff_id),
+        assignment_role=payload.assignment_role,
         rate_amount=payload.rate_amount,
         effective_from=payload.effective_from,
         effective_to=payload.effective_to,
@@ -139,6 +140,7 @@ async def create_staff_compensation_rate(
             after_snapshot={
                 "rate_id": str(rate.id),
                 "rate_amount": payload.rate_amount,
+                "assignment_role": payload.assignment_role,
                 "effective_from": payload.effective_from.isoformat(),
                 "effective_to": (
                     payload.effective_to.isoformat() if payload.effective_to else None

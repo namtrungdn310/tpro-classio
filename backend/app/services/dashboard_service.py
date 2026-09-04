@@ -91,6 +91,7 @@ _DASHBOARD_METRICS_SQL = text(
       from public.fee_records fee
       where fee.period = :period
         and fee.workspace_id = public.current_workspace_id()
+        and fee.status not in ('VOID', 'SUPERSEDED')
     )
     select
       (
@@ -98,17 +99,19 @@ _DASHBOARD_METRICS_SQL = text(
         from public.enrollments enrollment
         join public.students student on student.id = enrollment.student_id
         join public.classes class_ on class_.id = enrollment.class_id
-        where enrollment.status = 'active'
+        where enrollment.status <> 'cancelled'
           and enrollment.workspace_id = public.current_workspace_id()
           and student.workspace_id = public.current_workspace_id()
           and class_.workspace_id = public.current_workspace_id()
           and enrollment.enrollment_date <= :today
+          and (enrollment.ended_on is null or enrollment.ended_on > :today)
           and student.status = 'active'
           and class_.is_active = true
           and class_.cancelled_at is null
+          and class_.stopped_at is null
           and (
             class_.identity_scheme = 'LEGACY'
-            or (class_.start_date <= :today and class_.end_date >= :today)
+            or class_.start_date <= :today
           )
       ) as active_student_count,
       (
@@ -117,9 +120,10 @@ _DASHBOARD_METRICS_SQL = text(
         where class_.is_active = true
           and class_.workspace_id = public.current_workspace_id()
           and class_.cancelled_at is null
+          and class_.stopped_at is null
           and (
             class_.identity_scheme = 'LEGACY'
-            or (class_.start_date <= :today and class_.end_date >= :today)
+            or class_.start_date <= :today
           )
       ) as active_class_count,
       (
@@ -136,9 +140,10 @@ _DASHBOARD_METRICS_SQL = text(
         where class_.is_active = true
           and class_.workspace_id = public.current_workspace_id()
           and class_.cancelled_at is null
+          and class_.stopped_at is null
           and (
             class_.identity_scheme = 'LEGACY'
-            or (class_.start_date <= :today and class_.end_date >= :today)
+            or class_.start_date <= :today
           )
           and jsonb_typeof(schedule_slot.value) = 'object'
           and jsonb_typeof(schedule_slot.value -> 'day') = 'string'
@@ -146,19 +151,45 @@ _DASHBOARD_METRICS_SQL = text(
           and jsonb_typeof(schedule_slot.value -> 'end') = 'string'
       ) as weekly_session_count,
       (
-        select count(*)
-        from public.staff_members staff
-        where staff.is_active = true
-          and staff.workspace_id = public.current_workspace_id()
-          and staff.staff_type = 'TEACHER'
+        select count(distinct member.teacher_id)
+        from public.class_teachers member
+        join public.staff_members staff on staff.id = member.teacher_id
+        join public.classes class_ on class_.id = member.class_id
+        where member.role = 'TEACHER'
+          and staff.is_active = true
+          and class_.is_active = true
+          and class_.cancelled_at is null
+          and class_.stopped_at is null
+          and member.workspace_id = public.current_workspace_id()
       ) as active_teacher_count,
       (
-        select count(*)
-        from public.staff_members staff
+        select count(distinct member.teacher_id)
+        from public.class_teachers member
+        join public.staff_members staff on staff.id = member.teacher_id
+        join public.classes class_ on class_.id = member.class_id
+        where member.role = 'ASSISTANT'
+          and staff.is_active = true
+          and class_.is_active = true
+          and class_.cancelled_at is null
+          and class_.stopped_at is null
+          and member.workspace_id = public.current_workspace_id()
+      ) as active_assistant_count,
+      (
+        select count(*) from public.staff_members staff
         where staff.is_active = true
           and staff.workspace_id = public.current_workspace_id()
-          and staff.staff_type = 'ASSISTANT'
-      ) as active_assistant_count,
+      ) as active_staff_count,
+      (
+        select count(*) from public.classes class_
+        where class_.is_active = true
+          and class_.cancelled_at is null
+          and class_.stopped_at is null
+          and class_.workspace_id = public.current_workspace_id()
+          and not exists (
+            select 1 from public.class_teachers member
+            where member.class_id = class_.id and member.role = 'TEACHER'
+          )
+      ) as unstaffed_class_count,
       fee_summary.total_amount,
       fee_summary.gross_collected_amount,
       fee_summary.refunded_amount,
@@ -193,6 +224,10 @@ async def get_dashboard_overview(db: AsyncSession) -> DashboardOverviewResponse:
             weekly_session_count=int(metrics.weekly_session_count or 0),
             active_teacher_count=int(metrics.active_teacher_count or 0),
             active_assistant_count=int(metrics.active_assistant_count or 0),
+            active_staff_count=int(getattr(metrics, "active_staff_count", 0) or 0),
+            unstaffed_class_count=int(
+                getattr(metrics, "unstaffed_class_count", 0) or 0
+            ),
         ),
         fees=DashboardFeeSummary(
             total_amount=int(metrics.total_amount or 0),

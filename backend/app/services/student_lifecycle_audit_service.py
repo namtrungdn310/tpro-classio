@@ -13,6 +13,7 @@ def append_student_lifecycle_event(
     next_status: str | None,
     class_id: str | None = None,
     enrollment_id: str | None = None,
+    reason: str | None = None,
 ) -> None:
     """Append non-PII lifecycle metadata in the caller's transaction."""
 
@@ -25,5 +26,6 @@ def append_student_lifecycle_event(
             action=action,
             previous_status=previous_status,
             next_status=next_status,
+            reason=reason,
         )
     )

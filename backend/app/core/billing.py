@@ -72,7 +72,7 @@ def get_enrollment_due_date_in_month(
         return None
 
     class_start_date = getattr(class_, "start_date", None)
-    class_end_date = getattr(class_, "end_date", None)
+    class_end_date = getattr(class_, "stopped_on", None)
     if class_start_date is not None and due_date < class_start_date:
         return None
     if class_end_date is not None and due_date > class_end_date:
@@ -158,11 +158,24 @@ def get_enrollment_next_fee_due(
     overdue_dates: list[date] = []
     upcoming_dates: list[date] = []
     max_cycle = -1
+    max_anchor_cycle = -1
+    current_revision = getattr(enrollment, "__dict__", {}).get(
+        "current_billing_revision"
+    )
+    current_revision_id = getattr(enrollment, "current_billing_revision_id", None)
     cumulative_deferral_days = 0
     for record in getattr(enrollment, "fee_records", None) or []:
         cycle_no = getattr(record, "cycle_no", None)
         if cycle_no is not None:
             max_cycle = max(max_cycle, int(cycle_no))
+        if (
+            current_revision_id
+            and getattr(record, "billing_revision_id", None) == current_revision_id
+            and getattr(record, "anchor_cycle_no", None) is not None
+        ):
+            max_anchor_cycle = max(
+                max_anchor_cycle, int(getattr(record, "anchor_cycle_no"))
+            )
         base_due_date = getattr(record, "base_due_date", None)
         adjusted_due_date = getattr(record, "adjusted_due_date", None)
         if base_due_date is not None and adjusted_due_date is not None:
@@ -193,19 +206,40 @@ def get_enrollment_next_fee_due(
 
     next_due = None
     next_cycle = max_cycle + 1
-    enrollment_date = enrollment.enrollment_date
-    billing_type = class_.type
+    enrollment_date = (
+        current_revision.anchor_date
+        if current_revision is not None
+        else enrollment.enrollment_date
+    )
+    billing_type = (
+        current_revision.billing_type_snapshot
+        if current_revision is not None
+        else class_.type
+    )
     cycle_weeks = (
-        max(int(class_.billing_cycle_weeks or 1), 1)
-        if class_.type == "COURSE"
+        max(
+            int(
+                current_revision.billing_cycle_weeks_snapshot
+                if current_revision is not None
+                else class_.billing_cycle_weeks
+                or 1
+            ),
+            1,
+        )
+        if billing_type == "COURSE"
         else None
     )
-    coverage_start, _ = cycle_coverage_interval(
-        enrollment_date, billing_type, cycle_weeks, next_cycle
+    schedule_cycle = (
+        max_anchor_cycle + 1
+        if current_revision is not None
+        else next_cycle
     )
-    if cycle_exists(coverage_start, class_.end_date):
+    coverage_start, _ = cycle_coverage_interval(
+        enrollment_date, billing_type, cycle_weeks, schedule_cycle
+    )
+    if cycle_exists(coverage_start, getattr(class_, "stopped_on", None)):
         next_due = cycle_base_due_date(
-            enrollment_date, billing_type, cycle_weeks, next_cycle
+            enrollment_date, billing_type, cycle_weeks, schedule_cycle
         )
         if cumulative_deferral_days:
             next_due = next_due + timedelta(days=cumulative_deferral_days)

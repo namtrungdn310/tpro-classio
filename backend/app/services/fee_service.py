@@ -22,6 +22,10 @@ from app.core.class_lifecycle import (
     is_active_class_today,
     operational_class_predicate,
 )
+from app.core.enrollment_lifecycle import (
+    enrollment_current_or_scheduled_predicate,
+    enrollment_visible_current_or_scheduled,
+)
 from app.core.performance import log_timing
 from app.models.class_ import Class
 from app.models.enrollment import Enrollment
@@ -143,7 +147,7 @@ async def sync_fee_records_for_period(
                 .join(Student, Student.id == Enrollment.student_id)
                 .options(contains_eager(Enrollment.class_), raiseload("*"))
                 .where(
-                    Enrollment.status == "active",
+                    enrollment_current_or_scheduled_predicate(reference_date),
                     active_class_today_predicate(reference_date),
                     Student.status == "active",
                 ),
@@ -189,6 +193,8 @@ async def sync_fee_records_for_period(
         voided: list[FeeRecord] = []
         for record in existing_records:
             if record.enrollment_id in active_enrollment_ids:
+                continue
+            if record.is_final_cycle:
                 continue
             if is_fee_record_protected(record):
                 continue
@@ -257,6 +263,7 @@ async def get_fee_records(
                     func.coalesce(FeeRecord.adjusted_due_date, FeeRecord.due_date)
                     <= today,
                     FeeRecord.status == "PAID",
+                    FeeRecord.review_required.is_(True),
                 )
             )
 
@@ -372,7 +379,7 @@ async def get_upcoming_fee_records(
         )
         .where(
             FeeRecord.status == "UNPAID",
-            Enrollment.status == "active",
+            enrollment_current_or_scheduled_predicate(today),
             Student.status == "active",
             operational_class_predicate(today),
             func.coalesce(FeeRecord.adjusted_due_date, FeeRecord.due_date) > today,
@@ -923,6 +930,17 @@ async def _transition_fee_records(
 
     ordered_ids = list(dict.fromkeys(str(id_) for id_ in ids))
     records = await _load_locked_fee_records(db, ordered_ids)
+    if action in {"notify", "pay"} and any(
+        bool(record.review_required) for record in records
+    ):
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Khoản học phí vừa được tính lại do thay đổi lịch thu. "
+                "Hãy kiểm tra và xác nhận trước khi báo hoặc thu."
+            ),
+        )
     if (
         action == "unpay"
         and target_notification_state == "NOTIFIED_UNPAID"
@@ -1570,6 +1588,11 @@ async def get_fee_records_for_payment_request(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Không tìm thấy một hoặc nhiều khoản học phí.",
         )
+    if any(record.review_required for record in records):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Hãy xác nhận lịch thu mới trước khi tạo yêu cầu thanh toán.",
+        )
     return records
 
 
@@ -1586,7 +1609,7 @@ def _reconcile_unnotified_record(record: FeeRecord) -> bool:
     student = enrollment.student if enrollment else None
     is_chargeable = bool(
         enrollment
-        and enrollment.status == "active"
+        and enrollment_visible_current_or_scheduled(enrollment)
         and class_
         and is_active_class_today(class_)
         and student
@@ -1714,17 +1737,17 @@ def _to_response(
     )
     class_type = (
         record.class_type_snapshot
-        if protected_identity and record.class_type_snapshot
+        if record.class_type_snapshot
         else (class_.type if class_ else "MONTHLY")
     )
     billing_cycle_months = (
         record.billing_cycle_months_snapshot
-        if protected_identity and record.billing_cycle_months_snapshot
+        if record.billing_cycle_months_snapshot
         else (class_.billing_cycle_months if class_ else 1)
     )
     billing_cycle_weeks = (
         record.billing_cycle_weeks_snapshot
-        if protected_identity and record.billing_cycle_weeks_snapshot
+        if record.billing_cycle_weeks_snapshot
         else (class_.billing_cycle_weeks if class_ else None)
     )
     paid_amount = (
@@ -1763,6 +1786,10 @@ def _to_response(
         coverage_start=record.coverage_start,
         coverage_end=record.coverage_end,
         origin=record.origin,
+        requires_review=bool(record.review_required),
+        billing_review_id=record.billing_revision_id,
+        is_final_cycle=bool(record.is_final_cycle),
+        final_cycle_reason=record.final_cycle_reason,
         base_amount=_to_int(record.base_amount),
         discount_amount=_to_int(record.discount_amount),
         final_amount=_to_int(record.final_amount),
@@ -1787,10 +1814,15 @@ def _freeze_business_identity(record: FeeRecord) -> None:
     if student is not None:
         record.student_name_snapshot = student.full_name
     if class_ is not None:
-        record.class_name_snapshot = class_.name
-        record.class_type_snapshot = class_.type
-        record.billing_cycle_months_snapshot = class_.billing_cycle_months
-        record.billing_cycle_weeks_snapshot = class_.billing_cycle_weeks
+        record.class_name_snapshot = record.class_name_snapshot or class_.name
+        record.class_type_snapshot = record.class_type_snapshot or class_.type
+        record.billing_cycle_months_snapshot = (
+            record.billing_cycle_months_snapshot or class_.billing_cycle_months
+        )
+        if record.class_type_snapshot == "COURSE":
+            record.billing_cycle_weeks_snapshot = (
+                record.billing_cycle_weeks_snapshot or class_.billing_cycle_weeks
+            )
 
 
 def _get_notification_state(record: FeeRecord) -> str:

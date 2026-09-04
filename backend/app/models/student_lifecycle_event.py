@@ -36,6 +36,7 @@ class StudentLifecycleEvent(WorkspaceScoped, Base):
     action: Mapped[str] = mapped_column(Text, nullable=False)
     previous_status: Mapped[str | None] = mapped_column(Text)
     next_status: Mapped[str | None] = mapped_column(Text)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

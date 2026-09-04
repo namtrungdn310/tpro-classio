@@ -40,14 +40,12 @@ from app.routers.reports import router as reports_router
 from app.routers.staff import router as staff_router
 from app.routers.students import enrollments_router, students_router
 from app.routers.suspensions import router as suspensions_router
-from app.services.class_service import complete_expired_classes
 from app.services.auth_flow_service import purge_expired_auth_flows
 from app.services.google_identity_service import sync_due_google_avatars
 
 logger = logging.getLogger("tpro_classio")
 avatar_sync_task: asyncio.Task[None] | None = None
 auth_flow_cleanup_task: asyncio.Task[None] | None = None
-class_lifecycle_task: asyncio.Task[None] | None = None
 
 # Readiness probe cache: a burst of container healthchecks shares one probe.
 _READINESS_CACHE_TTL_SECONDS = 30
@@ -74,6 +72,11 @@ _REQUIRED_SCHEMA_RELATIONS = (
     "staff_payroll_settlements",
     "staff_payroll_settlement_reversals",
     "class_schedule_slot_teacher_events",
+    "billing_anchor_revisions",
+    "class_billing_cycle_revisions",
+    "student_membership_commands",
+    "student_membership_command_items",
+    "class_schedule_slot_staff_revisions",
 )
 
 # Several forward migrations provide trigger-only invariants. Readiness must
@@ -84,19 +87,42 @@ _REQUIRED_SCHEMA_TRIGGERS = (
     "enrollments:trg_enrollments_no_open_suspension",
     "class_schedule_slot_teacher_events:class_schedule_slot_teacher_events_append_only",
     "staff_earning_ledger:staff_earning_rate_snapshot_integrity",
+    "student_membership_commands:student_membership_commands_update_guard",
+    "enrollments:enrollments_billing_revision_integrity",
+    "fee_records:fee_records_billing_revision_integrity",
+    "enrollment_slot_selections:enrollment_slot_selection_class_integrity",
+    "class_teachers:class_teachers_validate_staff",
+    "class_schedule_slot_staff:class_schedule_slot_staff_validate_assignment",
+    "class_schedule_slot_staff_revisions:class_schedule_slot_staff_revisions_validate",
 )
 
 _REQUIRED_SCHEMA_FUNCTIONS = (
     "ops.platform_overview()",
     "ops.disable_workspace_pay2s(uuid,uuid,text)",
+    "public.open_ended_class_lifecycle_version()",
+    "public.billing_anchor_revision_version()",
+    "public.class_package_duration_revision_version()",
+    "public.membership_effective_date_version()",
+    "public.contextual_class_staff_version()",
 )
 
 _REQUIRED_SCHEMA_COLUMNS = (
+    "classes:stopped_on",
+    "classes:stopped_at",
+    "classes:stopped_reason",
     "payment_requests:sent_channel",
     "payment_requests:send_count",
     "payment_request_events:idempotency_key",
     "payment_request_events:event_metadata",
     "workspace_payment_providers:plan",
+    "enrollments:billing_anchor_version",
+    "enrollments:ended_on",
+    "fee_records:billing_revision_id",
+    "fee_records:review_required",
+    "billing_anchor_revisions:billing_cycle_weeks_snapshot",
+    "billing_anchor_revisions:change_kind",
+    "class_teachers:role",
+    "staff_compensation_rates:assignment_role",
 )
 
 
@@ -166,7 +192,6 @@ async def missing_required_schema_columns(session) -> list[str]:
 
 # Stable advisory-lock keys so multiple uvicorn workers never process the same
 # background batch twice.  Keep them distinct per worker type.
-_CLASS_LIFECYCLE_LOCK_KEY = 9_081_011
 _AUTH_FLOW_CLEANUP_LOCK_KEY = 9_081_012
 _AVATAR_SYNC_LOCK_KEY = 9_081_013
 
@@ -231,22 +256,6 @@ async def run_avatar_sync_worker() -> None:
         await asyncio.sleep(60 * 60)
 
 
-async def run_class_lifecycle_worker() -> None:
-    """Finalize expired classes without making request visibility depend on it."""
-    while True:
-        try:
-            await _try_run_worker(
-                _CLASS_LIFECYCLE_LOCK_KEY,
-                complete_expired_classes,
-                label="Class lifecycle completion",
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("Class lifecycle completion worker failed")
-        await asyncio.sleep(60)
-
-
 async def warm_database_connection() -> None:
     """R6-D18: bounded readiness probe — SELECT 1 only (no full-read warmup)."""
     started_at = time.perf_counter()
@@ -263,10 +272,9 @@ async def warm_database_connection() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global auth_flow_cleanup_task, avatar_sync_task, class_lifecycle_task
+    global auth_flow_cleanup_task, avatar_sync_task
     await warm_database_connection()
     auth_flow_cleanup_task = asyncio.create_task(run_auth_flow_cleanup_worker())
-    class_lifecycle_task = asyncio.create_task(run_class_lifecycle_worker())
     if (
         settings.google_client_id
         and settings.google_client_secret
@@ -291,13 +299,6 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
         avatar_sync_task = None
-    if class_lifecycle_task is not None:
-        class_lifecycle_task.cancel()
-        try:
-            await class_lifecycle_task
-        except asyncio.CancelledError:
-            pass
-        class_lifecycle_task = None
     await supabase_auth_client.aclose()
 
 

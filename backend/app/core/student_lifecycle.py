@@ -12,6 +12,10 @@ from sqlalchemy import and_
 from app.core.class_lifecycle import is_operational_class, operational_class_predicate
 from app.models.enrollment import Enrollment
 from app.models.student import Student
+from app.core.enrollment_lifecycle import (
+    enrollment_current_or_scheduled_predicate,
+    enrollment_visible_current_or_scheduled,
+)
 
 
 StudentListStateValue = Literal["UNASSIGNED", "CURRENT", "STOPPED"]
@@ -22,7 +26,7 @@ def derive_student_list_state(student: Student) -> StudentListStateValue:
         return "STOPPED"
 
     has_current = any(
-        enrollment.status == "active"
+        enrollment_visible_current_or_scheduled(enrollment)
         and enrollment.class_ is not None
         and enrollment.class_.identity_scheme != "LEGACY"
         and is_operational_class(enrollment.class_)
@@ -42,7 +46,7 @@ def student_list_state_filter(list_state: StudentListStateValue):
 
     current_enrollment = Student.enrollments.any(
         and_(
-            Enrollment.status == "active",
+            enrollment_current_or_scheduled_predicate(),
             Enrollment.class_.has(operational_class_predicate()),
         )
     )

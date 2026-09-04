@@ -91,3 +91,59 @@ def month_end(reference: date) -> date:
     return date(
         reference.year, reference.month, monthrange(reference.year, reference.month)[1]
     )
+
+
+def first_monthly_cycle_on_or_after(anchor: date, floor: date) -> int:
+    """Return the first monthly anchor ordinal whose due date is >= floor."""
+
+    if anchor >= floor:
+        return 0
+    months = max(0, (floor.year - anchor.year) * 12 + floor.month - anchor.month)
+    if add_months_clamped(anchor, months) < floor:
+        months += 1
+    return months
+
+
+def course_cycle_containing(anchor: date, weeks: int, reference: date) -> int:
+    """Return the package ordinal containing reference, without backfilling."""
+
+    if anchor >= reference:
+        return 0
+    package_days = max(int(weeks), 1) * 7
+    return max(0, (reference - anchor).days // package_days)
+
+
+def first_course_cycle_on_or_after(anchor: date, weeks: int, floor: date) -> int:
+    """Return the first package ordinal whose coverage starts >= floor."""
+
+    if anchor >= floor:
+        return 0
+    package_days = max(int(weeks), 1) * 7
+    elapsed = (floor - anchor).days
+    return max(0, (elapsed + package_days - 1) // package_days)
+
+
+def first_actionable_cycle(
+    anchor: date,
+    billing_type: str,
+    cycle_weeks: int | None,
+    *,
+    today: date,
+    protected_through: date | None = None,
+) -> int:
+    """Select one post-edit cycle without materialising historical debt.
+
+    Monthly tuition follows the next calendar anchor requested by the product.
+    A package is different: when there is no protected overlap, the package
+    already in progress is actionable (and can be shown as overdue).  Once an
+    immutable old charge covers service, the new schedule starts at the first
+    package boundary on or after that protected coverage.
+    """
+
+    if billing_type == COURSE:
+        weeks = max(int(cycle_weeks or 1), 1)
+        if protected_through is not None and protected_through > today:
+            return first_course_cycle_on_or_after(anchor, weeks, protected_through)
+        return course_cycle_containing(anchor, weeks, today)
+    floor = max(today, protected_through) if protected_through else today
+    return first_monthly_cycle_on_or_after(anchor, floor)

@@ -847,6 +847,44 @@ async def test_notify_rejects_future_period_without_mutating_record() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["notify", "pay"])
+async def test_review_required_blocks_collection_actions(action: str) -> None:
+    record = make_fee_record(
+        notified_at=(
+            datetime(2026, 7, 10, tzinfo=timezone.utc)
+            if action == "pay"
+            else None
+        )
+    )
+    record.review_required = True
+    db = make_db()
+
+    with patch(
+        "app.services.fee_service._load_locked_fee_records",
+        new=AsyncMock(return_value=[record]),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            if action == "notify":
+                await mark_fees_notified(
+                    db,
+                    [UUID(record.id)],
+                    message=None,
+                    channel="zalo_manual",
+                )
+            else:
+                await mark_fees_paid(
+                    db,
+                    [UUID(record.id)],
+                    payment_method="cash",
+                )
+
+    assert exc_info.value.status_code == 409
+    assert "kiểm tra và xác nhận" in exc_info.value.detail
+    db.commit.assert_not_awaited()
+    db.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_pay_rejects_future_period_without_appending_ledger() -> None:
     record = make_fee_record(
         period="2026-08",

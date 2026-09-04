@@ -16,6 +16,8 @@ from app.schemas.student import (
     StudentListPageResponse,
     StudentListState,
     StudentMembershipCommand,
+    StudentMembershipPreviewRequest,
+    StudentMembershipPreviewResponse,
     StudentReactivationRequest,
     StudentResponse,
     StudentRestoreRequest,
@@ -23,6 +25,7 @@ from app.schemas.student import (
     StudentStatus,
     StudentUpdate,
 )
+from app.services.membership_preview_service import preview_student_membership
 from app.services.enrollment_service import (
     create_enrollment,
     drop_enrollment,
@@ -190,6 +193,22 @@ async def student_membership_command_route(
     return student
 
 
+@students_router.post(
+    "/{id}/membership-command/preview",
+    response_model=StudentMembershipPreviewResponse,
+)
+async def student_membership_preview_route(
+    id: UUID,
+    payload: StudentMembershipPreviewRequest,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> StudentMembershipPreviewResponse:
+    preview = await preview_student_membership(db, id, payload)
+    if preview is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy học viên")
+    return preview
+
+
 @students_router.post("/{id}/archive", response_model=StudentResponse)
 async def archive_student_route(
     id: UUID,
@@ -257,7 +276,9 @@ async def update_enrollment_route(
     db: AsyncSession = Depends(get_db),
     principal: Principal = Depends(require_management),
 ) -> EnrollmentResponse:
-    enrollment = await update_enrollment(db, id, payload)
+    enrollment = await update_enrollment(
+        db, id, payload, actor_user_id=principal.user_id
+    )
     if enrollment is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

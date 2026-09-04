@@ -328,6 +328,7 @@ async def refresh(
 async def me(principal: Principal = Depends(get_current_user)) -> UserMe:
     return UserMe(
         id=principal.user_id,
+        workspace_id=principal.workspace_id,
         email=principal.email,
         role=principal.effective_role,
         username=principal.username,

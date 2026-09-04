@@ -16,6 +16,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.business_time import BUSINESS_TIMEZONE, business_today
 from app.core.class_lifecycle import effective_class_status
+from app.core.enrollment_lifecycle import enrollment_effective_predicate
 from app.core.makeup_state import (
     derived_display_status,
     validate_transition,
@@ -291,9 +292,7 @@ async def _eligible_students(
         .join(Student, Student.id == Enrollment.student_id)
         .where(
             Enrollment.class_id == class_id,
-            Enrollment.status == "active",
-            Enrollment.enrollment_date.is_not(None),
-            Enrollment.enrollment_date <= original_local_date,
+            enrollment_effective_predicate(original_local_date),
         )
         .order_by(Enrollment.enrollment_date.asc(), Enrollment.created_at.asc())
     )
@@ -310,11 +309,6 @@ async def _eligible_students(
     result = await db.execute(statement)
     summaries: list[EligibleStudentSummary] = []
     for enrollment, student_name in result.all():
-        ended_at = enrollment.ended_at
-        if ended_at is not None:
-            ended_local = ended_at.astimezone(BUSINESS_TIMEZONE).date()
-            if ended_local < original_local_date:
-                continue
         summaries.append(
             EligibleStudentSummary(
                 student_id=UUID(str(enrollment.student_id)),
@@ -335,7 +329,9 @@ async def _snapshot_students(
     result = await db.execute(
         select(Enrollment).where(
             Enrollment.class_id == class_id,
-            Enrollment.status == "active",
+            enrollment_effective_predicate(
+                exception.original_start_at.astimezone(BUSINESS_TIMEZONE).date()
+            ),
         )
     )
     enrollment_by_student = {
@@ -352,11 +348,7 @@ async def _snapshot_students(
                 enrollment_id=enrollment.id,
                 student_name_snapshot=summary.student_name,
                 enrolled_at_snapshot=enrollment.enrollment_date,
-                enrollment_end_snapshot=(
-                    enrollment.ended_at.astimezone(BUSINESS_TIMEZONE).date()
-                    if enrollment.ended_at is not None
-                    else None
-                ),
+                enrollment_end_snapshot=enrollment.ended_on,
                 eligibility_status="ELIGIBLE",
             )
         )
@@ -1354,8 +1346,8 @@ async def get_effective_occurrences_for_range(
                 Class.start_date <= range_end.date(),
             ),
             or_(
-                Class.end_date.is_(None),
-                Class.end_date >= from_date,
+                Class.stopped_on.is_(None),
+                Class.stopped_on >= from_date,
             ),
         )
         .order_by(Class.id.asc())

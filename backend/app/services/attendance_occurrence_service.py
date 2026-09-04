@@ -12,7 +12,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.business_time import BUSINESS_TIMEZONE, business_today
-from app.models.class_schedule_slot import ClassScheduleSlotStaff
+from app.models.class_schedule_slot import (
+    ClassScheduleSlotStaff,
+    ClassScheduleSlotStaffRevision,
+)
 from app.models.class_ import Class
 from app.services.schedule_slot_service import expand_class_occurrences
 
@@ -36,6 +39,59 @@ ATTENDANCE_OCCURRENCE_NAMESPACE = UUID("a895fb18-e0b4-4c37-a064-6961c0be88fd")
 
 def attendance_occurrence_id(occurrence_key: str) -> UUID:
     return uuid5(ATTENDANCE_OCCURRENCE_NAMESPACE, occurrence_key)
+
+
+async def _assignment_role_at_occurrence(
+    db: AsyncSession,
+    *,
+    occurrence,
+    slot_id: str,
+    staff_id: str,
+) -> str | None:
+    # Dated makeup occurrences already carry an immutable staff snapshot.
+    if occurrence.kind == "MAKEUP":
+        if staff_id in occurrence.teacher_ids:
+            return "TEACHER"
+        if staff_id in occurrence.assistant_ids:
+            return "ASSISTANT"
+        return None
+
+    role = await db.scalar(
+        select(ClassScheduleSlotStaffRevision.role)
+        .where(
+            ClassScheduleSlotStaffRevision.slot_id == slot_id,
+            ClassScheduleSlotStaffRevision.staff_id == staff_id,
+            ClassScheduleSlotStaffRevision.effective_from
+            <= occurrence.original_start_at,
+            (ClassScheduleSlotStaffRevision.effective_until.is_(None))
+            | (
+                ClassScheduleSlotStaffRevision.effective_until
+                > occurrence.original_start_at
+            ),
+        )
+        .order_by(ClassScheduleSlotStaffRevision.effective_from.desc())
+        .limit(1)
+    )
+    if role is not None:
+        return role
+    has_revision = await db.scalar(
+        select(ClassScheduleSlotStaffRevision.id)
+        .where(
+            ClassScheduleSlotStaffRevision.slot_id == slot_id,
+            ClassScheduleSlotStaffRevision.staff_id == staff_id,
+        )
+        .limit(1)
+    )
+    if has_revision is not None:
+        return None
+    # Compatibility fallback only for assignments not backfilled yet while
+    # migration 122 is being rolled out.
+    return await db.scalar(
+        select(ClassScheduleSlotStaff.role).where(
+            ClassScheduleSlotStaff.slot_id == slot_id,
+            ClassScheduleSlotStaff.staff_id == staff_id,
+        )
+    )
 
 
 async def resolve_occurrence_for_staff(
@@ -67,11 +123,11 @@ async def resolve_occurrence_for_staff(
                 continue
             if occurrence.source_slot_id is None:
                 continue
-            assignment = await db.scalar(
-                select(ClassScheduleSlotStaff.role).where(
-                    ClassScheduleSlotStaff.slot_id == occurrence.source_slot_id,
-                    ClassScheduleSlotStaff.staff_id == staff_id,
-                )
+            assignment = await _assignment_role_at_occurrence(
+                db,
+                occurrence=occurrence,
+                slot_id=occurrence.source_slot_id,
+                staff_id=staff_id,
             )
             if assignment is None:
                 continue
@@ -104,11 +160,11 @@ async def teacher_today_occurrences(db: AsyncSession, staff_id: str):
         for occurrence in expanded:
             if occurrence.source_slot_id is None:
                 continue
-            assignment = await db.scalar(
-                select(ClassScheduleSlotStaff.role).where(
-                    ClassScheduleSlotStaff.slot_id == occurrence.source_slot_id,
-                    ClassScheduleSlotStaff.staff_id == staff_id,
-                )
+            assignment = await _assignment_role_at_occurrence(
+                db,
+                occurrence=occurrence,
+                slot_id=occurrence.source_slot_id,
+                staff_id=staff_id,
             )
             if assignment is None:
                 continue

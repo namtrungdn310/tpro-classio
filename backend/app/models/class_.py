@@ -31,7 +31,7 @@ class Class(WorkspaceScoped, Base):
             "billing_cycle_months >= 1", name="classes_billing_cycle_months_check"
         ),
         CheckConstraint(
-            "billing_cycle_weeks is null or billing_cycle_weeks >= 1",
+            "billing_cycle_weeks is null or billing_cycle_weeks between 1 and 260",
             name="classes_billing_cycle_weeks_check",
         ),
         CheckConstraint(
@@ -50,6 +50,12 @@ class Class(WorkspaceScoped, Base):
         CheckConstraint(
             "start_date is null or end_date is null or end_date >= start_date",
             name="classes_date_range_check",
+        ),
+        CheckConstraint(
+            "(stopped_on is null and stopped_at is null and stopped_reason is null) or "
+            "(stopped_on is not null and stopped_at is not null and "
+            "char_length(btrim(stopped_reason)) between 3 and 500)",
+            name="classes_stopped_shape_check",
         ),
         UniqueConstraint(
             "workspace_id",
@@ -125,6 +131,12 @@ class Class(WorkspaceScoped, Base):
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     cancelled_reason: Mapped[str | None] = mapped_column(Text)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Open-ended lifecycle: a class remains operational until management stops
+    # it.  Keep the business date separate from the audit timestamp so the
+    # result is stable across UTC/local-time boundaries.
+    stopped_on: Mapped[date | None] = mapped_column(Date)
+    stopped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    stopped_reason: Mapped[str | None] = mapped_column(Text)
     previous_class_id: Mapped[str | None] = mapped_column(
         UUID(as_uuid=False),
     )
@@ -148,6 +160,9 @@ class Class(WorkspaceScoped, Base):
     version: Mapped[int] = mapped_column(nullable=False, default=1)
 
     enrollments = relationship("Enrollment", back_populates="class_", lazy="selectin")
+    billing_cycle_revisions = relationship(
+        "ClassBillingCycleRevision", back_populates="class_", lazy="selectin"
+    )
     teacher = relationship("StaffMember", back_populates="classes", lazy="selectin")
     teacher_links = relationship(
         "ClassTeacher",

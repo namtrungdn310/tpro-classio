@@ -7,7 +7,7 @@ keeps the UUID and bumps the version; closing a slot sets `effective_until`
 without touching history.
 """
 
-from datetime import date, time
+from datetime import date, datetime, time, timezone
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,9 +17,11 @@ from app.models.class_ import Class
 from app.models.class_schedule_slot import (
     ClassScheduleSlot,
     ClassScheduleSlotStaff,
+    ClassScheduleSlotStaffRevision,
     ClassScheduleSlotTeacherEvent,
 )
 from app.models.staff import StaffMember
+from app.core.business_time import BUSINESS_TIMEZONE
 
 WEEKDAY_TO_INDEX = {
     "Thứ 2": 0,
@@ -266,6 +268,15 @@ async def sync_class_slots(
         if str(slot.id) in claimed:
             continue
         if slot.effective_until is None:
+            await _sync_slot_staff_revisions(
+                db,
+                class_=class_,
+                slot=slot,
+                next_assignments={},
+                effective_from=reference,
+                actor_user_id=actor_user_id,
+                reason=reason or "Đóng buổi học trong lịch lớp",
+            )
             await _record_teacher_assignment_events(
                 db,
                 class_=class_,
@@ -325,6 +336,21 @@ async def _replace_slot_staff(
 ) -> None:
     teacher_ids = [str(value) for value in item.get("teacher_ids") or []]
     assistant_ids = [str(value) for value in item.get("assistant_ids") or []]
+    next_assignments = {
+        **{staff_id: "TEACHER" for staff_id in teacher_ids},
+        **{staff_id: "ASSISTANT" for staff_id in assistant_ids},
+    }
+    if len(next_assignments) != len(teacher_ids) + len(assistant_ids):
+        raise ValueError("Một nhân sự không thể vừa là giáo viên vừa là trợ giảng")
+    await _sync_slot_staff_revisions(
+        db,
+        class_=class_,
+        slot=slot,
+        next_assignments=next_assignments,
+        effective_from=effective_from,
+        actor_user_id=actor_user_id,
+        reason=reason,
+    )
     await _record_teacher_assignment_events(
         db,
         class_=class_,
@@ -344,6 +370,69 @@ async def _replace_slot_staff(
     for staff_id in assistant_ids:
         db.add(
             ClassScheduleSlotStaff(slot_id=slot.id, staff_id=staff_id, role="ASSISTANT")
+        )
+
+
+def _assignment_boundary(class_: Class, effective_from: date) -> datetime:
+    """Return a non-retroactive boundary for a staffing projection change."""
+    requested = datetime.combine(
+        effective_from,
+        datetime.min.time(),
+        tzinfo=BUSINESS_TIMEZONE,
+    ).astimezone(timezone.utc)
+    return max(requested, datetime.now(timezone.utc))
+
+
+async def _sync_slot_staff_revisions(
+    db: AsyncSession,
+    *,
+    class_: Class,
+    slot: ClassScheduleSlot,
+    next_assignments: dict[str, str],
+    effective_from: date,
+    actor_user_id: str | None,
+    reason: str | None,
+) -> None:
+    """Close/open effective assignment rows without rewriting elapsed sessions."""
+    boundary = _assignment_boundary(class_, effective_from)
+    rows = list(
+        (
+            await db.scalars(
+                select(ClassScheduleSlotStaffRevision)
+                .where(
+                    ClassScheduleSlotStaffRevision.slot_id == str(slot.id),
+                    ClassScheduleSlotStaffRevision.effective_until.is_(None),
+                )
+                .order_by(ClassScheduleSlotStaffRevision.staff_id.asc())
+                .with_for_update()
+            )
+        ).all()
+    )
+    current = {str(row.staff_id): row for row in rows}
+
+    for staff_id, revision in current.items():
+        next_role = next_assignments.get(staff_id)
+        if next_role == revision.role:
+            continue
+        if revision.effective_from >= boundary:
+            await db.delete(revision)
+        else:
+            revision.effective_until = boundary
+
+    for staff_id, role in next_assignments.items():
+        revision = current.get(staff_id)
+        if revision is not None and revision.role == role:
+            continue
+        db.add(
+            ClassScheduleSlotStaffRevision(
+                class_id=str(class_.id),
+                slot_id=str(slot.id),
+                staff_id=staff_id,
+                role=role,
+                effective_from=boundary,
+                actor_user_id=actor_user_id,
+                reason=reason,
+            )
         )
 
 
@@ -380,7 +469,7 @@ async def _record_teacher_assignment_events(
         result = await db.execute(
             select(StaffMember.id, StaffMember.full_name).where(
                 StaffMember.id.in_(requested_set - current_set),
-                StaffMember.staff_type == "TEACHER",
+                StaffMember.is_active.is_(True),
             )
         )
         names.update({str(staff_id): full_name for staff_id, full_name in result.all()})
@@ -485,7 +574,7 @@ async def expand_class_occurrences(
         class_id=str(class_.id),
         schedule=schedule_payload,
         start_date=class_.start_date,
-        end_date=class_.end_date,
+        end_date=class_.stopped_on,
         range_start=range_start,
         range_end=range_end,
     )

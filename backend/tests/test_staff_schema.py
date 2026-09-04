@@ -51,10 +51,20 @@ def test_staff_create_requires_contact(
         )
 
 
-@pytest.mark.parametrize("field", ["full_name", "staff_type", "is_active"])
+@pytest.mark.parametrize("field", ["full_name", "is_active"])
 def test_staff_update_rejects_null_for_required_columns(field: str) -> None:
     with pytest.raises(ValidationError):
         StaffUpdate.model_validate({field: None})
+
+
+def test_staff_create_does_not_require_a_global_teaching_role() -> None:
+    payload = StaffCreate(
+        full_name="Bảo Ngọc",
+        zalo_name="Bảo Ngọc",
+        phone="0912345678",
+    )
+
+    assert payload.staff_type is None
 
 
 @pytest.mark.parametrize(

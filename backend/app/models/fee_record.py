@@ -2,11 +2,13 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
+    Boolean,
     Computed,
     Date,
     DateTime,
     ForeignKey,
     Numeric,
+    Integer,
     SmallInteger,
     Text,
     Index,
@@ -42,6 +44,18 @@ class FeeRecord(WorkspaceScoped, Base):
         ForeignKey("enrollments.id", ondelete="RESTRICT"),
         nullable=False,
     )
+    billing_revision_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("billing_anchor_revisions.id", ondelete="RESTRICT"),
+    )
+    anchor_cycle_no: Mapped[int | None] = mapped_column(Integer)
+    review_required: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    is_final_cycle: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    final_cycle_reason: Mapped[str | None] = mapped_column(Text)
     period: Mapped[str] = mapped_column(Text, nullable=False)
     due_date: Mapped[date | None] = mapped_column(Date)
     # R6/R7: canonical cycle identity (0-based, enrollment-scoped). `period` is a
@@ -109,6 +123,9 @@ class FeeRecord(WorkspaceScoped, Base):
     )
 
     enrollment = relationship("Enrollment", back_populates="fee_records")
+    billing_revision = relationship(
+        "BillingAnchorRevision", back_populates="fee_records"
+    )
     payments = relationship(
         "Payment",
         back_populates="fee_record",

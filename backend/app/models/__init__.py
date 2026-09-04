@@ -3,11 +3,14 @@ from app.models.class_lifecycle_event import ClassLifecycleEvent
 from app.models.class_schedule_slot import (
     ClassScheduleSlot,
     ClassScheduleSlotStaff,
+    ClassScheduleSlotStaffRevision,
     ClassScheduleSlotTeacherEvent,
 )
 from app.models.class_teacher import ClassTeacher
 from app.models.class_teacher_event import ClassTeacherEvent
 from app.models.enrollment import Enrollment
+from app.models.billing_anchor_revision import BillingAnchorRevision
+from app.models.class_billing_cycle_revision import ClassBillingCycleRevision
 from app.models.enrollment_slot_selection import EnrollmentSlotSelection
 from app.models.enrollment_service_credit_event import (
     EnrollmentServiceCreditEvent,
@@ -43,6 +46,14 @@ from app.models.staff_attendance import (
 )
 from app.models.student import Student
 from app.models.student_lifecycle_event import StudentLifecycleEvent
+from app.models.student_membership_command import (
+    StudentMembershipCommandItem,
+    StudentMembershipCommandRecord,
+)
+from app.models.start_date_change_command import (
+    StartDateChangeCommandItem,
+    StartDateChangeCommandRecord,
+)
 from app.models.user import Profile
 from app.models.user_device_session import UserDeviceSession
 from app.models.invitation import AccountInvitation
@@ -62,6 +73,7 @@ __all__ = [
     "ClassLifecycleEvent",
     "ClassScheduleSlot",
     "ClassScheduleSlotStaff",
+    "ClassScheduleSlotStaffRevision",
     "ClassScheduleSlotTeacherEvent",
     "ClassTeacher",
     "ClassTeacherEvent",
@@ -71,6 +83,8 @@ __all__ = [
     "ClassSessionStaffSnapshot",
     "ClassSessionStudentSnapshot",
     "Enrollment",
+    "BillingAnchorRevision",
+    "ClassBillingCycleRevision",
     "EnrollmentSlotSelection",
     "EnrollmentServiceCreditEvent",
     "ServiceCreditAllocation",
@@ -96,6 +110,10 @@ __all__ = [
     "StaffAccountLinkEvent",
     "Student",
     "StudentLifecycleEvent",
+    "StudentMembershipCommandRecord",
+    "StudentMembershipCommandItem",
+    "StartDateChangeCommandRecord",
+    "StartDateChangeCommandItem",
     "UserDeviceSession",
     "AccountInvitation",
     "AuthFlowSession",

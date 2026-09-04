@@ -84,8 +84,44 @@ from app.services.fee_message_draft_service import (
     save_fee_message_draft as save_group_fee_message_draft,
 )
 from app.services.fee_operation_service import FeeOperationActorSnapshot
+from app.schemas.billing_anchor import (
+    BillingReviewListResponse,
+    BillingReviewResolveRequest,
+    BillingReviewResponse,
+)
+from app.services.billing_anchor_service import (
+    list_billing_reviews,
+    resolve_billing_review,
+)
 
 router = APIRouter(tags=["fees"])
+
+
+@router.get("/billing-reviews", response_model=BillingReviewListResponse)
+async def read_billing_reviews(
+    state: str = Query(default="PENDING", pattern="^(PENDING|CONFIRMED|SUPERSEDED)$"),
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> BillingReviewListResponse:
+    return await list_billing_reviews(db, state=state)
+
+
+@router.post(
+    "/billing-reviews/{review_id}/resolve",
+    response_model=BillingReviewResponse,
+)
+async def resolve_billing_review_route(
+    review_id: UUID,
+    payload: BillingReviewResolveRequest,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> BillingReviewResponse:
+    review = await resolve_billing_review(
+        db, review_id, payload, actor_user_id=principal.user_id
+    )
+    if review is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy thay đổi cần kiểm tra")
+    return review
 
 
 @router.get("/periods", response_model=FeePeriodListResponse)

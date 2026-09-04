@@ -1,10 +1,8 @@
-"""Shared, date-authoritative lifecycle rules for class consumers.
+"""Shared open-ended lifecycle rules for every class consumer.
 
-R6: lifecycle statuses are only `LEGACY` (display), `SCHEDULED`, `ACTIVE`,
-`COMPLETED`, `CANCELLED`. Planned `start_date`/`end_date` drive the status;
-pending make-up obligations never extend the class (no FINALIZING, no
-`operational_end_date` at runtime) — they stay visible inside the completed
-class history.
+The planned start date opens the class.  No planned end date closes it: a
+management command writes ``stopped_on``/``stopped_at`` explicitly.  Legacy
+``completed_at`` rows remain readable during the expand/cutover migration.
 """
 
 from datetime import date
@@ -25,21 +23,20 @@ def effective_class_status(
     reference = today or business_today()
     if getattr(class_, "cancelled_at", None) is not None:
         return "CANCELLED"
-    if getattr(class_, "completed_at", None) is not None:
-        return "COMPLETED"
+    if getattr(class_, "stopped_at", None) is not None or getattr(
+        class_, "completed_at", None
+    ) is not None:
+        return "STOPPED"
     if not bool(getattr(class_, "is_active", False)):
         return "CANCELLED"
     if (
         getattr(class_, "identity_scheme", "LEGACY") == "LEGACY"
         or getattr(class_, "start_date", None) is None
-        or getattr(class_, "end_date", None) is None
     ):
         return "LEGACY"
     if reference < class_.start_date:
         return "SCHEDULED"
-    if reference <= class_.end_date:
-        return "ACTIVE"
-    return "COMPLETED"
+    return "ACTIVE"
 
 
 def is_operational_class(class_: Any, *, today: date | None = None) -> bool:
@@ -55,7 +52,6 @@ def is_active_class_today(class_: Any, *, today: date | None = None) -> bool:
 
 
 def operational_class_predicate(today: date | None = None):
-    reference = today or business_today()
     return and_(
         Class.is_active.is_(True),
         Class.cancelled_at.is_(None),
@@ -63,9 +59,8 @@ def operational_class_predicate(today: date | None = None):
             Class.identity_scheme == "LEGACY",
             and_(
                 Class.completed_at.is_(None),
+                Class.stopped_at.is_(None),
                 Class.start_date.is_not(None),
-                Class.end_date.is_not(None),
-                Class.end_date >= reference,
             ),
         ),
     )
@@ -80,8 +75,8 @@ def active_class_today_predicate(today: date | None = None):
             Class.identity_scheme == "LEGACY",
             and_(
                 Class.completed_at.is_(None),
+                Class.stopped_at.is_(None),
                 Class.start_date <= reference,
-                Class.end_date >= reference,
             ),
         ),
     )

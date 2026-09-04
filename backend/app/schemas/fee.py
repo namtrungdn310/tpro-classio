@@ -135,6 +135,10 @@ class FeeRecordResponse(BaseModel):
     coverage_start: date | None = None
     coverage_end: date | None = None
     origin: str | None = None
+    requires_review: bool = False
+    billing_review_id: UUID | None = None
+    is_final_cycle: bool = False
+    final_cycle_reason: str | None = None
     base_amount: int
     discount_amount: int
     final_amount: int
