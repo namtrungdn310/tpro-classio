@@ -2,9 +2,7 @@ from pathlib import Path
 
 
 SCRIPT = (
-    Path(__file__).resolve().parents[1]
-    / "scripts"
-    / "purge_archived_demo_workspace.py"
+    Path(__file__).resolve().parents[1] / "scripts" / "purge_archived_demo_workspace.py"
 )
 
 

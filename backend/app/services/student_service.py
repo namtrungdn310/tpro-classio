@@ -104,7 +104,9 @@ def _clean_payload(payload: dict) -> dict:
     return cleaned
 
 
-def _membership_command_hash(student_id: UUID, command: StudentMembershipCommand) -> str:
+def _membership_command_hash(
+    student_id: UUID, command: StudentMembershipCommand
+) -> str:
     payload = command.model_dump(mode="json", exclude={"expected_preview_fingerprint"})
     canonical = json.dumps(
         {"student_id": str(student_id), "command": payload},
@@ -286,7 +288,9 @@ async def get_students(
                 if class_id:
                     if cursor_row.student_code is None:
                         statement = statement.where(
-                            and_(Student.student_code.is_(None), Student.id > str(cursor))
+                            and_(
+                                Student.student_code.is_(None), Student.id > str(cursor)
+                            )
                         )
                     else:
                         statement = statement.where(
@@ -695,9 +699,9 @@ async def apply_student_membership_command(
         update.enrollment_date is not None for update in command.enrollment_updates
     )
     requires_preview = (
-        (command.contract_version in (2, 3) and (bool(command.targets) or has_date_change))
-        or command.expected_preview_fingerprint is not None
-    )
+        command.contract_version in (2, 3)
+        and (bool(command.targets) or has_date_change)
+    ) or command.expected_preview_fingerprint is not None
     if requires_preview:
         if not command.expected_preview_fingerprint:
             raise HTTPException(
@@ -821,7 +825,9 @@ async def apply_student_membership_command(
             enrollment.custom_fee = update.custom_fee
         if "enrollment_date" in fields:
             if update.enrollment_date is None:
-                raise HTTPException(status_code=422, detail="Ngày bắt đầu không được để trống")
+                raise HTTPException(
+                    status_code=422, detail="Ngày bắt đầu không được để trống"
+                )
             from app.services.enrollment_service import resolve_enrollment_date
             from app.services.billing_anchor_service import reanchor_enrollment_billing
 

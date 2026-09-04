@@ -99,9 +99,7 @@ def test_preview_fingerprint_changes_with_mutable_projection() -> None:
         billing_cycle_weeks=4,
     )
     enrollment = _enrollment([])
-    first = _impact_for_enrollment(
-        enrollment, previous_weeks=4, today=date(2026, 9, 2)
-    )
+    first = _impact_for_enrollment(enrollment, previous_weeks=4, today=date(2026, 9, 2))
     original = _fingerprint(class_, next_weeks=6, impacts=[first])
     enrollment.fee_records.append(
         _fee("new-projection", date(2026, 9, 26), date(2026, 10, 24))
@@ -110,18 +108,14 @@ def test_preview_fingerprint_changes_with_mutable_projection() -> None:
         class_,
         next_weeks=6,
         impacts=[
-            _impact_for_enrollment(
-                enrollment, previous_weeks=4, today=date(2026, 9, 2)
-            )
+            _impact_for_enrollment(enrollment, previous_weeks=4, today=date(2026, 9, 2))
         ],
     )
     assert original != changed
 
 
 def test_duration_command_rejects_monthly_and_stopped_classes() -> None:
-    request = ClassBillingCyclePreviewRequest(
-        billing_cycle_weeks=6, expected_version=2
-    )
+    request = ClassBillingCyclePreviewRequest(billing_cycle_weeks=6, expected_version=2)
     monthly = SimpleNamespace(
         version=2,
         type="MONTHLY",
@@ -152,9 +146,7 @@ def test_next_due_uses_confirmed_revision_cadence_not_current_class_value() -> N
     enrollment = SimpleNamespace(
         status="active",
         enrollment_date=date(2026, 8, 1),
-        class_=SimpleNamespace(
-            type="COURSE", billing_cycle_weeks=4, stopped_on=None
-        ),
+        class_=SimpleNamespace(type="COURSE", billing_cycle_weeks=4, stopped_on=None),
         current_billing_revision_id=revision_id,
         current_billing_revision=SimpleNamespace(
             anchor_date=date(2026, 9, 26),

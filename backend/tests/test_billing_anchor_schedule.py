@@ -11,18 +11,14 @@ from app.core.billing_schedule import (
 
 def test_monthly_far_past_anchor_uses_next_due_without_backfill() -> None:
     anchor = date(2025, 8, 1)
-    cycle = first_actionable_cycle(
-        anchor, "MONTHLY", None, today=date(2026, 8, 31)
-    )
+    cycle = first_actionable_cycle(anchor, "MONTHLY", None, today=date(2026, 8, 31))
     assert cycle == 13
     assert cycle_base_due_date(anchor, "MONTHLY", None, cycle) == date(2026, 9, 1)
 
 
 def test_four_week_package_uses_current_package_not_next_package() -> None:
     anchor = date(2026, 8, 1)
-    cycle = first_actionable_cycle(
-        anchor, "COURSE", 4, today=date(2026, 8, 31)
-    )
+    cycle = first_actionable_cycle(anchor, "COURSE", 4, today=date(2026, 8, 31))
     assert cycle == 1
     assert cycle_coverage_interval(anchor, "COURSE", 4, cycle) == (
         date(2026, 8, 29),

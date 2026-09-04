@@ -153,8 +153,7 @@ async def preview_suspension(
                 int(
                     revision.billing_cycle_weeks_snapshot
                     if revision is not None
-                    else enrollment.class_.billing_cycle_weeks
-                    or 1
+                    else enrollment.class_.billing_cycle_weeks or 1
                 )
                 if billing_type == "COURSE"
                 else None

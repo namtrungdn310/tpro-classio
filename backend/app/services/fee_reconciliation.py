@@ -39,7 +39,9 @@ def is_fee_record_protected(record: FeeRecord) -> bool:
         return True
     if getattr(record, "status", None) in ("REFUNDED", "PARTIALLY_REFUNDED"):
         return True
-    if "payments" in getattr(record, "__dict__", {}) and bool(record.__dict__["payments"]):
+    if "payments" in getattr(record, "__dict__", {}) and bool(
+        record.__dict__["payments"]
+    ):
         return True
     return False
 

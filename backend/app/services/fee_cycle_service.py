@@ -40,7 +40,10 @@ async def lock_enrollment_cycle_identity(db: AsyncSession, enrollment_id: str) -
 
 def _enrollment_cycle_weeks(enrollment: Enrollment) -> int | None:
     revision = enrollment.__dict__.get("current_billing_revision")
-    if revision is not None and getattr(revision, "billing_type_snapshot", None) == "COURSE":
+    if (
+        revision is not None
+        and getattr(revision, "billing_type_snapshot", None) == "COURSE"
+    ):
         return max(int(revision.billing_cycle_weeks_snapshot or 1), 1)
     class_ = getattr(enrollment, "class_", None)
     if class_ is None:
@@ -104,7 +107,9 @@ async def create_cycle_zero(
             else int(class_.base_fee)
         )
     anchor_cycle = int(revision.first_anchor_cycle_no or 0)
-    billing_type = _enrollment_billing_type(enrollment) if class_ is not None else "MONTHLY"
+    billing_type = (
+        _enrollment_billing_type(enrollment) if class_ is not None else "MONTHLY"
+    )
     cycle_weeks = _enrollment_cycle_weeks(enrollment)
     due = cycle_base_due_date(enrollment_date, billing_type, cycle_weeks, anchor_cycle)
     coverage_start, coverage_end = cycle_coverage_interval(
@@ -122,7 +127,11 @@ async def create_cycle_zero(
         adjusted_due_date=due,
         coverage_start=coverage_start,
         coverage_end=coverage_end,
-        origin=("INITIAL_BACKDATED" if anchor_cycle > 0 or due < business_today() else CYCLE_ORIGIN_GENERATOR),
+        origin=(
+            "INITIAL_BACKDATED"
+            if anchor_cycle > 0 or due < business_today()
+            else CYCLE_ORIGIN_GENERATOR
+        ),
         enrollment_date_snapshot=enrollment_date,
         class_name_snapshot=class_.name if class_ is not None else None,
         class_type_snapshot=(
@@ -131,7 +140,9 @@ async def create_cycle_zero(
         billing_cycle_months_snapshot=(
             revision.billing_cycle_months_snapshot
             if revision is not None
-            else class_.billing_cycle_months if class_ is not None else 1
+            else class_.billing_cycle_months
+            if class_ is not None
+            else 1
         ),
         billing_cycle_weeks_snapshot=_enrollment_cycle_weeks(enrollment),
         base_amount=amount,
@@ -293,8 +304,12 @@ async def ensure_final_cycle_for_stop(
     await lock_enrollment_cycle_identity(db, enrollment.id)
     revision: BillingAnchorRevision | None = None
     if enrollment.current_billing_revision_id:
-        revision = await db.get(BillingAnchorRevision, enrollment.current_billing_revision_id)
-    anchor = revision.anchor_date if revision is not None else enrollment.enrollment_date
+        revision = await db.get(
+            BillingAnchorRevision, enrollment.current_billing_revision_id
+        )
+    anchor = (
+        revision.anchor_date if revision is not None else enrollment.enrollment_date
+    )
     last_active = stopped_on - timedelta(days=1)
     if anchor > last_active:
         return None
@@ -304,7 +319,9 @@ async def ensure_final_cycle_for_stop(
         else _enrollment_cycle_weeks(enrollment)
     )
     billing_type = (
-        revision.billing_type_snapshot if revision is not None else enrollment.class_.type
+        revision.billing_type_snapshot
+        if revision is not None
+        else enrollment.class_.type
     )
     if billing_type == "COURSE":
         anchor_cycle = course_cycle_containing(anchor, weeks or 1, last_active)

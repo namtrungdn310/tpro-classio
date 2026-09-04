@@ -850,7 +850,9 @@ async def _collect_recurring_against_makeup_conflicts(
     if start_date is not None:
         filters.append(
             ClassSessionException.replacement_start_at
-            >= datetime.combine(start_date, datetime.min.time(), tzinfo=BUSINESS_TIMEZONE)
+            >= datetime.combine(
+                start_date, datetime.min.time(), tzinfo=BUSINESS_TIMEZONE
+            )
         )
     if end_date is not None:
         filters.append(
@@ -886,9 +888,10 @@ async def _collect_recurring_against_makeup_conflicts(
             }
             if busy_staff_id not in slot_staff or slot.day != day:
                 continue
-            if slot.start >= local_end.strftime("%H:%M") or local_start.strftime(
-                "%H:%M"
-            ) >= slot.end:
+            if (
+                slot.start >= local_end.strftime("%H:%M")
+                or local_start.strftime("%H:%M") >= slot.end
+            ):
                 continue
             conflicts.append(
                 {

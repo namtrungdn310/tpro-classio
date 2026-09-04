@@ -25,5 +25,11 @@ def test_membership_audit_is_not_mutable_or_browser_accessible() -> None:
     sql = MIGRATION.read_text(encoding="utf-8").lower()
     assert "student membership command audit is immutable" in sql
     assert "student membership command items are append-only" in sql
-    assert "revoke all on table public.student_membership_commands from public, anon, authenticated" in sql
-    assert "revoke all on table public.student_membership_command_items from public, anon, authenticated" in sql
+    assert (
+        "revoke all on table public.student_membership_commands from public, anon, authenticated"
+        in sql
+    )
+    assert (
+        "revoke all on table public.student_membership_command_items from public, anon, authenticated"
+        in sql
+    )

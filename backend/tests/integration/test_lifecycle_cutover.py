@@ -201,11 +201,11 @@ async def test_legacy_end_date_does_not_complete_class_or_hide_history() -> None
         async with AsyncSessionLocal() as check:
             row = (
                 await check.execute(
-                        text(
-                            "select is_active, completed_at, stopped_at "
-                            "from public.classes "
-                            "where id = :id"
-                        ),
+                    text(
+                        "select is_active, completed_at, stopped_at "
+                        "from public.classes "
+                        "where id = :id"
+                    ),
                     {"id": class_id},
                 )
             ).one()

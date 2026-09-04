@@ -356,7 +356,11 @@ async def test_update_changes_only_the_selected_enrollment_date() -> None:
         ) as reconcile,
         patch(
             "app.services.billing_anchor_service.reanchor_enrollment_billing",
-            new=AsyncMock(side_effect=lambda _db, enrollment, **kwargs: setattr(enrollment, "enrollment_date", kwargs["new_anchor"])),
+            new=AsyncMock(
+                side_effect=lambda _db, enrollment, **kwargs: setattr(
+                    enrollment, "enrollment_date", kwargs["new_anchor"]
+                )
+            ),
         ),
         patch(
             "app.services.enrollment_service.realign_open_slot_selections",

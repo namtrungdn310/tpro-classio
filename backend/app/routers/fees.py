@@ -120,7 +120,9 @@ async def resolve_billing_review_route(
         db, review_id, payload, actor_user_id=principal.user_id
     )
     if review is None:
-        raise HTTPException(status_code=404, detail="Không tìm thấy thay đổi cần kiểm tra")
+        raise HTTPException(
+            status_code=404, detail="Không tìm thấy thay đổi cần kiểm tra"
+        )
     return review
 
 

@@ -1,6 +1,16 @@
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, Numeric, Text, UniqueConstraint, func, text
+from sqlalchemy import (
+    Date,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -27,7 +37,9 @@ class StudentMembershipCommandRecord(WorkspaceScoped, Base):
     payload_hash: Mapped[str] = mapped_column(Text, nullable=False)
     preview_fingerprint: Mapped[str | None] = mapped_column(Text)
     student_id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False), ForeignKey("students.id", ondelete="RESTRICT"), nullable=False
+        UUID(as_uuid=False),
+        ForeignKey("students.id", ondelete="RESTRICT"),
+        nullable=False,
     )
     source_enrollment_id: Mapped[str | None] = mapped_column(
         UUID(as_uuid=False), ForeignKey("enrollments.id", ondelete="RESTRICT")
@@ -70,14 +82,20 @@ class StudentMembershipCommandItem(WorkspaceScoped, Base):
         nullable=False,
     )
     class_id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False), ForeignKey("classes.id", ondelete="RESTRICT"), nullable=False
+        UUID(as_uuid=False),
+        ForeignKey("classes.id", ondelete="RESTRICT"),
+        nullable=False,
     )
     enrollment_id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False), ForeignKey("enrollments.id", ondelete="RESTRICT"), nullable=False
+        UUID(as_uuid=False),
+        ForeignKey("enrollments.id", ondelete="RESTRICT"),
+        nullable=False,
     )
     requested_start: Mapped[date | None] = mapped_column(Date)
     resolved_start: Mapped[date] = mapped_column(Date, nullable=False)
     custom_fee_snapshot: Mapped[int | None] = mapped_column(Numeric(12, 0))
-    selected_slot_ids: Mapped[list[str] | None] = mapped_column(ARRAY(UUID(as_uuid=False)))
+    selected_slot_ids: Mapped[list[str] | None] = mapped_column(
+        ARRAY(UUID(as_uuid=False))
+    )
 
     command = relationship("StudentMembershipCommandRecord", back_populates="items")

@@ -165,36 +165,43 @@ async def test_future_transfer_uses_effective_boundary_and_is_exactly_once() -> 
         assert source_row.ended_on == transfer_on
         assert target_row.status == "active"
         assert target_row.enrollment_date == transfer_on
-        assert await db.scalar(
-            select(BillingAnchorRevision.state).where(
-                BillingAnchorRevision.enrollment_id == target_row.id
+        assert (
+            await db.scalar(
+                select(BillingAnchorRevision.state).where(
+                    BillingAnchorRevision.enrollment_id == target_row.id
+                )
             )
-        ) == "CONFIRMED"
+            == "CONFIRMED"
+        )
 
         replay = await apply_student_membership_command(
             db, UUID(student_id), command, actor_user_id=None
         )
         assert replay is not None
-        assert await db.scalar(
-            text(
-                "select count(*) from public.student_membership_commands "
-                "where request_id = :request_id"
-            ),
-            {"request_id": str(request_id)},
-        ) == 1
-        assert await db.scalar(
-            text(
-                "select count(*) from public.student_membership_command_items item "
-                "join public.student_membership_commands command on command.id = item.command_id "
-                "where command.request_id = :request_id"
-            ),
-            {"request_id": str(request_id)},
-        ) == 1
+        assert (
+            await db.scalar(
+                text(
+                    "select count(*) from public.student_membership_commands "
+                    "where request_id = :request_id"
+                ),
+                {"request_id": str(request_id)},
+            )
+            == 1
+        )
+        assert (
+            await db.scalar(
+                text(
+                    "select count(*) from public.student_membership_command_items item "
+                    "join public.student_membership_commands command on command.id = item.command_id "
+                    "where command.request_id = :request_id"
+                ),
+                {"request_id": str(request_id)},
+            )
+            == 1
+        )
 
         changed = command.model_copy(
-            update={
-                "targets": [target.model_copy(update={"custom_fee": 700000})]
-            }
+            update={"targets": [target.model_copy(update={"custom_fee": 700000})]}
         )
         with pytest.raises(HTTPException) as mismatch:
             await apply_student_membership_command(

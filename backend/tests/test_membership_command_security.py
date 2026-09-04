@@ -35,7 +35,9 @@ def test_student_membership_command_rejects_missing_fingerprint_on_contract_v2()
             targets=[target],
             expected_preview_fingerprint=None,
         )
-    assert "Yêu cầu thay đổi lớp bắt buộc phải có mã xác thực xem trước" in str(exc.value)
+    assert "Yêu cầu thay đổi lớp bắt buộc phải có mã xác thực xem trước" in str(
+        exc.value
+    )
 
 
 def test_student_membership_command_rejects_malformed_fingerprint():
@@ -52,7 +54,9 @@ def test_student_membership_command_rejects_malformed_fingerprint():
             targets=[target],
             expected_preview_fingerprint="not-a-64-char-hex",
         )
-    assert "pattern" in str(exc.value).lower() or "expected_preview_fingerprint" in str(exc.value)
+    assert "pattern" in str(exc.value).lower() or "expected_preview_fingerprint" in str(
+        exc.value
+    )
 
 
 @pytest.mark.asyncio
@@ -65,6 +69,7 @@ async def test_preview_detects_mutual_target_schedule_conflict():
         status="active",
         updated_at=now,
     )
+
     def mock_scalar(stmt):
         text_stmt = str(stmt)
         if "count(" in text_stmt.lower():
@@ -126,9 +131,15 @@ async def test_preview_detects_mutual_target_schedule_conflict():
         res = MagicMock()
         if "FROM classes" in text_stmt:
             res.all.return_value = [class_1, class_2]
-        elif f"class_schedule_slots.class_id = '{class_1_id}'" in text_stmt or f"class_id = '{class_1_id}'" in text_stmt:
+        elif (
+            f"class_schedule_slots.class_id = '{class_1_id}'" in text_stmt
+            or f"class_id = '{class_1_id}'" in text_stmt
+        ):
             res.all.return_value = [slot_1]
-        elif f"class_schedule_slots.class_id = '{class_2_id}'" in text_stmt or f"class_id = '{class_2_id}'" in text_stmt:
+        elif (
+            f"class_schedule_slots.class_id = '{class_2_id}'" in text_stmt
+            or f"class_id = '{class_2_id}'" in text_stmt
+        ):
             res.all.return_value = [slot_2]
         elif "FROM class_schedule_slots" in text_stmt:
             res.all.return_value = [slot_1, slot_2]
@@ -176,6 +187,7 @@ async def test_preview_allows_adjacent_sessions_without_conflict():
         status="active",
         updated_at=now,
     )
+
     def mock_scalar(stmt):
         text_stmt = str(stmt)
         if "count(" in text_stmt.lower():
@@ -347,7 +359,10 @@ async def test_preview_fingerprint_changes_with_source_fee_state():
                 return 1
             if "FROM students" in text:
                 return student
-            if "SELECT enrollments.id \nFROM" in text or "SELECT enrollments.id\nFROM" in text:
+            if (
+                "SELECT enrollments.id \nFROM" in text
+                or "SELECT enrollments.id\nFROM" in text
+            ):
                 return None
             if "FROM enrollments" in text:
                 return source_enrollment

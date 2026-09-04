@@ -20,7 +20,7 @@ def test_ui_seed_fails_closed_in_production() -> None:
 def test_ui_seed_uses_open_ended_structured_classes() -> None:
     assert 'identity_scheme="ACADEMIC_YEAR"' in SEED_SOURCE
     assert "effective_until=(completed.date() if completed else None)" in SEED_SOURCE
-    assert 'stopped_reason=(' in SEED_SOURCE
+    assert "stopped_reason=(" in SEED_SOURCE
     assert 'identity_scheme="LEGACY"' not in SEED_SOURCE
 
 

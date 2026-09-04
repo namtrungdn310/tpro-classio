@@ -28,7 +28,10 @@ from app.schemas.billing_decision import (
     BillingDecisionCode,
     BillingDecisionOption,
 )
-from app.services.fee_reconciliation import is_fee_record_mutable, is_fee_record_protected
+from app.services.fee_reconciliation import (
+    is_fee_record_mutable,
+    is_fee_record_protected,
+)
 
 
 def cycle_covering_date(
@@ -44,7 +47,9 @@ def cycle_covering_date(
         weeks = max(int(cycle_weeks or 1), 1)
         return course_cycle_containing(anchor, weeks, target_date)
     # MONTHLY
-    months = max(0, (target_date.year - anchor.year) * 12 + target_date.month - anchor.month)
+    months = max(
+        0, (target_date.year - anchor.year) * 12 + target_date.month - anchor.month
+    )
     if add_months_clamped(anchor, months) > target_date:
         months = max(0, months - 1)
     return months
@@ -119,8 +124,7 @@ def compute_billing_decisions_for_enrollment(
 
     # Has any payment or notice occurred on the current or upcoming cycle?
     current_or_future_protected = [
-        f for f in protected_fees
-        if f.coverage_end is None or f.coverage_end >= today
+        f for f in protected_fees if f.coverage_end is None or f.coverage_end >= today
     ]
     has_current_protected = len(current_or_future_protected) > 0
 
@@ -136,13 +140,13 @@ def compute_billing_decisions_for_enrollment(
     if is_new_enrollment:
         disabled_reason_keep = "Học viên mới chưa có lịch thu trước đó"
     elif not can_keep_existing:
-        disabled_reason_keep = (
-            "Không thể giữ lịch cũ khi ngày mới dời muộn hơn mốc bắt đầu của kỳ hiện tại"
-        )
+        disabled_reason_keep = "Không thể giữ lịch cũ khi ngày mới dời muộn hơn mốc bắt đầu của kỳ hiện tại"
 
     old_anchor = old_enrollment_date
     c_exist = cycle_covering_date(old_anchor, billing_type, cycle_weeks, today)
-    c_exist_start, c_exist_end = cycle_coverage_interval(old_anchor, billing_type, cycle_weeks, c_exist)
+    c_exist_start, c_exist_end = cycle_coverage_interval(
+        old_anchor, billing_type, cycle_weeks, c_exist
+    )
     c_exist_due = cycle_base_due_date(old_anchor, billing_type, cycle_weeks, c_exist)
 
     decisions.append(
@@ -165,7 +169,9 @@ def compute_billing_decisions_for_enrollment(
             revoked_payment_request_count=0,
             review_required=False,
             allowed=can_keep_existing,
-            recommended=can_keep_existing and not has_current_protected and new_enrollment_date <= old_enrollment_date,
+            recommended=can_keep_existing
+            and not has_current_protected
+            and new_enrollment_date <= old_enrollment_date,
             disabled_reason=disabled_reason_keep,
         )
     )
@@ -173,14 +179,22 @@ def compute_billing_decisions_for_enrollment(
     # 2. KEEP_CURRENT_THEN_REANCHOR
     # Keep protected records. Supersede future mutables. Start new anchor after protected coverage.
     floor_for_next = max(today, protected_through) if protected_through else today
-    c_then_reanchor = next_canonical_cycle_on_or_after(new_enrollment_date, billing_type, cycle_weeks, floor_for_next)
-    c_tr_start, c_tr_end = cycle_coverage_interval(new_enrollment_date, billing_type, cycle_weeks, c_then_reanchor)
-    c_tr_due = cycle_base_due_date(new_enrollment_date, billing_type, cycle_weeks, c_then_reanchor)
+    c_then_reanchor = next_canonical_cycle_on_or_after(
+        new_enrollment_date, billing_type, cycle_weeks, floor_for_next
+    )
+    c_tr_start, c_tr_end = cycle_coverage_interval(
+        new_enrollment_date, billing_type, cycle_weeks, c_then_reanchor
+    )
+    c_tr_due = cycle_base_due_date(
+        new_enrollment_date, billing_type, cycle_weeks, c_then_reanchor
+    )
 
     # Future mutables starting on or after protected_through will be superseded
     superseded_in_tr = [
-        f for f in mutable_fees
-        if protected_through is None or (f.coverage_start and f.coverage_start >= protected_through)
+        f
+        for f in mutable_fees
+        if protected_through is None
+        or (f.coverage_start and f.coverage_start >= protected_through)
     ]
     kept_in_tr = len(active_fees) - len(superseded_in_tr)
 
@@ -201,7 +215,9 @@ def compute_billing_decisions_for_enrollment(
             superseded_fee_count=len(superseded_in_tr),
             skipped_cycle_count=c_then_reanchor,
             protected_fee_count=len(protected_fees),
-            revoked_payment_request_count=open_payment_request_count if superseded_in_tr else 0,
+            revoked_payment_request_count=open_payment_request_count
+            if superseded_in_tr
+            else 0,
             review_required=False,
             allowed=True,
             recommended=has_current_protected,
@@ -212,8 +228,12 @@ def compute_billing_decisions_for_enrollment(
     # 3. REANCHOR_CURRENT_CYCLE
     # Recalculates from new_enrollment_date and takes the cycle covering business today.
     c_curr = cycle_covering_date(new_enrollment_date, billing_type, cycle_weeks, today)
-    c_curr_start, c_curr_end = cycle_coverage_interval(new_enrollment_date, billing_type, cycle_weeks, c_curr)
-    c_curr_due = cycle_base_due_date(new_enrollment_date, billing_type, cycle_weeks, c_curr)
+    c_curr_start, c_curr_end = cycle_coverage_interval(
+        new_enrollment_date, billing_type, cycle_weeks, c_curr
+    )
+    c_curr_due = cycle_base_due_date(
+        new_enrollment_date, billing_type, cycle_weeks, c_curr
+    )
 
     is_future_start = new_enrollment_date > today
     can_reanchor_curr = not is_future_start or c_curr == 0
@@ -236,25 +256,37 @@ def compute_billing_decisions_for_enrollment(
             superseded_fee_count=len(mutable_fees),
             skipped_cycle_count=c_curr,
             protected_fee_count=len(protected_fees),
-            revoked_payment_request_count=open_payment_request_count if mutable_fees else 0,
+            revoked_payment_request_count=open_payment_request_count
+            if mutable_fees
+            else 0,
             review_required=c_curr_due < today or has_current_protected,
             allowed=can_reanchor_curr,
-            recommended=not has_current_protected and not is_future_start and c_curr_due >= today,
-            disabled_reason="Ngày bắt đầu ở tương lai; kỳ thu đầu tiên bắt đầu từ ngày nhập học" if not can_reanchor_curr else None,
+            recommended=not has_current_protected
+            and not is_future_start
+            and c_curr_due >= today,
+            disabled_reason="Ngày bắt đầu ở tương lai; kỳ thu đầu tiên bắt đầu từ ngày nhập học"
+            if not can_reanchor_curr
+            else None,
         )
     )
 
     # 4. REANCHOR_NEXT_BOUNDARY
     # Skip past uncharged cycles, start at first boundary >= today
-    c_next = next_canonical_cycle_on_or_after(new_enrollment_date, billing_type, cycle_weeks, today)
+    c_next = next_canonical_cycle_on_or_after(
+        new_enrollment_date, billing_type, cycle_weeks, today
+    )
     # If today matches start date exactly or start date is in future, c_next is 0 or 1
     if is_future_start:
         c_next = 0
     elif c_next == 0 and new_enrollment_date < today:
         c_next = 1
 
-    c_next_start, c_next_end = cycle_coverage_interval(new_enrollment_date, billing_type, cycle_weeks, c_next)
-    c_next_due = cycle_base_due_date(new_enrollment_date, billing_type, cycle_weeks, c_next)
+    c_next_start, c_next_end = cycle_coverage_interval(
+        new_enrollment_date, billing_type, cycle_weeks, c_next
+    )
+    c_next_due = cycle_base_due_date(
+        new_enrollment_date, billing_type, cycle_weeks, c_next
+    )
 
     decisions.append(
         BillingDecisionOption(
@@ -273,10 +305,13 @@ def compute_billing_decisions_for_enrollment(
             superseded_fee_count=len(mutable_fees),
             skipped_cycle_count=c_next,
             protected_fee_count=len(protected_fees),
-            revoked_payment_request_count=open_payment_request_count if mutable_fees else 0,
+            revoked_payment_request_count=open_payment_request_count
+            if mutable_fees
+            else 0,
             review_required=False,
             allowed=True,
-            recommended=not has_current_protected and (new_enrollment_date < today or is_future_start),
+            recommended=not has_current_protected
+            and (new_enrollment_date < today or is_future_start),
             disabled_reason=None,
         )
     )
@@ -304,7 +339,9 @@ def compute_billing_decisions_for_enrollment(
             superseded_fee_count=len(mutable_fees),
             skipped_cycle_count=c_next,
             protected_fee_count=len(protected_fees),
-            revoked_payment_request_count=open_payment_request_count if mutable_fees else 0,
+            revoked_payment_request_count=open_payment_request_count
+            if mutable_fees
+            else 0,
             review_required=True,
             allowed=True,
             recommended=False,
@@ -317,7 +354,10 @@ def compute_billing_decisions_for_enrollment(
     has_rec = any(d.recommended for d in decisions if d.allowed)
     if not has_rec:
         for d in decisions:
-            if d.decision_code == BillingDecisionCode.REANCHOR_NEXT_BOUNDARY and d.allowed:
+            if (
+                d.decision_code == BillingDecisionCode.REANCHOR_NEXT_BOUNDARY
+                and d.allowed
+            ):
                 d.recommended = True
                 break
 

@@ -58,23 +58,22 @@ def test_effective_state_supports_scheduled_transfer_source() -> None:
         status="dropped",
         ended=date(2026, 10, 1),
     )
-    assert effective_enrollment_state(
-        enrollment, reference=date(2026, 9, 30)
-    ) == "CURRENT"
-    assert effective_enrollment_state(
-        enrollment, reference=date(2026, 10, 1)
-    ) == "ENDED"
+    assert (
+        effective_enrollment_state(enrollment, reference=date(2026, 9, 30)) == "CURRENT"
+    )
+    assert (
+        effective_enrollment_state(enrollment, reference=date(2026, 10, 1)) == "ENDED"
+    )
 
 
 def test_effective_state_distinguishes_future_and_legacy_ended_rows() -> None:
     future = _enrollment(started=date(2026, 10, 1))
     legacy_dropped = _enrollment(started=date(2025, 1, 1), status="dropped")
-    assert effective_enrollment_state(
-        future, reference=date(2026, 9, 1)
-    ) == "SCHEDULED"
-    assert effective_enrollment_state(
-        legacy_dropped, reference=date(2026, 9, 1)
-    ) == "ENDED"
+    assert effective_enrollment_state(future, reference=date(2026, 9, 1)) == "SCHEDULED"
+    assert (
+        effective_enrollment_state(legacy_dropped, reference=date(2026, 9, 1))
+        == "ENDED"
+    )
 
 
 def test_effective_sql_predicate_uses_half_open_ended_on_boundary() -> None:
@@ -126,7 +125,9 @@ def test_v2_command_and_preview_require_explicit_target_date() -> None:
 
 
 @pytest.mark.asyncio
-async def test_initial_backdated_monthly_revision_skips_old_debt_and_requires_review() -> None:
+async def test_initial_backdated_monthly_revision_skips_old_debt_and_requires_review() -> (
+    None
+):
     enrollment = _enrollment(started=date(2025, 8, 1))
     db = SimpleNamespace(add=Mock(), flush=AsyncMock(), get=AsyncMock())
 

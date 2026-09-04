@@ -138,11 +138,7 @@ async def preview_student_membership(
                 Enrollment.status != "cancelled",
                 Enrollment.enrollment_date < target_end,
                 or_(Enrollment.ended_on.is_(None), Enrollment.ended_on > resolved),
-                *(
-                    [Enrollment.id != source.id]
-                    if source is not None
-                    else []
-                ),
+                *([Enrollment.id != source.id] if source is not None else []),
             )
         )
         if duplicate is not None:
@@ -172,8 +168,7 @@ async def preview_student_membership(
         )
         if target.selected_slot_ids is not None:
             valid_count = await db.scalar(
-                select(func.count(ClassScheduleSlot.id))
-                .where(
+                select(func.count(ClassScheduleSlot.id)).where(
                     ClassScheduleSlot.id.in_(selected_ids),
                     ClassScheduleSlot.class_id == class_.id,
                     ClassScheduleSlot.effective_from <= resolved,
@@ -233,11 +228,17 @@ async def preview_student_membership(
                     for s_j in slots_j:
                         slot_j_end = s_j.effective_until or date.max
                         # 2. Khoảng hiệu lực của hai slot có giao nhau
-                        if s_i.effective_from < slot_j_end and s_j.effective_from < slot_i_end:
+                        if (
+                            s_i.effective_from < slot_j_end
+                            and s_j.effective_from < slot_i_end
+                        ):
                             # 3. Cùng thứ trong tuần
                             if s_i.weekday == s_j.weekday:
                                 # 4. Giờ học giao nhau (strict < để 2 ca liền kề không bị coi là trùng)
-                                if s_i.local_start < s_j.local_end and s_j.local_start < s_i.local_end:
+                                if (
+                                    s_i.local_start < s_j.local_end
+                                    and s_j.local_start < s_i.local_end
+                                ):
                                     raise HTTPException(
                                         status_code=status.HTTP_409_CONFLICT,
                                         detail={
@@ -315,7 +316,11 @@ async def preview_student_membership(
             resolved, billing_type, weeks, anchor_cycle
         )
         review_required = resolved < today or protected_overlap_count > 0
-        amount = int(target.custom_fee) if target.custom_fee is not None else int(class_.base_fee)
+        amount = (
+            int(target.custom_fee)
+            if target.custom_fee is not None
+            else int(class_.base_fee)
+        )
         target_impacts.append(
             StudentMembershipTargetImpact(
                 class_id=UUID(class_.id),
@@ -356,9 +361,13 @@ async def preview_student_membership(
                 "local_start": str(s.local_start),
                 "local_end": str(s.local_end),
                 "effective_from": str(s.effective_from),
-                "effective_until": str(s.effective_until) if s.effective_until else None,
+                "effective_until": str(s.effective_until)
+                if s.effective_until
+                else None,
             }
-            for s in sorted(target_slot_objs_by_class.get(class_.id, []), key=lambda x: str(x.id))
+            for s in sorted(
+                target_slot_objs_by_class.get(class_.id, []), key=lambda x: str(x.id)
+            )
         ]
         fingerprint_targets.append(
             {
@@ -385,39 +394,58 @@ async def preview_student_membership(
     enrollment_update_impacts: list[dict[str, object]] = []
     fingerprint_updates: list[dict[str, object]] = []
     if request.enrollment_updates:
-        from app.services.billing_decision_service import compute_billing_decisions_for_enrollment
+        from app.services.billing_decision_service import (
+            compute_billing_decisions_for_enrollment,
+        )
+
         for upd in request.enrollment_updates:
             enr = await db.scalar(
                 select(Enrollment)
-                .where(Enrollment.id == str(upd.enrollment_id), Enrollment.student_id == str(student_id))
+                .where(
+                    Enrollment.id == str(upd.enrollment_id),
+                    Enrollment.student_id == str(student_id),
+                )
                 .options(
                     selectinload(Enrollment.class_),
-                    selectinload(Enrollment.fee_records).selectinload(FeeRecord.payments),
+                    selectinload(Enrollment.fee_records).selectinload(
+                        FeeRecord.payments
+                    ),
                     selectinload(Enrollment.billing_anchor_revisions),
                 )
             )
             if enr is None or enr.status != "active":
                 continue
-            active_fees = [f for f in enr.fee_records if f.status not in ("VOID", "SUPERSEDED")]
+            active_fees = [
+                f for f in enr.fee_records if f.status not in ("VOID", "SUPERSEDED")
+            ]
             protected_fees = [f for f in active_fees if is_fee_record_protected(f)]
             current_protected_fees = [
-                f for f in protected_fees
+                f
+                for f in protected_fees
                 if f.coverage_end is None or f.coverage_end >= today
             ]
 
             resolved_enr_date = enr.enrollment_date
             if upd.enrollment_date is not None:
-                resolved_enr_date = resolve_enrollment_date(enr.class_, upd.enrollment_date)
+                resolved_enr_date = resolve_enrollment_date(
+                    enr.class_, upd.enrollment_date
+                )
                 await ensure_enrollment_allowed(db, enr.class_, resolved_enr_date)
 
             effective_fee = (
                 int(upd.custom_fee)
                 if upd.custom_fee is not None
-                else (int(enr.custom_fee) if enr.custom_fee is not None else int(enr.class_.base_fee))
+                else (
+                    int(enr.custom_fee)
+                    if enr.custom_fee is not None
+                    else int(enr.class_.base_fee)
+                )
             )
 
             decisions = compute_billing_decisions_for_enrollment(
-                old_enrollment_date=enr.enrollment_date or enr.class_.start_date or resolved_enr_date,
+                old_enrollment_date=enr.enrollment_date
+                or enr.class_.start_date
+                or resolved_enr_date,
                 new_enrollment_date=resolved_enr_date,
                 billing_type=enr.class_.type,
                 cycle_weeks=enr.class_.billing_cycle_weeks,
@@ -425,7 +453,10 @@ async def preview_student_membership(
                 fee_records=active_fees,
                 today=today,
             )
-            rec_dec = next((d.decision_code.value for d in decisions if d.recommended), "REANCHOR_NEXT_BOUNDARY")
+            rec_dec = next(
+                (d.decision_code.value for d in decisions if d.recommended),
+                "REANCHOR_NEXT_BOUNDARY",
+            )
             enrollment_update_impacts.append(
                 {
                     "enrollment_id": str(enr.id),
@@ -433,7 +464,9 @@ async def preview_student_membership(
                     "student_name": student.full_name,
                     "class_id": str(enr.class_id),
                     "class_name": enr.class_.name,
-                    "old_enrollment_date": enr.enrollment_date.isoformat() if enr.enrollment_date else None,
+                    "old_enrollment_date": enr.enrollment_date.isoformat()
+                    if enr.enrollment_date
+                    else None,
                     "new_enrollment_date": resolved_enr_date.isoformat(),
                     "must_change": False,
                     "decisions": [d.model_dump(mode="json") for d in decisions],
@@ -445,12 +478,18 @@ async def preview_student_membership(
             fingerprint_updates.append(
                 {
                     "enrollment_id": str(enr.id),
-                    "requested_date": upd.enrollment_date.isoformat() if upd.enrollment_date else None,
+                    "requested_date": upd.enrollment_date.isoformat()
+                    if upd.enrollment_date
+                    else None,
                     "resolved_date": resolved_enr_date.isoformat(),
                     "custom_fee": upd.custom_fee,
-                    "selected_slot_ids": sorted(str(s) for s in (upd.selected_slot_ids or [])),
+                    "selected_slot_ids": sorted(
+                        str(s) for s in (upd.selected_slot_ids or [])
+                    ),
                     "decision_code": upd.decision_code or rec_dec,
-                    "selected_historical_cycles": sorted(upd.selected_historical_cycles or []),
+                    "selected_historical_cycles": sorted(
+                        upd.selected_historical_cycles or []
+                    ),
                     "version": enr.billing_anchor_version,
                 }
             )
@@ -461,7 +500,9 @@ async def preview_student_membership(
             "status": r.status,
             "final_amount": int(r.final_amount) if r.final_amount is not None else None,
             "paid_amount": int(r.paid_amount) if r.paid_amount is not None else None,
-            "refunded_amount": int(r.refunded_amount) if r.refunded_amount is not None else None,
+            "refunded_amount": int(r.refunded_amount)
+            if r.refunded_amount is not None
+            else None,
             "notified_at": r.notified_at.isoformat() if r.notified_at else None,
             "due_date": str(r.due_date) if r.due_date else None,
             "base_due_date": str(r.base_due_date) if r.base_due_date else None,
@@ -494,7 +535,9 @@ async def preview_student_membership(
         "protected_overlap_count": protected_overlap_count,
     }
     if fingerprint_updates:
-        fingerprint_dict["enrollment_updates"] = sorted(fingerprint_updates, key=lambda x: str(x["enrollment_id"]))
+        fingerprint_dict["enrollment_updates"] = sorted(
+            fingerprint_updates, key=lambda x: str(x["enrollment_id"])
+        )
 
     fingerprint = _preview_hash(fingerprint_dict)
     return StudentMembershipPreviewResponse(

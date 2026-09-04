@@ -81,15 +81,16 @@ async def _first_unprotected_renewal_cycle(
             int(
                 revision.billing_cycle_weeks_snapshot
                 if revision is not None
-                else getattr(class_, "billing_cycle_weeks", 1)
-                or 1
+                else getattr(class_, "billing_cycle_weeks", 1) or 1
             ),
             1,
         )
         if billing_type == "COURSE"
         else None
     )
-    anchor = revision.anchor_date if revision is not None else enrollment.enrollment_date
+    anchor = (
+        revision.anchor_date if revision is not None else enrollment.enrollment_date
+    )
     first_renewal_due = cycle_base_due_date(
         anchor,
         billing_type,

@@ -9,9 +9,7 @@ ClassIdentityScheme = Literal["LEGACY", "ACADEMIC_YEAR", "INTAKE"]
 ClassCategory = Literal["GENERAL", "SPECIALIZED", "IELTS", "CUSTOM"]
 ClassGradeMode = Literal["GRADE", "NONE"]
 ClassEducationLevel = Literal["PRIMARY", "MIDDLE", "HIGH"]
-ClassEffectiveStatus = Literal[
-    "LEGACY", "SCHEDULED", "ACTIVE", "STOPPED", "CANCELLED"
-]
+ClassEffectiveStatus = Literal["LEGACY", "SCHEDULED", "ACTIVE", "STOPPED", "CANCELLED"]
 ClassNextFeeDueState = Literal["OVERDUE", "UPCOMING", "NONE"]
 ClassStaffingStatus = Literal["UNASSIGNED", "PARTIAL", "READY"]
 ScheduleAvailabilityScope = Literal["selected_staff", "all_classes"]
@@ -251,6 +249,7 @@ class ClassUpdate(BaseModel):
         value: list[UUID] | None,
     ) -> list[UUID] | None:
         return None if value is None else list(dict.fromkeys(value))
+
 
 class ClassEndDateUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)

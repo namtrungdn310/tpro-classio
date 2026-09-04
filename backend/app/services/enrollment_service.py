@@ -531,7 +531,10 @@ async def realign_open_slot_selections(
     for selection in selections:
         # Only the initial open range can safely move backwards. A later range
         # represents a real schedule revision and must be reselected explicitly.
-        if next_start < selection.effective_from and selection.effective_from != previous_start:
+        if (
+            next_start < selection.effective_from
+            and selection.effective_from != previous_start
+        ):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail={
@@ -906,9 +909,7 @@ async def drop_enrollment(
         enrollment.ended_on = None if never_started else today
         enrollment.ended_at = datetime.now(timezone.utc)
         enrollment.end_reason = (
-            "Hủy ghi danh trước ngày bắt đầu"
-            if never_started
-            else "Học viên rời lớp"
+            "Hủy ghi danh trước ngày bắt đầu" if never_started else "Học viên rời lớp"
         )
         await close_enrollment_slot_selections(
             db,

@@ -26,5 +26,11 @@ def test_start_date_command_audit_is_protected_from_mutation_and_browser() -> No
     sql = MIGRATION.read_text(encoding="utf-8").lower()
     assert "start_date_change_commands rows are append-only" in sql
     assert "start_date_change_command_items rows are immutable" in sql
-    assert "revoke all on table public.start_date_change_commands from public, anon, authenticated" in sql
-    assert "revoke all on table public.start_date_change_command_items from public, anon, authenticated" in sql
+    assert (
+        "revoke all on table public.start_date_change_commands from public, anon, authenticated"
+        in sql
+    )
+    assert (
+        "revoke all on table public.start_date_change_command_items from public, anon, authenticated"
+        in sql
+    )

@@ -213,9 +213,7 @@ def _scope_predicate(scope: ClassScope, today: date):
         Class.identity_scheme != "LEGACY",
     )
     if scope == "active":
-        return and_(
-            visible_operational, Class.start_date <= today
-        )
+        return and_(visible_operational, Class.start_date <= today)
     if scope == "enrollable":
         return and_(
             visible_operational,
@@ -1153,7 +1151,8 @@ async def get_classes(
         normalized_search = search.strip() if search else None
         enrollment_count_filter = (
             enrollment_current_or_scheduled_predicate()
-            if scope in {"operational", "active", "enrollable", "assignable", "scheduled"}
+            if scope
+            in {"operational", "active", "enrollable", "assignable", "scheduled"}
             else None
         )
         enrollment_count = select(
@@ -1991,10 +1990,7 @@ async def _continuation_source_enrollments(
         if enrollment.status == "active":
             eligible.append(enrollment)
             continue
-        if (
-            source_status == "STOPPED"
-            and enrollment.status == "completed"
-        ):
+        if source_status == "STOPPED" and enrollment.status == "completed":
             eligible.append(enrollment)
     return sorted(
         eligible,
@@ -2027,10 +2023,7 @@ async def preview_class_continuation(
         return None
     if class_.cancelled_at is not None:
         raise ValueError("Không thể tạo lớp kế tiếp từ lớp đã hủy")
-    if (
-        class_.identity_scheme == "LEGACY"
-        or class_.start_date is None
-    ):
+    if class_.identity_scheme == "LEGACY" or class_.start_date is None:
         raise ValueError("Lớp nguồn cần hoàn tất thông tin trước khi tạo lớp kế tiếp")
 
     suggested_start = business_today()
@@ -2437,9 +2430,7 @@ async def update_class(
         and "start_date" in payload
         and payload["start_date"] != class_.start_date
     ):
-        raise ValueError(
-            "Vui lòng xem trước ảnh hưởng trước khi thay đổi ngày bắt đầu"
-        )
+        raise ValueError("Vui lòng xem trước ảnh hưởng trước khi thay đổi ngày bắt đầu")
     changing_end_date = "end_date" in payload and payload["end_date"] != class_.end_date
     previous_end_date = class_.end_date if changing_end_date else None
     previous_schedule_summary = (
@@ -2930,7 +2921,9 @@ async def _start_date_impact(
     enrollment_decisions: dict[UUID, str] | None = None,
 ) -> dict[str, object]:
     from app.models.staff_attendance import StaffAttendanceEntry
-    from app.services.billing_decision_service import compute_billing_decisions_for_enrollment
+    from app.services.billing_decision_service import (
+        compute_billing_decisions_for_enrollment,
+    )
     from app.services.fee_reconciliation import is_fee_record_protected
 
     can_apply = True
@@ -2969,7 +2962,10 @@ async def _start_date_impact(
         )
         if adj_entry is not None:
             adj_date = adj_entry.affected_from
-            if earliest_historical_activity_date is None or adj_date < earliest_historical_activity_date:
+            if (
+                earliest_historical_activity_date is None
+                or adj_date < earliest_historical_activity_date
+            ):
                 can_apply = False
                 earliest_historical_activity_date = adj_date
                 blocking_reason = (
@@ -3004,14 +3000,24 @@ async def _start_date_impact(
     for enr in enrollments:
         enr_date = enr.enrollment_date
         must_change = enr_date is not None and enr_date < next_start_date
-        if must_change or (next_start_date < class_.start_date and enr_date == class_.start_date):
-            active_fees = [f for f in enr.fee_records if f.status not in ("VOID", "SUPERSEDED")]
+        if must_change or (
+            next_start_date < class_.start_date and enr_date == class_.start_date
+        ):
+            active_fees = [
+                f for f in enr.fee_records if f.status not in ("VOID", "SUPERSEDED")
+            ]
             enr_protected = [f for f in active_fees if is_fee_record_protected(f)]
             protected_count += len(enr_protected)
 
             new_enr_date = next_start_date
-            effective_fee = int(enr.custom_fee) if enr.custom_fee is not None else int(class_.base_fee)
-            weeks = int(class_.billing_cycle_weeks) if class_.billing_cycle_weeks else None
+            effective_fee = (
+                int(enr.custom_fee)
+                if enr.custom_fee is not None
+                else int(class_.base_fee)
+            )
+            weeks = (
+                int(class_.billing_cycle_weeks) if class_.billing_cycle_weeks else None
+            )
 
             decisions = compute_billing_decisions_for_enrollment(
                 old_enrollment_date=enr_date or class_.start_date,
@@ -3023,7 +3029,10 @@ async def _start_date_impact(
                 today=today,
             )
 
-            rec_decision = next((d.decision_code.value for d in decisions if d.recommended), "REANCHOR_NEXT_BOUNDARY")
+            rec_decision = next(
+                (d.decision_code.value for d in decisions if d.recommended),
+                "REANCHOR_NEXT_BOUNDARY",
+            )
             chosen_decision = None
             if enrollment_decisions and UUID(str(enr.id)) in enrollment_decisions:
                 chosen_decision = enrollment_decisions[UUID(str(enr.id))]
@@ -3095,9 +3104,13 @@ async def preview_class_start_date(
     class_patch_hash = None
     if data.class_patch is not None:
         patch_dict = (
-            data.class_patch if isinstance(data.class_patch, dict) else data.class_patch.model_dump(exclude_unset=True)
+            data.class_patch
+            if isinstance(data.class_patch, dict)
+            else data.class_patch.model_dump(exclude_unset=True)
         )
-        class_patch_hash = sha256(json.dumps(patch_dict, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+        class_patch_hash = sha256(
+            json.dumps(patch_dict, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
 
     fingerprint = _start_date_preview_fingerprint(
         class_id=class_.id,
@@ -3162,17 +3175,19 @@ async def update_class_start_date(
     )
     assert preview is not None
     if not preview.can_apply:
-        raise ValueError(preview.blocking_reason or "Không thể dời ngày bắt đầu của lớp học")
-    if not hmac.compare_digest(
-        preview.preview_fingerprint, data.expected_fingerprint
-    ):
+        raise ValueError(
+            preview.blocking_reason or "Không thể dời ngày bắt đầu của lớp học"
+        )
+    if not hmac.compare_digest(preview.preview_fingerprint, data.expected_fingerprint):
         raise ValueError(
             "Dữ liệu ngày bắt đầu vừa được cập nhật. Vui lòng tải lại rồi thử lại"
         )
 
     if data.class_patch is not None:
         patch_dict = (
-            data.class_patch if isinstance(data.class_patch, dict) else data.class_patch.model_dump(exclude_unset=True)
+            data.class_patch
+            if isinstance(data.class_patch, dict)
+            else data.class_patch.model_dump(exclude_unset=True)
         )
         patch_copy = dict(patch_dict)
         patch_copy.pop("start_date", None)
@@ -3218,9 +3233,16 @@ async def update_class_start_date(
         if enr_id:
             override_by_enr[str(enr_id)] = ov
 
-    from app.services.billing_decision_service import compute_billing_decisions_for_enrollment
-    from app.services.fee_reconciliation import is_fee_record_mutable, is_fee_record_protected
-    from app.services.payment_scaffold_service import revoke_open_payment_requests_for_fee_records
+    from app.services.billing_decision_service import (
+        compute_billing_decisions_for_enrollment,
+    )
+    from app.services.fee_reconciliation import (
+        is_fee_record_mutable,
+        is_fee_record_protected,
+    )
+    from app.services.payment_scaffold_service import (
+        revoke_open_payment_requests_for_fee_records,
+    )
 
     today = business_today()
     for item in preview.affected_enrollments:
@@ -3248,7 +3270,9 @@ async def update_class_start_date(
         new_enr_date = data.start_date
         old_enr_date = enrollment.enrollment_date or class_.start_date
 
-        active_fees = [f for f in enrollment.fee_records if f.status not in ("VOID", "SUPERSEDED")]
+        active_fees = [
+            f for f in enrollment.fee_records if f.status not in ("VOID", "SUPERSEDED")
+        ]
         protected_fees = [f for f in active_fees if is_fee_record_protected(f)]
         mutable_fees = [f for f in active_fees if is_fee_record_mutable(f)]
 
@@ -3257,13 +3281,23 @@ async def update_class_start_date(
             new_enrollment_date=new_enr_date,
             billing_type=class_.type,
             cycle_weeks=class_.billing_cycle_weeks,
-            effective_fee=int(enrollment.custom_fee if enrollment.custom_fee is not None else class_.base_fee),
+            effective_fee=int(
+                enrollment.custom_fee
+                if enrollment.custom_fee is not None
+                else class_.base_fee
+            ),
             fee_records=active_fees,
             today=today,
         )
-        chosen_opt = next((d for d in decisions if d.decision_code.value == decision_code), None)
+        chosen_opt = next(
+            (d for d in decisions if d.decision_code.value == decision_code), None
+        )
         if chosen_opt is None:
-            chosen_opt = next(d for d in decisions if d.decision_code.value == "REANCHOR_NEXT_BOUNDARY")
+            chosen_opt = next(
+                d
+                for d in decisions
+                if d.decision_code.value == "REANCHOR_NEXT_BOUNDARY"
+            )
 
         if mutable_fees and chosen_opt.superseded_fee_count > 0:
             await revoke_open_payment_requests_for_fee_records(
@@ -3328,7 +3362,9 @@ async def update_class_start_date(
             first_anchor_cycle_no=chosen_opt.first_anchor_cycle_no,
             selected_historical_cycles=selected_hist,
             protected_fee_count=len(protected_fees),
-            superseded_fee_count=len(mutable_fees) if chosen_opt.superseded_fee_count > 0 else 0,
+            superseded_fee_count=len(mutable_fees)
+            if chosen_opt.superseded_fee_count > 0
+            else 0,
             skipped_cycle_count=chosen_opt.skipped_cycle_count,
         )
         db.add(cmd_item)
@@ -3355,14 +3391,18 @@ async def update_class_start_date(
     return class_
 
 
-async def _stop_impact(db: AsyncSession, class_: Class, stopped_on: date) -> dict[str, int]:
+async def _stop_impact(
+    db: AsyncSession, class_: Class, stopped_on: date
+) -> dict[str, int]:
     active_enrollment_rows = list(
         (
             await db.scalars(
                 select(Enrollment).where(
                     Enrollment.class_id == class_.id,
                     Enrollment.status != "cancelled",
-                    or_(Enrollment.ended_on.is_(None), Enrollment.ended_on > stopped_on),
+                    or_(
+                        Enrollment.ended_on.is_(None), Enrollment.ended_on > stopped_on
+                    ),
                 )
             )
         ).all()
@@ -3372,7 +3412,9 @@ async def _stop_impact(db: AsyncSession, class_: Class, stopped_on: date) -> dic
         await db.scalar(
             select(func.count(ClassSessionException.id)).where(
                 ClassSessionException.class_id == class_.id,
-                ClassSessionException.status.in_(("MAKEUP_PENDING", "MAKEUP_SCHEDULED")),
+                ClassSessionException.status.in_(
+                    ("MAKEUP_PENDING", "MAKEUP_SCHEDULED")
+                ),
             )
         )
         or 0
@@ -3444,7 +3486,12 @@ async def preview_class_stop(
         return None
     if class_.version != data.expected_version:
         raise ValueError("Dữ liệu lớp vừa được cập nhật. Vui lòng tải lại rồi thử lại")
-    if class_.cancelled_at or class_.stopped_at or class_.completed_at or not class_.is_active:
+    if (
+        class_.cancelled_at
+        or class_.stopped_at
+        or class_.completed_at
+        or not class_.is_active
+    ):
         raise ValueError("Lớp đã ngừng hoặc đã hủy")
     stopped_on = business_today()
     impact = await _stop_impact(db, class_, stopped_on)
@@ -3489,9 +3536,7 @@ async def stop_class(
         raise ValueError(
             "Lớp còn buổi học bù chưa hoàn tất. Vui lòng xử lý trước khi ngừng lớp"
         )
-    if not hmac.compare_digest(
-        preview.preview_fingerprint, data.expected_fingerprint
-    ):
+    if not hmac.compare_digest(preview.preview_fingerprint, data.expected_fingerprint):
         raise ValueError("Dữ liệu lớp vừa được cập nhật. Vui lòng tải lại rồi thử lại")
 
     await _lock_enrolled_students(db, class_.id)
@@ -3523,13 +3568,21 @@ async def stop_class(
             db,
             enrollment,
             actor_user_id=actor_user_id,
-            reason=("Hủy ghi danh vì lớp ngừng trước ngày bắt đầu" if never_started else data.reason),
-            close_on=(enrollment.enrollment_date if never_started else preview.stopped_on),
+            reason=(
+                "Hủy ghi danh vì lớp ngừng trước ngày bắt đầu"
+                if never_started
+                else data.reason
+            ),
+            close_on=(
+                enrollment.enrollment_date if never_started else preview.stopped_on
+            ),
         )
         await close_enrollment_slot_selections(
             db,
             enrollment,
-            ended_on=(enrollment.enrollment_date if never_started else preview.stopped_on),
+            ended_on=(
+                enrollment.enrollment_date if never_started else preview.stopped_on
+            ),
         )
         enrollment.status = "cancelled" if never_started else "completed"
         enrollment.ended_on = None if never_started else preview.stopped_on

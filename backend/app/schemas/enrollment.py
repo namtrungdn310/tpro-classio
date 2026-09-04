@@ -40,7 +40,9 @@ class EnrollmentUpdate(BaseModel):
 
     custom_fee: int | None = Field(default=None, ge=0, le=999_999_999_999)
     enrollment_date: date | None = None
-    billing_change_reason: str | None = Field(default=None, min_length=3, max_length=500)
+    billing_change_reason: str | None = Field(
+        default=None, min_length=3, max_length=500
+    )
     billing_request_id: UUID = Field(default_factory=uuid4)
     expected_billing_version: int | None = Field(default=None, ge=0)
     selected_slot_ids: list[UUID] | None = Field(

@@ -322,8 +322,7 @@ async def _read_assigned_classes(
         )
         .outerjoin(
             ClassTeacher,
-            (ClassTeacher.class_id == Class.id)
-            & (ClassTeacher.teacher_id == staff_id),
+            (ClassTeacher.class_id == Class.id) & (ClassTeacher.teacher_id == staff_id),
         )
         .where(
             or_(

@@ -363,7 +363,9 @@ class StudentEnrollmentPatch(BaseModel):
     enrollment_id: UUID
     custom_fee: int | None = Field(default=None, ge=0, le=999_999_999_999)
     enrollment_date: date | None = None
-    billing_change_reason: str | None = Field(default=None, min_length=3, max_length=500)
+    billing_change_reason: str | None = Field(
+        default=None, min_length=3, max_length=500
+    )
     expected_billing_version: int | None = Field(default=None, ge=0)
     decision_code: str | None = None
     selected_historical_cycles: list[int] | None = None
@@ -418,7 +420,9 @@ class StudentMembershipCommand(BaseModel):
     targets: list[StudentEnrollmentTarget] = Field(default_factory=list, max_length=20)
     mode: Literal["supplement", "transfer"] = "supplement"
     source_enrollment_id: UUID | None = None
-    billing_change_reason: str | None = Field(default=None, min_length=3, max_length=500)
+    billing_change_reason: str | None = Field(
+        default=None, min_length=3, max_length=500
+    )
 
     @model_validator(mode="after")
     def validate_transfer_source(self) -> "StudentMembershipCommand":
@@ -433,13 +437,19 @@ class StudentMembershipCommand(BaseModel):
         elif self.source_enrollment_id is not None:
             raise ValueError("Học thêm hoặc xếp lớp không được gửi lớp nguồn")
         if self.contract_version in (2, 3):
-            if self.targets and any(target.enrollment_date is None for target in self.targets):
+            if self.targets and any(
+                target.enrollment_date is None for target in self.targets
+            ):
                 raise ValueError("Mỗi lớp được chọn phải có ngày bắt đầu")
             has_enrollment_date_change = any(
                 update.enrollment_date is not None for update in self.enrollment_updates
             )
-            if (self.targets or has_enrollment_date_change) and not self.expected_preview_fingerprint:
-                raise ValueError("Yêu cầu thay đổi lớp bắt buộc phải có mã xác thực xem trước")
+            if (
+                self.targets or has_enrollment_date_change
+            ) and not self.expected_preview_fingerprint:
+                raise ValueError(
+                    "Yêu cầu thay đổi lớp bắt buộc phải có mã xác thực xem trước"
+                )
         return self
 
 
@@ -448,7 +458,9 @@ class StudentMembershipPreviewRequest(BaseModel):
 
     expected_updated_at: datetime
     targets: list[StudentEnrollmentTarget] = Field(default_factory=list, max_length=20)
-    enrollment_updates: list[StudentEnrollmentPatch] = Field(default_factory=list, max_length=20)
+    enrollment_updates: list[StudentEnrollmentPatch] = Field(
+        default_factory=list, max_length=20
+    )
     mode: Literal["supplement", "transfer"] = "supplement"
     source_enrollment_id: UUID | None = None
     contract_version: Literal[1, 2, 3] = 3
@@ -456,7 +468,9 @@ class StudentMembershipPreviewRequest(BaseModel):
     @model_validator(mode="after")
     def validate_shape(self) -> "StudentMembershipPreviewRequest":
         if not self.targets and not self.enrollment_updates:
-            raise ValueError("Yêu cầu xem trước phải có ít nhất một lớp đích hoặc một cập nhật ghi danh")
+            raise ValueError(
+                "Yêu cầu xem trước phải có ít nhất một lớp đích hoặc một cập nhật ghi danh"
+            )
         class_ids = [target.class_id for target in self.targets]
         if len(class_ids) != len(set(class_ids)):
             raise ValueError("Danh sách lớp đích không được trùng lặp")

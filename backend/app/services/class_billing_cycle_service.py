@@ -231,9 +231,7 @@ async def _build_preview(
         for enrollment in active
         if enrollment.enrollment_date is not None
     ]
-    mutable_ids = [
-        record.id for impact in impacts for record in impact.supersedable
-    ]
+    mutable_ids = [record.id for impact in impacts for record in impact.supersedable]
     open_request_count = 0
     if mutable_ids:
         open_request_count = int(

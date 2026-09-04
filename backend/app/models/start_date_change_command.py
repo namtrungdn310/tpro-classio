@@ -1,6 +1,15 @@
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, Text, UniqueConstraint, func, text
+from sqlalchemy import (
+    Date,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -75,21 +84,29 @@ class StartDateChangeCommandItem(WorkspaceScoped, Base):
         nullable=False,
     )
     enrollment_id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False), ForeignKey("enrollments.id", ondelete="RESTRICT"), nullable=False
+        UUID(as_uuid=False),
+        ForeignKey("enrollments.id", ondelete="RESTRICT"),
+        nullable=False,
     )
     old_enrollment_date: Mapped[date] = mapped_column(Date, nullable=False)
     new_enrollment_date: Mapped[date] = mapped_column(Date, nullable=False)
     decision_code: Mapped[str] = mapped_column(Text, nullable=False)
     previous_billing_revision_id: Mapped[str | None] = mapped_column(
-        UUID(as_uuid=False), ForeignKey("billing_anchor_revisions.id", ondelete="RESTRICT")
+        UUID(as_uuid=False),
+        ForeignKey("billing_anchor_revisions.id", ondelete="RESTRICT"),
     )
     next_billing_revision_id: Mapped[str | None] = mapped_column(
-        UUID(as_uuid=False), ForeignKey("billing_anchor_revisions.id", ondelete="RESTRICT")
+        UUID(as_uuid=False),
+        ForeignKey("billing_anchor_revisions.id", ondelete="RESTRICT"),
     )
-    first_anchor_cycle_no: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    first_anchor_cycle_no: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
     selected_historical_cycles: Mapped[list[int] | None] = mapped_column(ARRAY(Integer))
     protected_fee_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    superseded_fee_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    superseded_fee_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
     skipped_cycle_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     review_fee_record_id: Mapped[str | None] = mapped_column(
         UUID(as_uuid=False), ForeignKey("fee_records.id", ondelete="SET NULL")

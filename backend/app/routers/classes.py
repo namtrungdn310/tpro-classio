@@ -111,7 +111,9 @@ async def preview_class_billing_cycle_route(
     try:
         preview = await preview_class_billing_cycle(db, id, payload)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
     if preview is None:
         raise HTTPException(status_code=404, detail="Không tìm thấy lớp học")
     return preview
@@ -132,7 +134,9 @@ async def update_class_billing_cycle_route(
             db, id, payload, actor_user_id=principal.user_id
         )
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
     if result is None:
         raise HTTPException(status_code=404, detail="Không tìm thấy lớp học")
     return result
@@ -486,10 +490,16 @@ async def preview_class_start_date_route(
         preview = await preview_class_start_date(db, id, payload)
     except ValueError as exc:
         detail = str(exc)
-        code = status.HTTP_409_CONFLICT if "không thể" in detail.casefold() or "vừa được cập nhật" in detail else status.HTTP_422_UNPROCESSABLE_CONTENT
+        code = (
+            status.HTTP_409_CONFLICT
+            if "không thể" in detail.casefold() or "vừa được cập nhật" in detail
+            else status.HTTP_422_UNPROCESSABLE_CONTENT
+        )
         raise HTTPException(status_code=code, detail=detail) from exc
     if preview is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy lớp học")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy lớp học"
+        )
     return preview
 
 
@@ -507,10 +517,16 @@ async def update_class_start_date_route(
         )
     except ValueError as exc:
         detail = str(exc)
-        code = status.HTTP_409_CONFLICT if "không thể" in detail.casefold() or "vừa được cập nhật" in detail else status.HTTP_422_UNPROCESSABLE_CONTENT
+        code = (
+            status.HTTP_409_CONFLICT
+            if "không thể" in detail.casefold() or "vừa được cập nhật" in detail
+            else status.HTTP_422_UNPROCESSABLE_CONTENT
+        )
         raise HTTPException(status_code=code, detail=detail) from exc
     if class_ is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy lớp học")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy lớp học"
+        )
     updated = await get_class_response(db, id)
     assert updated is not None
     return updated
@@ -526,9 +542,13 @@ async def preview_class_stop_route(
     try:
         preview = await preview_class_stop(db, id, payload)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
     if preview is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy lớp học")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy lớp học"
+        )
     return preview
 
 
@@ -542,9 +562,13 @@ async def stop_class_route(
     try:
         class_ = await stop_class(db, id, payload, actor_user_id=principal.user_id)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
     if class_ is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy lớp học")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy lớp học"
+        )
     updated = await get_class_response(db, id)
     assert updated is not None
     return updated

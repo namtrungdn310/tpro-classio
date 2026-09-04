@@ -83,8 +83,16 @@ def test_start_date_preview_fingerprint_deterministic_and_tamper_resistant() -> 
         protected_fee_record_count=1,
         blocking_history_count=3,
         affected_enrollments=[
-            {"enrollment_id": "e1", "new_enrollment_date": "2026-06-15", "recommended_decision": "REANCHOR_NEXT_BOUNDARY"},
-            {"enrollment_id": "e2", "new_enrollment_date": "2026-06-15", "recommended_decision": "KEEP_CURRENT_THEN_REANCHOR"},
+            {
+                "enrollment_id": "e1",
+                "new_enrollment_date": "2026-06-15",
+                "recommended_decision": "REANCHOR_NEXT_BOUNDARY",
+            },
+            {
+                "enrollment_id": "e2",
+                "new_enrollment_date": "2026-06-15",
+                "recommended_decision": "KEEP_CURRENT_THEN_REANCHOR",
+            },
         ],
     )
     fp2 = _start_date_preview_fingerprint(
@@ -96,8 +104,16 @@ def test_start_date_preview_fingerprint_deterministic_and_tamper_resistant() -> 
         protected_fee_record_count=1,
         blocking_history_count=3,
         affected_enrollments=[
-            {"enrollment_id": "e1", "new_enrollment_date": "2026-06-15", "recommended_decision": "REANCHOR_NEXT_BOUNDARY"},
-            {"enrollment_id": "e2", "new_enrollment_date": "2026-06-15", "recommended_decision": "KEEP_CURRENT_THEN_REANCHOR"},
+            {
+                "enrollment_id": "e1",
+                "new_enrollment_date": "2026-06-15",
+                "recommended_decision": "REANCHOR_NEXT_BOUNDARY",
+            },
+            {
+                "enrollment_id": "e2",
+                "new_enrollment_date": "2026-06-15",
+                "recommended_decision": "KEEP_CURRENT_THEN_REANCHOR",
+            },
         ],
     )
     assert fp1 == fp2
@@ -128,7 +144,11 @@ async def test_start_date_impact_blocking_on_staff_attendance() -> None:
     mock_db = MagicMock()
     # First scalar returns the attendance entry, second returns None for adjustments
     mock_db.scalar = AsyncMock(side_effect=[mock_att, None])
-    mock_db.scalars = AsyncMock(return_value=MagicMock(unique=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))))
+    mock_db.scalars = AsyncMock(
+        return_value=MagicMock(
+            unique=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))
+        )
+    )
 
     impact = await _start_date_impact(mock_db, mock_class, new_start)
     assert impact["can_apply"] is False
@@ -137,7 +157,9 @@ async def test_start_date_impact_blocking_on_staff_attendance() -> None:
 
 
 @pytest.mark.asyncio
-async def test_start_date_impact_evaluates_billing_decisions_for_affected_students() -> None:
+async def test_start_date_impact_evaluates_billing_decisions_for_affected_students() -> (
+    None
+):
     class_start = date(2026, 6, 1)
     new_start = date(2026, 6, 15)
     mock_class = _mock_class(start_date=class_start)
@@ -195,7 +217,9 @@ async def test_update_class_start_date_idempotency() -> None:
     )
     mock_db.scalar = AsyncMock(return_value=existing_cmd)
 
-    with patch("app.services.class_service.get_class", AsyncMock(return_value=mock_class)):
+    with patch(
+        "app.services.class_service.get_class", AsyncMock(return_value=mock_class)
+    ):
         res = await update_class_start_date(
             mock_db,
             UUID(mock_class.id),
@@ -222,11 +246,23 @@ async def test_update_class_start_date_stale_fingerprint_rejected() -> None:
     mock_scalars_res.unique.return_value.all.return_value = []
     mock_db.scalars = AsyncMock(return_value=mock_scalars_res)
 
-    with patch("app.services.class_service.get_class", AsyncMock(return_value=mock_class)), \
-         patch("app.services.class_service._get_class_teacher_ids", AsyncMock(return_value=[])), \
-         patch("app.services.class_service._get_class_assistant_ids", AsyncMock(return_value=[])), \
-         patch("app.services.class_service._validate_staff_schedule_availability", AsyncMock()):
-
+    with (
+        patch(
+            "app.services.class_service.get_class", AsyncMock(return_value=mock_class)
+        ),
+        patch(
+            "app.services.class_service._get_class_teacher_ids",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.class_service._get_class_assistant_ids",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.class_service._validate_staff_schedule_availability",
+            AsyncMock(),
+        ),
+    ):
         with pytest.raises(ValueError, match="vừa được cập nhật"):
             await update_class_start_date(
                 mock_db,

@@ -5,7 +5,6 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 
-
 class BillingDecisionCode(str, Enum):
     KEEP_EXISTING_SCHEDULE = "KEEP_EXISTING_SCHEDULE"
     KEEP_CURRENT_THEN_REANCHOR = "KEEP_CURRENT_THEN_REANCHOR"
@@ -111,5 +110,7 @@ class ClassStartDateApplyCommand(BaseModel):
     expected_version: int = Field(ge=1)
     expected_preview_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
     default_decision: BillingDecisionCode = BillingDecisionCode.REANCHOR_NEXT_BOUNDARY
-    enrollment_overrides: list[ClassEnrollmentOverrideInput] = Field(default_factory=list)
+    enrollment_overrides: list[ClassEnrollmentOverrideInput] = Field(
+        default_factory=list
+    )
     class_patch: dict[str, object] | None = None

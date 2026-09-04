@@ -136,7 +136,9 @@ async def test_restore_student_rejects_anomalous_active_enrollments():
     mock_student_result.scalar_one_or_none.return_value = student
 
     mock_enrollment_result = MagicMock()
-    mock_enrollment_result.scalars.return_value.all.return_value = ["dummy_active_enrollment"]
+    mock_enrollment_result.scalars.return_value.all.return_value = [
+        "dummy_active_enrollment"
+    ]
 
     db.execute.side_effect = [mock_student_result, mock_enrollment_result]
 
@@ -179,9 +181,14 @@ async def test_restore_student_success():
 
     db.execute.side_effect = [mock_student_result, mock_enrollment_result]
 
-    with patch("app.services.student_service.get_student", new_callable=AsyncMock) as mock_get_student, \
-         patch("app.services.student_service.append_student_lifecycle_event") as mock_append_audit:
-
+    with (
+        patch(
+            "app.services.student_service.get_student", new_callable=AsyncMock
+        ) as mock_get_student,
+        patch(
+            "app.services.student_service.append_student_lifecycle_event"
+        ) as mock_append_audit,
+    ):
         mock_get_student.return_value = student
 
         res = await restore_student(
@@ -235,9 +242,14 @@ async def test_archive_student_records_reason_in_lifecycle_event():
 
     db.execute.side_effect = [mock_student_result, mock_enrollment_result]
 
-    with patch("app.services.student_service.get_student", new_callable=AsyncMock) as mock_get_student, \
-         patch("app.services.student_service.append_student_lifecycle_event") as mock_append_audit:
-
+    with (
+        patch(
+            "app.services.student_service.get_student", new_callable=AsyncMock
+        ) as mock_get_student,
+        patch(
+            "app.services.student_service.append_student_lifecycle_event"
+        ) as mock_append_audit,
+    ):
         mock_get_student.return_value = student
 
         await archive_student(

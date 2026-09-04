@@ -851,9 +851,7 @@ async def test_notify_rejects_future_period_without_mutating_record() -> None:
 async def test_review_required_blocks_collection_actions(action: str) -> None:
     record = make_fee_record(
         notified_at=(
-            datetime(2026, 7, 10, tzinfo=timezone.utc)
-            if action == "pay"
-            else None
+            datetime(2026, 7, 10, tzinfo=timezone.utc) if action == "pay" else None
         )
     )
     record.review_required = True

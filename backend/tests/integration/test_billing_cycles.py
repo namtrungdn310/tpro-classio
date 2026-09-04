@@ -187,7 +187,9 @@ async def test_monthly_recurrence_and_lazy_bounded_generation() -> None:
         assert [row.due_date for row in rows] == expected
 
 
-async def test_package_duration_change_preserves_current_cycle_and_reviews_new_due() -> None:
+async def test_package_duration_change_preserves_current_cycle_and_reviews_new_due() -> (
+    None
+):
     today = business_today()
     anchor = today - timedelta(days=35)
     async with AsyncSessionLocal() as db:
@@ -249,7 +251,9 @@ async def test_package_duration_change_preserves_current_cycle_and_reviews_new_d
             row for row in before_rows if row.coverage_start <= today < row.coverage_end
         )
         future_ids = {
-            str(row.id) for row in before_rows if row.coverage_start >= anchor + timedelta(days=56)
+            str(row.id)
+            for row in before_rows
+            if row.coverage_start >= anchor + timedelta(days=56)
         }
         assert future_ids
 
@@ -317,12 +321,15 @@ async def test_package_duration_change_preserves_current_cycle_and_reviews_new_d
         assert review is not None
         assert review.state == "CONFIRMED"
         assert all(not fee.cancellable or fee.status == "UNPAID" for fee in review.fees)
-        assert await db.scalar(
-            text(
-                "select state from public.class_billing_cycle_revisions where id = :id"
-            ),
-            {"id": str(result.revision_id)},
-        ) == "CONFIRMED"
+        assert (
+            await db.scalar(
+                text(
+                    "select state from public.class_billing_cycle_revisions where id = :id"
+                ),
+                {"id": str(result.revision_id)},
+            )
+            == "CONFIRMED"
+        )
 
 
 async def test_legacy_enrollment_gap_cycle_zero_is_never_generated() -> None:

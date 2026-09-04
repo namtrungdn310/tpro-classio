@@ -60,8 +60,7 @@ async def _resolve_class_cycle_revision_if_complete(
     await db.flush()
     pending = await db.scalar(
         select(BillingAnchorRevision.id).where(
-            BillingAnchorRevision.class_billing_cycle_revision_id
-            == class_revision_id,
+            BillingAnchorRevision.class_billing_cycle_revision_id == class_revision_id,
             BillingAnchorRevision.state == "PENDING",
         )
     )
@@ -135,7 +134,8 @@ async def ensure_initial_billing_revision(
         generation_floor=max(today, enrollment.enrollment_date),
         first_anchor_cycle_no=first_cycle,
         next_due_date=next_due,
-        change_kind=change_kind or ("INITIAL_BACKDATED" if enrollment.enrollment_date < today else "INITIAL"),
+        change_kind=change_kind
+        or ("INITIAL_BACKDATED" if enrollment.enrollment_date < today else "INITIAL"),
         billing_type_snapshot=billing_type,
         billing_cycle_months_snapshot=enrollment.class_.billing_cycle_months,
         billing_cycle_weeks_snapshot=(
@@ -144,7 +144,8 @@ async def ensure_initial_billing_revision(
             else None
         ),
         state="PENDING" if needs_review else "CONFIRMED",
-        reason=reason or (
+        reason=reason
+        or (
             "Rà soát lịch thu do ngày ghi danh ở quá khứ"
             if enrollment.enrollment_date < today
             else "Khởi tạo lịch thu khi ghi danh"
@@ -218,7 +219,10 @@ async def reanchor_enrollment_billing(
             skipped_cycle_count=0,
             review_id=None,
         )
-    if expected_version is not None and expected_version != enrollment.billing_anchor_version:
+    if (
+        expected_version is not None
+        and expected_version != enrollment.billing_anchor_version
+    ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Ngày bắt đầu vừa được thay đổi. Vui lòng tải lại rồi thử lại.",
@@ -260,8 +264,13 @@ async def reanchor_enrollment_billing(
             review_id=UUID(existing.id),
         )
 
-    from app.services.fee_reconciliation import is_fee_record_mutable, is_fee_record_protected
-    from app.services.billing_decision_service import compute_billing_decisions_for_enrollment
+    from app.services.fee_reconciliation import (
+        is_fee_record_mutable,
+        is_fee_record_protected,
+    )
+    from app.services.billing_decision_service import (
+        compute_billing_decisions_for_enrollment,
+    )
 
     records = list(
         (
@@ -305,7 +314,9 @@ async def reanchor_enrollment_billing(
     )
     chosen_opt = None
     if decision_code:
-        chosen_opt = next((d for d in decisions if d.decision_code.value == decision_code), None)
+        chosen_opt = next(
+            (d for d in decisions if d.decision_code.value == decision_code), None
+        )
     if chosen_opt is None:
         chosen_opt = next((d for d in decisions if d.recommended), decisions[0])
 
@@ -314,7 +325,10 @@ async def reanchor_enrollment_billing(
     coverage_end = chosen_opt.coverage_end
     due = chosen_opt.due_date
 
-    from app.services.fee_operation_service import append_fee_operation, snapshot_fee_record
+    from app.services.fee_operation_service import (
+        append_fee_operation,
+        snapshot_fee_record,
+    )
     from app.services.payment_scaffold_service import (
         revoke_open_payment_requests_for_fee_records,
     )
@@ -394,14 +408,17 @@ async def reanchor_enrollment_billing(
     db.add(revision)
     await db.flush()
 
-    global_cycle = int(
-        await db.scalar(
-            select(func.coalesce(func.max(FeeRecord.cycle_no), -1)).where(
-                FeeRecord.enrollment_id == enrollment.id
+    global_cycle = (
+        int(
+            await db.scalar(
+                select(func.coalesce(func.max(FeeRecord.cycle_no), -1)).where(
+                    FeeRecord.enrollment_id == enrollment.id
+                )
             )
+            or 0
         )
-        or 0
-    ) + 1
+        + 1
+    )
     from app.services.credit_service import enrollment_total_deferral_days
 
     deferral = await enrollment_total_deferral_days(db, enrollment.id)
@@ -426,9 +443,7 @@ async def reanchor_enrollment_billing(
         enrollment_date_snapshot=new_anchor,
         class_name_snapshot=enrollment.class_.name,
         class_type_snapshot=_billing_type(enrollment),
-        billing_cycle_months_snapshot=(
-            revision.billing_cycle_months_snapshot
-        ),
+        billing_cycle_months_snapshot=(revision.billing_cycle_months_snapshot),
         billing_cycle_weeks_snapshot=weeks,
         base_amount=amount,
         discount_amount=0,
@@ -546,8 +561,12 @@ async def list_billing_reviews(
         select(BillingAnchorRevision)
         .where(BillingAnchorRevision.state == state)
         .options(
-            selectinload(BillingAnchorRevision.enrollment).selectinload(Enrollment.student),
-            selectinload(BillingAnchorRevision.enrollment).selectinload(Enrollment.class_),
+            selectinload(BillingAnchorRevision.enrollment).selectinload(
+                Enrollment.student
+            ),
+            selectinload(BillingAnchorRevision.enrollment).selectinload(
+                Enrollment.class_
+            ),
             selectinload(BillingAnchorRevision.fee_records),
             selectinload(BillingAnchorRevision.class_billing_cycle_revision),
         )
@@ -569,8 +588,12 @@ async def resolve_billing_review(
         select(BillingAnchorRevision)
         .where(BillingAnchorRevision.id == str(review_id))
         .options(
-            selectinload(BillingAnchorRevision.enrollment).selectinload(Enrollment.student),
-            selectinload(BillingAnchorRevision.enrollment).selectinload(Enrollment.class_),
+            selectinload(BillingAnchorRevision.enrollment).selectinload(
+                Enrollment.student
+            ),
+            selectinload(BillingAnchorRevision.enrollment).selectinload(
+                Enrollment.class_
+            ),
             selectinload(BillingAnchorRevision.fee_records),
             selectinload(BillingAnchorRevision.class_billing_cycle_revision),
         )
@@ -589,7 +612,9 @@ async def resolve_billing_review(
             raise HTTPException(status_code=422, detail="Hãy chọn khoản thu cần hủy")
         records = [record for record in revision.fee_records if record.id in selected]
         if len(records) != len(selected):
-            raise HTTPException(status_code=409, detail="Danh sách khoản thu đã thay đổi")
+            raise HTTPException(
+                status_code=409, detail="Danh sách khoản thu đã thay đổi"
+            )
         if any(
             record.status != "UNPAID"
             or record.notified_at is not None

@@ -221,8 +221,7 @@ def get_enrollment_next_fee_due(
             int(
                 current_revision.billing_cycle_weeks_snapshot
                 if current_revision is not None
-                else class_.billing_cycle_weeks
-                or 1
+                else class_.billing_cycle_weeks or 1
             ),
             1,
         )
@@ -230,9 +229,7 @@ def get_enrollment_next_fee_due(
         else None
     )
     schedule_cycle = (
-        max_anchor_cycle + 1
-        if current_revision is not None
-        else next_cycle
+        max_anchor_cycle + 1 if current_revision is not None else next_cycle
     )
     coverage_start, _ = cycle_coverage_interval(
         enrollment_date, billing_type, cycle_weeks, schedule_cycle

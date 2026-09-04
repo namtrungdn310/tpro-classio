@@ -1,6 +1,16 @@
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, SmallInteger, Text, UniqueConstraint, func, text
+from sqlalchemy import (
+    Date,
+    DateTime,
+    ForeignKey,
+    Integer,
+    SmallInteger,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -62,7 +72,9 @@ class BillingAnchorRevision(WorkspaceScoped, Base):
     decision_code: Mapped[str | None] = mapped_column(Text)
     previous_enrollment_date: Mapped[date | None] = mapped_column(Date)
     next_enrollment_date: Mapped[date | None] = mapped_column(Date)
-    skipped_anchor_cycle_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    skipped_anchor_cycle_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
     selected_historical_cycles: Mapped[list[int] | None] = mapped_column(ARRAY(Integer))
     state: Mapped[str] = mapped_column(Text, nullable=False, default="PENDING")
     reason: Mapped[str] = mapped_column(Text, nullable=False)

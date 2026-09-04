@@ -52,9 +52,7 @@ class FeeRecord(WorkspaceScoped, Base):
     review_required: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False
     )
-    is_final_cycle: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False
-    )
+    is_final_cycle: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     final_cycle_reason: Mapped[str | None] = mapped_column(Text)
     period: Mapped[str] = mapped_column(Text, nullable=False)
     due_date: Mapped[date | None] = mapped_column(Date)

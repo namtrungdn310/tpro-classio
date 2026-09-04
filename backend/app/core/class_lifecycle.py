@@ -23,9 +23,10 @@ def effective_class_status(
     reference = today or business_today()
     if getattr(class_, "cancelled_at", None) is not None:
         return "CANCELLED"
-    if getattr(class_, "stopped_at", None) is not None or getattr(
-        class_, "completed_at", None
-    ) is not None:
+    if (
+        getattr(class_, "stopped_at", None) is not None
+        or getattr(class_, "completed_at", None) is not None
+    ):
         return "STOPPED"
     if not bool(getattr(class_, "is_active", False)):
         return "CANCELLED"

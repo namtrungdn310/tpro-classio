@@ -67,7 +67,9 @@ async def test_preview_v3_fingerprints_enrollment_updates() -> None:
     mock_db.scalar = AsyncMock(side_effect=[student, enr, student, enr])
     mock_db.scalars = AsyncMock(return_value=MagicMock(all=MagicMock(return_value=[])))
 
-    with patch("app.services.membership_preview_service.ensure_enrollment_allowed", AsyncMock()):
+    with patch(
+        "app.services.membership_preview_service.ensure_enrollment_allowed", AsyncMock()
+    ):
         req1 = StudentMembershipPreviewRequest(
             expected_updated_at=now,
             targets=[],

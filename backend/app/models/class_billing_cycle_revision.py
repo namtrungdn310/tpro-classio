@@ -1,6 +1,16 @@
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, SmallInteger, Text, UniqueConstraint, func, text
+from sqlalchemy import (
+    Date,
+    DateTime,
+    ForeignKey,
+    Integer,
+    SmallInteger,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -46,9 +56,7 @@ class ClassBillingCycleRevision(WorkspaceScoped, Base):
     superseded_fee_count: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0
     )
-    protected_fee_count: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0
-    )
+    protected_fee_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     revoked_payment_request_count: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0
     )
