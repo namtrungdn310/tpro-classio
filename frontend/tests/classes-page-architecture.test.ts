@@ -33,7 +33,7 @@ test("workspace initial mode depends on permissions and scope", () => {
     pageSource,
     /showModeRail=\{Boolean\(isAdmin && workspace\.class\.effective_status !== "CANCELLED"\)\}/,
   );
-  assert.match(pageSource, /canContinue=\{Boolean\(isAdmin && \["ACTIVE", "COMPLETED"\]/);
+  assert.match(pageSource, /canContinue=\{Boolean\(isAdmin && \["ACTIVE", "STOPPED"\]/);
 });
 
 test("workspace rail renders only permitted actions", () => {
@@ -42,7 +42,7 @@ test("workspace rail renders only permitted actions", () => {
   assert.match(workspaceSource, /aria-selected=\{active\}/);
   assert.match(workspaceSource, /aria-controls="class-workspace-panel"/);
   assert.doesNotMatch(workspaceSource, /Trash2|RiDeleteBin/);
-  assert.match(workspaceSource, /CloseCircle/);
+  assert.match(workspaceSource, /mode: "cancel"/);
 });
 
 test("workspace action rail is compact and anchored to the centered frame", () => {
@@ -52,7 +52,7 @@ test("workspace action rail is compact and anchored to the centered frame", () =
   );
   assert.match(
     workspaceSource,
-    /flex w-\[176px\].*rounded-xl.*p-2/,
+    /flex w-max max-w-\[calc\(100vw-2rem\)\].*rounded-xl.*p-1\.5/,
   );
   assert.doesNotMatch(workspaceSource, /function workspaceStatusLabel/);
   assert.doesNotMatch(workspaceSource, /class_\.student_count\} học viên<\/p>/);
@@ -118,7 +118,7 @@ test("workspace closes only when a complete pointer gesture occurs outside the f
 });
 
 test("workspace cancel panel warns about unsaved changes before confirming", () => {
-  assert.match(workspaceSource, /Bạn đang có thay đổi chưa lưu\. Các thay đổi này sẽ không được áp dụng nếu hủy lớp\./);
+  assert.match(workspaceSource, /Bạn đang có thay đổi chưa lưu\. Các thay đổi này sẽ không được áp dụng nếu ngừng lớp\./);
   assert.match(workspaceSource, /onCancelClass/);
   assert.doesNotMatch(workspaceSource, /optimistic/);
 });
@@ -126,5 +126,6 @@ test("workspace cancel panel warns about unsaved changes before confirming", () 
 test("classes queries avoid aggressive refetch overrides", () => {
   assert.doesNotMatch(pageSource, /refetchOnMount: "always"/);
   assert.doesNotMatch(pageSource, /refetchOnWindowFocus/);
-  assert.match(pageSource, /refetchOnMount: true/);
+  assert.doesNotMatch(pageSource, /refetchOnMount: true/);
+  assert.match(pageSource, /staleTime: 10 \* 60_000/);
 });

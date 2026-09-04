@@ -1,4 +1,4 @@
-﻿import { z } from "zod";
+import { z } from "zod";
 
 const classDaySchema = z.enum([
   "Thứ 2",
@@ -46,7 +46,7 @@ export const classResponseSchema = z.object({
   type: z.enum(["MONTHLY", "COURSE"]),
   base_fee: z.number().int().min(0).max(999_999_999_999),
   billing_cycle_months: z.number().int().min(1).max(24),
-  billing_cycle_weeks: z.number().int().min(1).max(32_767).nullable().default(null),
+  billing_cycle_weeks: z.number().int().min(1).max(260).nullable().default(null),
   start_date: z.string().nullable(),
   end_date: z.string().nullable(),
   identity_scheme: z.enum(["LEGACY", "ACADEMIC_YEAR", "INTAKE"]),
@@ -71,14 +71,21 @@ export const classResponseSchema = z.object({
   display_name: z.string().min(1).max(260),
   primary_label: z.string().min(1).max(240),
   secondary_label: z.string().max(160).nullable(),
-  effective_status: z.enum(["LEGACY", "SCHEDULED", "ACTIVE", "COMPLETED", "CANCELLED"]),
+  effective_status: z.enum(["LEGACY", "SCHEDULED", "ACTIVE", "STOPPED", "CANCELLED"]),
   can_edit_end_date: z.boolean(),
+  can_edit_start_date: z.boolean().default(false),
+  can_stop: z.boolean().default(false),
   can_edit: z.boolean().default(false),
+  can_edit_billing_mode: z.boolean().default(false),
+  can_edit_package_duration: z.boolean().default(false),
   can_cancel: z.boolean().default(false),
   can_view_history: z.boolean().default(true),
   next_fee_due_date: z.string().nullable().default(null),
   next_fee_due_state: z.enum(["OVERDUE", "UPCOMING", "NONE"]).default("NONE"),
   cancelled_at: z.string().nullable().default(null),
+  stopped_on: z.string().nullable().default(null),
+  stopped_at: z.string().nullable().default(null),
+  stopped_reason: z.string().nullable().default(null),
   unresolved_makeup_count: z.number().int().min(0).default(0),
   active_suspension: z
     .object({
@@ -90,6 +97,42 @@ export const classResponseSchema = z.object({
     .nullable()
     .default(null),
   previous_class_id: z.string().uuid().nullable().default(null),
+  staff_assignments: z
+    .array(
+      z.object({
+        staff_id: z.string().uuid(),
+        full_name: z.string(),
+        role: z.enum(["TEACHER", "ASSISTANT"]),
+        slot_ids: z.array(z.string().uuid()).default([]),
+      }),
+    )
+    .default([]),
+  staffing_status: z
+    .enum(["UNASSIGNED", "PARTIAL", "READY"])
+    .default("UNASSIGNED"),
+  unassigned_slot_ids: z.array(z.string().uuid()).default([]),
+});
+
+export const staffAvailabilityConflictResponseSchema = z.object({
+  class_id: z.string().uuid(),
+  class_name: z.string(),
+  day: classDaySchema,
+  start: z.string(),
+  end: z.string(),
+  source: z.enum(["REGULAR", "MAKEUP"]).default("REGULAR"),
+});
+
+export const staffAvailabilityCandidateResponseSchema = z.object({
+  staff_id: z.string().uuid(),
+  role: z.enum(["TEACHER", "ASSISTANT"]),
+  available: z.boolean(),
+  conflicts: z.array(staffAvailabilityConflictResponseSchema).default([]),
+});
+
+export const staffAvailabilityPreviewResponseSchema = z.object({
+  can_apply: z.boolean(),
+  preview_fingerprint: z.string(),
+  candidates: z.array(staffAvailabilityCandidateResponseSchema),
 });
 
 export const classResponseListSchema = z.array(classResponseSchema);
@@ -99,7 +142,7 @@ const classCopyTemplateSchema = z.object({
   type: z.enum(["MONTHLY", "COURSE"]),
   base_fee: z.number().int().min(0).max(999_999_999_999),
   billing_cycle_months: z.number().int().min(1).max(24),
-  billing_cycle_weeks: z.number().int().min(1).max(32_767).nullable().default(null),
+  billing_cycle_weeks: z.number().int().min(1).max(260).nullable().default(null),
   identity_scheme: z.enum(["ACADEMIC_YEAR", "INTAKE"]),
   class_category: z.enum(["GENERAL", "SPECIALIZED", "IELTS", "CUSTOM"]).nullable(),
   grade_mode: z.enum(["GRADE", "NONE"]).nullable(),
@@ -116,7 +159,7 @@ export const classContinuationPreviewSchema = z.object({
   source_class_id: z.string().uuid(),
   source_version: z.number().int().min(1),
   suggested_start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  suggested_end_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  suggested_end_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
   template: classCopyTemplateSchema,
   students: z.array(z.object({
     student_id: z.string().uuid(),
@@ -142,6 +185,7 @@ export const classScopeSummarySchema = z.object({
   operational: z.number().int().min(0),
   active: z.number().int().min(0),
   scheduled: z.number().int().min(0),
+  stopped: z.number().int().min(0).default(0),
   completed: z.number().int().min(0),
   cancelled: z.number().int().min(0),
 });
@@ -175,15 +219,132 @@ export const classEndDatePreviewSchema = z.object({
   preview_expires_at: z.string(),
 });
 
+export const billingCycleOptionSchema = z.object({
+  cycle_no: z.number().int(),
+  coverage_start: z.string(),
+  coverage_end: z.string(),
+  due_date: z.string(),
+  amount: z.number().int().optional(),
+  label: z.string().optional(),
+});
+
+export const billingDecisionOptionSchema = z.object({
+  decision_code: z.string(),
+  label: z.string(),
+  description: z.string(),
+  recommended: z.boolean().default(false),
+  coverage_start: z.string(),
+  coverage_end: z.string(),
+  due_date: z.string(),
+  amount: z.number().int().optional(),
+  first_anchor_cycle_no: z.number().int().default(0),
+  skipped_cycle_count: z.number().int().min(0).default(0),
+  superseded_fee_count: z.number().int().min(0).default(0),
+  protected_fee_count: z.number().int().min(0).default(0),
+  kept_fee_count: z.number().int().min(0).default(0),
+  revoked_payment_request_count: z.number().int().min(0).default(0),
+  review_required: z.boolean().default(false),
+  allowed: z.boolean().default(true),
+  disabled_reason: z.string().nullable().optional(),
+  warning_text: z.string().nullable().optional(),
+  available_cycles: z.array(billingCycleOptionSchema).default([]),
+});
+
+export const affectedEnrollmentImpactSchema = z.object({
+  enrollment_id: z.string(),
+  student_id: z.string(),
+  student_name: z.string(),
+  class_id: z.string(),
+  class_name: z.string(),
+  old_enrollment_date: z.string().nullable(),
+  new_enrollment_date: z.string(),
+  must_change: z.boolean(),
+  decisions: z.array(billingDecisionOptionSchema).default([]),
+  recommended_decision: z.string(),
+  protected_fee_count: z.number().int().min(0),
+  mutable_fee_count: z.number().int().min(0),
+});
+
+export const classStartDatePreviewSchema = z.object({
+  previous_start_date: z.string(),
+  next_start_date: z.string(),
+  affected_enrollment_count: z.number().int().min(0),
+  protected_fee_record_count: z.number().int().min(0),
+  blocking_history_count: z.number().int().min(0),
+  moves_earlier: z.boolean(),
+  creates_retroactive_fees: z.literal(false),
+  version: z.number().int().min(1),
+  preview_fingerprint: z.string().min(32).max(64),
+  preview_expires_at: z.string(),
+  can_apply: z.boolean().default(true),
+  blocking_reason: z.string().nullable().optional(),
+  earliest_historical_activity_date: z.string().nullable().optional(),
+  affected_enrollments: z.array(affectedEnrollmentImpactSchema).default([]),
+});
+
+export const classBillingCyclePreviewSchema = z.object({
+  class_id: z.string().uuid(),
+  previous_weeks: z.number().int().min(1).max(260),
+  next_weeks: z.number().int().min(1).max(260),
+  affected_enrollment_count: z.number().int().min(0),
+  retained_current_cycle_count: z.number().int().min(0),
+  superseded_fee_count: z.number().int().min(0),
+  protected_fee_count: z.number().int().min(0),
+  open_payment_request_count: z.number().int().min(0),
+  pending_review_count: z.number().int().min(0),
+  affected_periods: z.array(z.string()),
+  students: z.array(z.object({
+    enrollment_id: z.string().uuid(),
+    student_id: z.string().uuid(),
+    student_name: z.string().min(1),
+    student_code: z.string().nullable(),
+    transition_on: z.string(),
+    previous_next_due_date: z.string(),
+    next_due_date: z.string(),
+    protected_fee_count: z.number().int().min(0),
+    superseded_fee_count: z.number().int().min(0),
+  })),
+  version: z.number().int().min(1),
+  preview_fingerprint: z.string().length(64),
+  preview_expires_at: z.string(),
+});
+
+export const classBillingCycleUpdateResponseSchema = z.object({
+  revision_id: z.string().uuid(),
+  previous_weeks: z.number().int().min(1).max(260),
+  next_weeks: z.number().int().min(1).max(260),
+  affected_enrollment_count: z.number().int().min(0),
+  superseded_fee_count: z.number().int().min(0),
+  protected_fee_count: z.number().int().min(0),
+  revoked_payment_request_count: z.number().int().min(0),
+  pending_review_count: z.number().int().min(0),
+  affected_periods: z.array(z.string()),
+  class_: classResponseSchema,
+});
+
+export const classStopPreviewSchema = z.object({
+  stopped_on: z.string(),
+  active_enrollment_count: z.number().int().min(0),
+  future_mutable_fee_record_count: z.number().int().min(0),
+  retained_fee_record_count: z.number().int().min(0),
+  unresolved_makeup_count: z.number().int().min(0),
+  version: z.number().int().min(1),
+  preview_fingerprint: z.string().min(32).max(64),
+  preview_expires_at: z.string(),
+});
+
 export const classHistorySchema = z.object({
   id: z.string().uuid(),
   name: z.string().min(1),
   display_name: z.string().min(1),
   primary_label: z.string().min(1),
   secondary_label: z.string().nullable(),
-  effective_status: z.enum(["LEGACY", "SCHEDULED", "ACTIVE", "COMPLETED", "CANCELLED"]),
+  effective_status: z.enum(["LEGACY", "SCHEDULED", "ACTIVE", "STOPPED", "CANCELLED"]),
   start_date: z.string().nullable(),
   end_date: z.string().nullable(),
+  stopped_on: z.string().nullable().default(null),
+  stopped_at: z.string().nullable().default(null),
+  stopped_reason: z.string().nullable().default(null),
   schedule: classScheduleSchema,
   schedule_slots: z.array(
     z.object({
@@ -225,6 +386,10 @@ export const classHistorySchema = z.object({
       event_type: z.string(),
       previous_end_date: z.string().nullable(),
       next_end_date: z.string().nullable(),
+      previous_start_date: z.string().nullable().optional(),
+      next_start_date: z.string().nullable().optional(),
+      previous_billing_cycle_weeks: z.number().int().nullable().optional(),
+      next_billing_cycle_weeks: z.number().int().nullable().optional(),
       reason: z.string().nullable(),
       occurred_at: z.string(),
     }),
@@ -460,7 +625,7 @@ export const exceptionCommandSchema = z.object({
     "LEGACY",
     "SCHEDULED",
     "ACTIVE",
-    "COMPLETED",
+    "STOPPED",
     "CANCELLED",
   ]),
   billing_impact: z.literal("NONE"),

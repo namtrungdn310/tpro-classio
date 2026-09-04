@@ -25,7 +25,6 @@ export type ClassOccurrenceRange = {
 export type ClassAvailabilityInput = {
   classId: string | null;
   startDate: string;
-  endDate: string;
   teacherIds: string[];
   assistantIds: string[];
   scope?: "selected_staff" | "all_classes";
@@ -60,11 +59,8 @@ export const classQueryKeys = {
       "schedule-availability",
       input.classId ?? "new",
       input.startDate,
-      input.endDate,
       [...input.teacherIds].sort().join(","),
       [...input.assistantIds].sort().join(","),
       input.scope ?? "selected_staff",
     ] as const,
-  endDatePreview: (classId: string, endDate: string, version: number) =>
-    ["classes", classId, "end-date-preview", endDate, version] as const,
 };

@@ -7,15 +7,18 @@ import {
   type UseQueryResult,
 } from "@tanstack/react-query";
 import {
-  RiLoader4Line as LoaderCircle,
   RiRefreshLine as RefreshCw,
 } from "react-icons/ri";
 import { DashboardFeeSummaryCard } from "@/components/dashboard/dashboard-fee-summary";
+import { FinancialPrivacyProvider } from "@/components/providers/financial-privacy-provider";
 import { DashboardMetricCard } from "@/components/dashboard/dashboard-metric-card";
-import { DashboardMetricsSkeleton } from "@/components/dashboard/dashboard-overview-skeleton";
-import { HeaderControlsPortal } from "@/components/layout/header-controls-portal";
 import {
-  getTodayLabel,
+  DashboardMetricsSkeleton,
+  DashboardOverviewSkeleton,
+} from "@/components/dashboard/dashboard-overview-skeleton";
+import { HeaderControlsPortal } from "@/components/layout/header-controls-portal";
+import { HeaderLoadingControls } from "@/components/layout/header-loading-status";
+import {
   WeeklyScheduleBoardSkeleton,
 } from "@/components/layout/weekly-schedule-board";
 import { Button } from "@/components/ui/button";
@@ -79,7 +82,7 @@ export default function DashboardPage() {
     queryKey: classQueryKeys.effectiveOccurrences(weekRange.from, weekRange.to),
     queryFn: () => getEffectiveOccurrences(weekRange.from, weekRange.to),
     enabled: Boolean(user),
-    staleTime: 30_000,
+    staleTime: 60_000,
   });
   const occurrencesByClass = useMemo(() => {
     const map = new Map<string, EffectiveOccurrenceSummary["occurrences"]>();
@@ -94,18 +97,37 @@ export default function DashboardPage() {
     () => sortClasses(classesQuery.data ?? []),
     [classesQuery.data],
   );
-  const today = getTodayLabel();
-  const isRefreshing = overviewQuery.isFetching || classesQuery.isFetching;
+  const hasSettledOverview = overviewQuery.data !== undefined || overviewQuery.isError;
+  const hasSettledClasses = classesQuery.data !== undefined || classesQuery.isError;
+  const hasSettledOccurrences = occurrencesQuery.data !== undefined || occurrencesQuery.isError;
+  const isInitialLoading = !user || !hasSettledOverview || !hasSettledClasses;
+  const isRefreshing =
+    overviewQuery.isFetching || classesQuery.isFetching || occurrencesQuery.isFetching;
   const hasRefreshError =
     (overviewQuery.isError && Boolean(overview)) ||
-    (classesQuery.isError && Boolean(classesQuery.data));
+    (classesQuery.isError && Boolean(classesQuery.data)) ||
+    (occurrencesQuery.isError && Boolean(occurrencesQuery.data));
   const lastUpdatedAt = Math.max(
     overviewQuery.dataUpdatedAt || 0,
     classesQuery.dataUpdatedAt || 0,
+    occurrencesQuery.dataUpdatedAt || 0,
   );
 
   function refreshDashboard() {
-    void Promise.all([overviewQuery.refetch(), classesQuery.refetch()]);
+    void Promise.all([
+      overviewQuery.refetch(),
+      classesQuery.refetch(),
+      occurrencesQuery.refetch(),
+    ]);
+  }
+
+  if (isInitialLoading) {
+    return (
+      <>
+        <HeaderLoadingControls showSearch={false} />
+        <DashboardOverviewSkeleton />
+      </>
+    );
   }
 
   return (
@@ -124,16 +146,17 @@ export default function DashboardPage() {
         <p className="caption-text rounded-md border border-slate-200 bg-slate-100 px-2 py-1 text-slate-700">
           {overview ? formatPeriod(overview.summary.period) : "Dữ liệu hiện tại"}
         </p>
-        <Button
-          type="button"
-          variant="outline"
-          size="icon"
-          disabled={isRefreshing}
-          aria-label="Làm mới tổng quan"
-          onClick={refreshDashboard}
-        >
-          {isRefreshing ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}
-        </Button>
+        {!isRefreshing ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            aria-label="Làm mới tổng quan"
+            onClick={refreshDashboard}
+          >
+            <RefreshCw />
+          </Button>
+        ) : null}
       </div>
 
       <div className="dashboard-overview-no-selection flex h-full min-h-0 flex-col gap-4">
@@ -141,20 +164,16 @@ export default function DashboardPage() {
           <OverviewTopSection query={overviewQuery} />
         </section>
 
-        <section className="flex min-h-0 flex-1 flex-col gap-2.5">
-          <ScheduleToolbar
-            weeklySessionCount={overview?.summary.weekly_session_count}
-          />
+        <section className="flex min-h-0 flex-1 flex-col gap-0">
           <div className="min-h-0 flex-1">
-            {classesQuery.data ? (
+            {classesQuery.data && hasSettledOccurrences ? (
               <WeeklyScheduleBoard
                 classes={classes}
-                detailDay={today}
                 className="h-full min-h-0"
                 detailWidthClassName="lg:grid-cols-[minmax(0,1fr)_220px]"
                 occurrencesByClass={occurrencesByClass}
               />
-            ) : classesQuery.isLoading ? (
+            ) : classesQuery.isLoading || occurrencesQuery.isLoading ? (
               <WeeklyScheduleBoardSkeleton
                 className="h-full min-h-0"
                 detailWidthClassName="lg:grid-cols-[minmax(0,1fr)_220px]"
@@ -207,24 +226,25 @@ function DashboardHeaderStatus({
         {hasRefreshError ? (
           "Chưa cập nhật được dữ liệu mới"
         ) : isRefreshing ? (
-          <LoadingLabel label="Đang cập nhật" />
+          <LoadingLabel label="Đang tải" />
         ) : lastUpdatedAt ? (
           `Cập nhật ${formatCompactDateTime(lastUpdatedAt)}`
         ) : (
           <LoadingLabel label="Đang chuẩn bị dữ liệu" />
         )}
       </span>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-sm"
-        disabled={isRefreshing}
-        aria-label="Làm mới tổng quan"
-        title="Làm mới dữ liệu"
-        onClick={onRefresh}
-      >
-        {isRefreshing ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}
-      </Button>
+      {!isRefreshing ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Làm mới tổng quan"
+          title="Làm mới dữ liệu"
+          onClick={onRefresh}
+        >
+          <RefreshCw />
+        </Button>
+      ) : null}
     </div>
   );
 }
@@ -258,10 +278,12 @@ function OverviewTopSection({
   return (
     <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(300px,0.35fr)_minmax(0,0.65fr)]">
       <OverviewMetrics overview={overview} />
-      <DashboardFeeSummaryCard
-        fees={overview.fees}
-        className="h-full"
-      />
+      <FinancialPrivacyProvider>
+        <DashboardFeeSummaryCard
+          fees={overview.fees}
+          className="h-full"
+        />
+      </FinancialPrivacyProvider>
     </div>
   );
 }
@@ -285,33 +307,16 @@ function OverviewMetrics({ overview }: { overview: DashboardOverviewResponse }) 
       />
       <DashboardMetricCard
         delayMs={110}
-        label="Giáo viên"
-        value={String(summary.active_teacher_count)}
+        label="Nhân sự"
+        value={String(summary.active_staff_count)}
         hint="Đang hoạt động"
       />
       <DashboardMetricCard
         delayMs={165}
-        label="Trợ giảng"
-        value={String(summary.active_assistant_count)}
-        hint="Đang hoạt động"
+        label="Cần phân công"
+        value={String(summary.unstaffed_class_count)}
+        hint="Lớp chưa đủ giáo viên"
       />
-    </div>
-  );
-}
-
-function ScheduleToolbar({
-  weeklySessionCount,
-}: {
-  weeklySessionCount?: number;
-}) {
-  return (
-    <div className="flex shrink-0 items-center justify-between gap-3 px-0.5">
-      <h2 className="section-title-text text-slate-900">Lịch học tuần</h2>
-      {typeof weeklySessionCount === "number" ? (
-        <span className="caption-text rounded-md border border-slate-200 bg-slate-100 px-2 py-1 text-slate-700">
-          {weeklySessionCount} ca / tuần
-        </span>
-      ) : null}
     </div>
   );
 }

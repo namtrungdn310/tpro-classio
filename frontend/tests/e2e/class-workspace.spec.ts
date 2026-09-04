@@ -59,7 +59,7 @@ test("closing with unsaved changes asks for confirmation and stays on cancel", a
   ).toBeVisible();
   expect((await state(page)).open).toBe(true);
 
-  await page.getByRole("button", { name: "Ở lại" }).click();
+  await page.getByRole("button", { name: "Tiếp tục chỉnh sửa" }).click();
   expect((await state(page)).open).toBe(true);
 });
 

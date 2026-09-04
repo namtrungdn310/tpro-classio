@@ -237,18 +237,18 @@ test("billing labels normalize unsupported or malformed durations", () => {
   );
 });
 
-test("total duration label shows months for monthly and weeks for package classes", () => {
+test("open-ended classes never expose a misleading total duration", () => {
   assert.equal(
     getClassTotalDurationLabel(
       makeClass("m", "6C1", "MONTHLY", 1, { start_date: "2026-09-01", end_date: "2026-11-30" }),
     ),
-    "3 tháng",
+    null,
   );
   assert.equal(
     getClassTotalDurationLabel(
       makeClass("c", "IELTS", "COURSE", 2, { start_date: "2026-09-01", end_date: "2026-10-27" }),
     ),
-    "8 tuần",
+    null,
   );
   assert.equal(
     getClassTotalDurationLabel(makeClass("no-dates", "X", "MONTHLY", 1)),
@@ -261,7 +261,7 @@ test("total duration label shows months for monthly and weeks for package classe
         end_date: "2027-06-06",
       }),
     ),
-    "12 tuần",
+    null,
   );
 });
 

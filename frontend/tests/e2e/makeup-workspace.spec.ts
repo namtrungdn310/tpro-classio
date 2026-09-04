@@ -4,13 +4,9 @@ import { expect, test } from "@playwright/test";
 async function chooseEndDate(page: import("@playwright/test").Page) {
   const target = new Date();
   target.setDate(target.getDate() + 14);
-  await page.getByRole("button", { name: /^Đến ngày/ }).click();
-  const picker = page.locator('[role="dialog"]:visible').filter({ hasText: "Chọn ngày kết thúc hoãn" }).last();
-  await expect(picker).toBeVisible();
-  await picker.getByRole("button", { name: String(target.getFullYear()), exact: true }).click();
-  await picker.getByRole("button", { name: `Tháng ${target.getMonth() + 1}`, exact: true }).click();
-  await picker.getByRole("button", { name: String(target.getDate()), exact: true }).click();
-  await picker.getByRole("button", { name: "Xác nhận", exact: true }).click();
+  await page.locator("#makeup-range-to").fill(
+    `${String(target.getDate()).padStart(2, "0")}/${String(target.getMonth() + 1).padStart(2, "0")}/${target.getFullYear()}`,
+  );
 }
 
 test.beforeEach(async ({ page }) => {

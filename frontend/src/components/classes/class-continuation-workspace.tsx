@@ -118,7 +118,7 @@ export function ClassContinuationWorkspace({
       class_category: preview.template.class_category,
       grade_mode: preview.template.grade_mode,
       start_date: preview.suggested_start_date,
-      end_date: preview.suggested_end_date,
+      end_date: null,
       source_class_id: sourceClass.id,
     };
   }, [preview, sourceClass.id]);
@@ -216,7 +216,7 @@ export function ClassContinuationWorkspace({
             <div className="form-input-text flex h-8 min-w-0 items-center rounded-md border border-gray-200 bg-white px-2.5 font-medium text-gray-900">
               <span className="truncate">{selected.size} học viên đã chọn</span>
             </div>
-            <button type="button" onClick={() => setIsStudentPickerOpen(true)} className="form-input-text inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-gray-200 bg-white px-2.5 font-medium text-primary transition hover:border-primary/30 hover:bg-primary-soft/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20"><UserAdd className="h-4 w-4" aria-hidden="true" />Chọn học viên</button>
+            <button type="button" onClick={() => setIsStudentPickerOpen(true)} className="form-input-text inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-gray-200 bg-white px-2.5 font-medium text-primary transition hover:border-primary/30 hover:bg-primary-soft/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/20"><UserAdd className="h-4 w-4" aria-hidden="true" />Chọn học viên</button>
           </div>
           {submitError ? <p className="helper-text mt-1 text-destructive" role="alert">{submitError}</p> : null}
         </FormSection>;
@@ -335,7 +335,7 @@ function StudentPickerSlide({
         {!editingStudent ? <div className="shrink-0 space-y-3 border-b border-gray-100 px-5 py-4">
           <div className="relative">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" aria-hidden="true" />
-            <input ref={searchRef} autoComplete="off" value={search} onChange={(event) => onSearchChange(event.target.value)} placeholder="Ví dụ: Nguyễn Minh hoặc TP000000001" className="form-input-text h-8 w-full rounded-md border border-gray-300 bg-white pl-8 pr-9 text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary focus:ring-2 focus:ring-primary/15" />
+            <input ref={searchRef} autoComplete="off" value={search} onChange={(event) => onSearchChange(event.target.value)} placeholder="Ví dụ: Nguyễn Minh hoặc TP000000001" className="form-input-text h-8 w-full rounded-md border border-gray-300 bg-white pl-8 pr-9 text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-primary focus:ring-1 focus:ring-primary/15" />
             {search ? <button type="button" aria-label="Xoá tìm kiếm" onClick={() => onSearchChange("")} className="absolute right-1 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-700"><X className="h-4 w-4" /></button> : null}
           </div>
           {isSearching ? <button type="button" onClick={() => onSearchChange("")} className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-sm font-medium text-primary hover:bg-primary-soft"><ArrowLeft className="h-4 w-4" />Danh sách lớp kế tiếp ({selected.size})</button> : null}
@@ -437,8 +437,8 @@ function StudentConfiguration({ student, targetSlots, baseFee, onChange }: { stu
       </section>
       <section className="border-t border-gray-100 pt-4">
         <h3 className="text-sm font-semibold text-gray-900">Học phí áp dụng</h3>
-        <SmartMoneyInput value={student.custom_fee} onChange={(custom_fee) => onChange({ ...student, custom_fee, partial_fee_reviewed: true })} placeholder={baseFee === null ? "Nhập học phí" : `Học phí lớp ${formatCurrency(baseFee)}`} className="form-input-text mt-2 h-9 w-full rounded-md border border-gray-300 px-3" />
-        {suggestion ? <div className="mt-2 rounded-lg border border-primary/15 bg-primary-soft/50 p-3"><p className="text-sm text-gray-700">Gợi ý <strong className="font-semibold text-gray-950">{formatCurrency(suggestion.amount)}</strong> theo {suggestion.selectedCount}/{suggestion.totalCount} buổi.</p><div className="mt-2 flex flex-wrap gap-2"><button type="button" onClick={() => onChange({ ...student, custom_fee: suggestion.amount, partial_fee_reviewed: true })} className="inline-flex h-8 items-center rounded-md bg-primary px-3 text-sm font-medium text-white">Áp dụng gợi ý</button><button type="button" onClick={() => onChange({ ...student, custom_fee: null, partial_fee_reviewed: true })} className="inline-flex h-8 items-center rounded-md border border-gray-200 bg-white px-3 text-sm font-medium text-gray-700">Dùng học phí lớp</button></div>{!student.partial_fee_reviewed ? <p className="helper-text mt-2 text-amber-700">Xác nhận một mức học phí trước khi hoàn tất.</p> : null}</div> : null}
+        <SmartMoneyInput value={student.custom_fee} onChange={(custom_fee) => onChange({ ...student, custom_fee, partial_fee_reviewed: true })} placeholder={baseFee === null ? "Nhập học phí" : `Học phí lớp ${formatCurrency(baseFee)}`} className="mt-2 h-9" />
+        {suggestion ? <><div className="mt-2 grid grid-cols-[minmax(0,1fr)_auto] gap-2"><div className="form-input-text flex h-8 min-w-0 items-center rounded-md border border-gray-200 bg-white px-2.5 font-medium text-gray-900"><span className="truncate">Gợi ý <strong className="font-semibold text-gray-950">{formatCurrency(suggestion.amount)}</strong> theo {suggestion.selectedCount}/{suggestion.totalCount} buổi.</span></div><button type="button" onClick={() => onChange({ ...student, custom_fee: suggestion.amount, partial_fee_reviewed: true })} className="form-input-text inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-gray-200 bg-white px-2.5 font-medium text-primary transition hover:border-primary/30 hover:bg-primary-soft/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/20">Áp dụng gợi ý</button></div>{!student.partial_fee_reviewed ? <p className="helper-text mt-1 text-amber-700">Xác nhận một mức học phí trước khi hoàn tất.</p> : null}</> : null}
       </section>
     </div>
   );

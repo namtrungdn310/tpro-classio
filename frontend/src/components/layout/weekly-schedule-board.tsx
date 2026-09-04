@@ -1,10 +1,18 @@
 "use client";
 
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ClassResponse } from "@/lib/types";
 import { getClassGroupInfoForRecord } from "@/lib/classes/presentation";
 import { abbreviateClassName } from "@/lib/utils/class-groups";
 import { SCHEDULE_BLOCK_COUNT } from "@/lib/classes/schedule-drag";
+import {
+  formatScheduleMinutes,
+  getCurrentTimeMarkerTop,
+  getVietnamScheduleClock,
+  isScheduleIntervalPast,
+  millisecondsUntilNextScheduleStep,
+  parseScheduleTime,
+} from "@/lib/classes/schedule-current-time";
 import { cn } from "@/lib/utils";
 
 export const DAYS_OF_WEEK = [
@@ -25,6 +33,9 @@ export interface ScheduleSlot {
   teacher_ids?: string[];
   /** Trợ giảng hỗ trợ riêng buổi này (subset của assistant_ids của lớp). */
   assistant_ids?: string[];
+  /** R6-D07: stable relational slot identity */
+  id?: string;
+  version?: number;
 }
 
 export interface ClassScheduleSlot extends ScheduleSlot {
@@ -64,6 +75,38 @@ export function WeeklyScheduleBoard({
   detailWidthClassName = "lg:grid-cols-[minmax(0,1fr)_190px]",
   occurrencesByClass,
 }: WeeklyScheduleBoardProps) {
+  const [scheduleClock, setScheduleClock] = useState(() =>
+    getVietnamScheduleClock(),
+  );
+  const refreshScheduleClock = useCallback(() => {
+    setScheduleClock(getVietnamScheduleClock());
+  }, []);
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const scheduleNextUpdate = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        refreshScheduleClock();
+        scheduleNextUpdate();
+      }, millisecondsUntilNextScheduleStep());
+    };
+    const resumeScheduleClock = () => {
+      refreshScheduleClock();
+      scheduleNextUpdate();
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") resumeScheduleClock();
+    };
+    scheduleNextUpdate();
+    window.addEventListener("focus", resumeScheduleClock);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      if (timer) clearTimeout(timer);
+      window.removeEventListener("focus", resumeScheduleClock);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [refreshScheduleClock]);
+
   const scheduleSlots = useMemo(() => getClassScheduleSlots(classes), [classes]);
   const makeupMarkers = useMemo(
     () => buildMakeupMarkers(classes, occurrencesByClass),
@@ -85,6 +128,7 @@ export function WeeklyScheduleBoard({
     [scheduleSlots],
   );
   const detailSlotCount = detailSlots.length;
+  const currentTimeMarkerTop = getCurrentTimeMarkerTop(scheduleClock);
 
   return (
     <div className={cn("dashboard-schedule-board grid min-h-[520px] gap-3 overflow-hidden", detailWidthClassName, className)}>
@@ -92,8 +136,16 @@ export function WeeklyScheduleBoard({
         <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
         <div className="table-heading-text grid grid-cols-[56px_repeat(7,minmax(0,1fr))] border-b border-slate-300 bg-slate-100 text-center text-slate-800">
           <div className="border-r border-slate-300 py-1">Giờ</div>
-          {DAYS_OF_WEEK.map((day) => (
-            <div key={day} className="min-w-0 border-r border-slate-300 px-0.5 py-1 last:border-r-0">
+          {DAYS_OF_WEEK.map((day, dayIndex) => (
+            <div
+              key={day}
+              aria-current={dayIndex === scheduleClock.dayIndex ? "date" : undefined}
+              className={cn(
+                "min-w-0 border-r border-slate-300 px-0.5 py-1 last:border-r-0",
+                dayIndex === scheduleClock.dayIndex &&
+                  "bg-primary-soft/70 font-semibold text-primary",
+              )}
+            >
               <span className="hidden sm:inline">{day}</span>
               <span className="sm:hidden" aria-hidden="true">{compactDayLabel(day)}</span>
             </div>
@@ -104,9 +156,13 @@ export function WeeklyScheduleBoard({
           {TIME_BLOCKS.map((timeBlock, timeIndex) => (
             <div key={timeBlock} className="grid min-h-0 flex-1 grid-cols-[56px_repeat(7,minmax(0,1fr))] text-center text-xs">
               <div
-                className={`font-ui flex items-center justify-center border-r border-slate-300 bg-slate-100 text-[12px] font-medium leading-3 text-slate-600 ${
-                  timeIndex > 0 ? "border-t border-slate-200" : ""
-                }`}
+                className={cn(
+                  "font-ui flex items-center justify-center border-r border-slate-300 bg-slate-100 text-[12px] font-medium leading-3 text-slate-600",
+                  timeIndex > 0 && "border-t border-slate-200",
+                  scheduleClock.markerVisible &&
+                    timeToMinutes(timeBlock) === scheduleClock.snappedMinutes &&
+                    "font-semibold text-primary",
+                )}
               >
                 {formatTimeBlock(timeBlock)}
               </div>
@@ -119,23 +175,53 @@ export function WeeklyScheduleBoard({
             </div>
           ))}
 
+          {currentTimeMarkerTop !== null ? (
+            <>
+              <div
+                aria-hidden="true"
+                data-dashboard-current-time
+                className="pointer-events-none absolute z-30 h-0.5 bg-primary shadow-[0_0_0_1px_rgba(255,255,255,0.75)] transition-[top] duration-200 ease-out motion-reduce:transition-none"
+                style={{
+                  left: `calc(${TIME_COLUMN_WIDTH}px + ((100% - ${TIME_COLUMN_WIDTH}px) / 7) * ${scheduleClock.dayIndex})`,
+                  top: `${currentTimeMarkerTop}%`,
+                  width: `calc((100% - ${TIME_COLUMN_WIDTH}px) / 7)`,
+                  transform: "translateY(-50%)",
+                }}
+              >
+                <span className="absolute -left-1 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-primary ring-2 ring-white" />
+              </div>
+              <span className="sr-only">
+                Thời gian hiện tại {scheduleClock.label}, {DAYS_OF_WEEK[scheduleClock.dayIndex]}
+              </span>
+            </>
+          ) : null}
+
           {positionedSlots.map(({ slot, color, style }, index) => {
             const postponed = makeupMarkers.postponed.get(
               `${slot.classId}|${slot.day}|${slot.start}`,
+            );
+            const dayIndex = DAYS_OF_WEEK.indexOf(slot.day);
+            const isPast = isScheduleIntervalPast(
+              dayIndex,
+              timeToMinutes(slot.end),
+              scheduleClock,
             );
 
             return (
               <div
                 key={`${slot.classId}-${slot.day}-${slot.start}-${slot.end}-${index}`}
                 title={`${slot.className}${slot.teacherName ? ` - ${slot.teacherName}` : ""} (${slot.start}-${slot.end})${postponed ? " - Đã hoãn" : ""}`}
-                aria-label={`${slot.className}${slot.teacherName ? `, ${slot.teacherName}` : ""}, ${slot.start} đến ${slot.end}${postponed ? ", đã hoãn" : ""}`}
-                className="font-ui absolute z-10 flex items-center justify-center rounded-md border px-1 text-center text-[10px] font-semibold leading-tight shadow-sm"
+                aria-label={`${slot.className}${slot.teacherName ? `, ${slot.teacherName}` : ""}, ${slot.start} đến ${slot.end}${postponed ? ", đã hoãn" : ""}${isPast ? ", đã qua" : ""}`}
+                data-schedule-past={isPast ? "true" : undefined}
+                className="font-ui absolute z-10 flex items-center justify-center rounded-md border px-1 text-center text-[10px] font-semibold leading-tight shadow-sm transition-[opacity,filter] duration-200 motion-reduce:transition-none"
                 style={{
                   ...style,
                   backgroundColor: postponed ? color.background : color.background,
                   borderColor: color.border,
                   color: color.text,
-                  opacity: postponed ? 0.55 : 1,
+                  opacity: postponed ? 0.55 : isPast ? 0.5 : 1,
+                  filter: isPast && !postponed ? "saturate(0.4)" : undefined,
+                  boxShadow: isPast ? "none" : undefined,
                 }}
               >
                 <span className="line-clamp-2" aria-hidden="true">
@@ -159,17 +245,25 @@ export function WeeklyScheduleBoard({
               gradeLevel: marker.gradeLevel,
             };
             const { color, style } = getSlotStyle(syntheticSlot, scheduleSlots);
+            const isPast = isScheduleIntervalPast(
+              DAYS_OF_WEEK.indexOf(marker.day),
+              timeToMinutes(marker.end),
+              scheduleClock,
+            );
             return (
               <div
                 key={marker.key}
                 title={`Học bù: ${marker.className} (${marker.start}-${marker.end})`}
-                aria-label={`Học bù, ${marker.className}, ${marker.start} đến ${marker.end}`}
-                className="font-ui absolute z-20 flex items-center justify-center rounded-md border border-dashed px-1 text-center text-[10px] font-semibold leading-tight"
+                aria-label={`Học bù, ${marker.className}, ${marker.start} đến ${marker.end}${isPast ? ", đã qua" : ""}`}
+                data-schedule-past={isPast ? "true" : undefined}
+                className="font-ui absolute z-20 flex items-center justify-center rounded-md border border-dashed px-1 text-center text-[10px] font-semibold leading-tight transition-[opacity,filter] duration-200 motion-reduce:transition-none"
                 style={{
                   ...style,
                   backgroundColor: color.background,
                   borderColor: color.border,
                   color: color.text,
+                  opacity: isPast ? 0.5 : 1,
+                  filter: isPast ? "saturate(0.4)" : undefined,
                 }}
               >
                 <span className="line-clamp-2">Học bù</span>
@@ -191,23 +285,32 @@ export function WeeklyScheduleBoard({
             Không có ca học trong ngày này.
           </p>
         ) : (
-          <div className="flex flex-1 flex-col gap-2 overflow-y-auto p-2">
+          <div className="scrollbar-hidden flex flex-1 flex-col gap-2 overflow-y-auto p-2">
             {detailSlots.map((slot, index) => {
               const color = getClassGroupInfoForRecord({
                 name: slot.className,
                 class_category: slot.classCategory,
                 grade_level: slot.gradeLevel,
               } as ClassResponse).color;
+              const isPast = isScheduleIntervalPast(
+                DAYS_OF_WEEK.indexOf(slot.day),
+                timeToMinutes(slot.end),
+                scheduleClock,
+              );
 
               return (
                 <div
                   key={`${slot.classId}-${slot.start}-${slot.end}-${index}`}
                   title={slot.className}
-                  className="rounded-md border px-2 py-2"
+                  aria-label={`${slot.className}, ${slot.start} đến ${slot.end}${isPast ? ", đã qua" : ""}`}
+                  data-schedule-past={isPast ? "true" : undefined}
+                  className="rounded-md border px-2 py-2 transition-[opacity,filter] duration-200 motion-reduce:transition-none"
                   style={{
                     backgroundColor: color.background,
                     borderColor: color.border,
                     color: color.text,
+                    opacity: isPast ? 0.5 : 1,
+                    filter: isPast ? "saturate(0.4)" : undefined,
                   }}
                 >
                   <p className="truncate text-sm font-semibold">{slot.className}</p>
@@ -375,9 +478,11 @@ function buildMakeupMarkers(
       if (occurrence.kind === "MAKEUP" && occurrence.replacement_start_at) {
         const start = new Date(occurrence.replacement_start_at);
         const end = new Date(occurrence.replacement_end_at ?? occurrence.replacement_start_at);
-        const day = weekdayName(start.getDay());
-        const startLabel = `${String(start.getHours()).padStart(2, "0")}:${String(start.getMinutes()).padStart(2, "0")}`;
-        const endLabel = `${String(end.getHours()).padStart(2, "0")}:${String(end.getMinutes()).padStart(2, "0")}`;
+        const startClock = getVietnamScheduleClock(start);
+        const endClock = getVietnamScheduleClock(end);
+        const day = DAYS_OF_WEEK[startClock.dayIndex];
+        const startLabel = formatScheduleMinutes(startClock.minutes);
+        const endLabel = formatScheduleMinutes(endClock.minutes);
         makeups.push({
           key: occurrence.key,
           classId,
@@ -405,27 +510,8 @@ function buildMakeupMarkers(
   return { postponed, makeups };
 }
 
-function weekdayName(dayIndex: number): ScheduleSlot["day"] {
-  return (
-    {
-      0: "Chủ Nhật",
-      1: "Thứ 2",
-      2: "Thứ 3",
-      3: "Thứ 4",
-      4: "Thứ 5",
-      5: "Thứ 6",
-      6: "Thứ 7",
-    } as Record<number, ScheduleSlot["day"]>
-  )[dayIndex];
-}
-
-export function getTodayLabel() {
-  const day = new Date().getDay();
-  if (day === 0) {
-    return "Chủ Nhật";
-  }
-
-  return `Thứ ${day + 1}`;
+export function getTodayLabel(value: Date | number = Date.now()) {
+  return DAYS_OF_WEEK[getVietnamScheduleClock(value).dayIndex];
 }
 
 function extractScheduleSlots(class_: ClassResponse): ScheduleSlot[] {
@@ -476,8 +562,7 @@ function getSlotStyle(slot: ClassScheduleSlot, allSlots: ClassScheduleSlot[]) {
 }
 
 function timeToMinutes(value: string) {
-  const [hours, minutes] = value.split(":").map(Number);
-  return hours * 60 + minutes;
+  return parseScheduleTime(value);
 }
 
 function compactDayLabel(day: (typeof DAYS_OF_WEEK)[number]) {

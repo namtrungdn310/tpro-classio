@@ -237,21 +237,9 @@ const openMakeupMode = async (page: Page) => {
 const chooseEndDate = async (page: Page) => {
   const target = new Date();
   target.setDate(target.getDate() + 14);
-  await page.getByRole("button", { name: /^Đến ngày/ }).click();
-  // The workspace keeps the outer class-form date pickers mounted but hidden.
-  // Scope to the visible dialog to avoid resolving a hidden duplicate with the
-  // same date-picker title/id when this production path is rendered.
-  const picker = page
-    .locator('[role="dialog"]:visible')
-    .filter({ hasText: "Chọn ngày kết thúc hoãn" })
-    .last();
-  await expect(picker).toBeVisible();
-  await picker.getByRole("button", { name: String(target.getFullYear()), exact: true }).click();
-  await picker
-    .getByRole("button", { name: `Tháng ${target.getMonth() + 1}`, exact: true })
-    .click();
-  await picker.getByRole("button", { name: String(target.getDate()), exact: true }).click();
-  await picker.getByRole("button", { name: "Xác nhận", exact: true }).click();
+  await page.locator("#makeup-range-to").fill(
+    `${String(target.getDate()).padStart(2, "0")}/${String(target.getMonth() + 1).padStart(2, "0")}/${target.getFullYear()}`,
+  );
 };
 
 test.beforeEach(async ({ page }) => {

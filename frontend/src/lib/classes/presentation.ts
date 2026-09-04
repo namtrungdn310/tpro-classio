@@ -1,7 +1,6 @@
 import type { ClassCategory, ClassEffectiveStatus, ClassResponse, ClassScheduleSlot, ClassType } from "@/lib/types";
 import { getClassGroupInfo, getClassSortKey, type ClassGroupInfo } from "@/lib/utils/class-groups";
-import { differenceInIsoDays } from "@/lib/classes/package-cycle";
-import { differenceInIsoMonths, formatClassType, formatCurrency } from "@/lib/utils/format";
+import { formatClassType, formatCurrency } from "@/lib/utils/format";
 import {
   createPreparedSearchMatcher,
   prepareSearchCorpus,
@@ -335,23 +334,8 @@ export function getClassBillingModeLabel(
 export function getClassTotalDurationLabel(
   class_: ClassResponse | null | undefined,
 ): string | null {
-  const record = asRecord(class_);
-  const start = getTrimmedString(record?.start_date);
-  const end = getTrimmedString(record?.end_date);
-  if (!start || !end) return null;
-  if (record?.type === "MONTHLY") {
-    return `${differenceInIsoMonths(start, end)} tháng`;
-  }
-  const totalWeeks = differenceInIsoDays(start, end) / 7;
-  if (Number.isInteger(totalWeeks) && totalWeeks >= 1) {
-    return `${totalWeeks} tuần`;
-  }
-  // Khóa học kéo dài không chia hết theo tuần (vd lớp IELTS dài kỳ) → dùng số
-  // tuần theo chu kỳ thanh toán làm tổng thời lượng hiển thị.
-  return getCourseDurationLabel(
-    getFiniteNumber(record?.billing_cycle_weeks),
-    getFiniteNumber(record?.billing_cycle_months),
-  );
+  void class_;
+  return null;
 }
 
 export function getClassEarliestStartMinutes(
@@ -404,7 +388,7 @@ export function prepareClassSearchCorpus(
     baseFee === null ? null : formatCurrency(baseFee),
     getClassGroupInfoForRecord(class_).label || null,
     getTrimmedString(record?.start_date),
-    getTrimmedString(record?.end_date),
+    getTrimmedString(record?.stopped_on),
     getTrimmedString(record?.effective_status),
     record?.grade_level === null || record?.grade_level === undefined
       ? null

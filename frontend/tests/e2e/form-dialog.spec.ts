@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 /**
  * BROWSER COMPONENT HARNESS — kiểm tra FormDialogShell: Escape/backdrop đóng,
- * xác nhận khi có thay đổi chưa lưu (dirty), và quyết định "Ở lại / Rời khỏi".
+ * xác nhận khi có thay đổi chưa lưu (dirty), và quyết định "Tiếp tục chỉnh sửa / Rời khỏi".
  * Không đi qua route thật/API/auth (xem pattern schedule.spec.ts).
  */
 
@@ -45,7 +45,7 @@ test("dirty dialog asks before discarding and stays on cancel", async ({ page })
   await expectConfirm(page, true);
   await expectOpen(page, true);
 
-  await page.getByRole("button", { name: "Ở lại" }).click();
+  await page.getByRole("button", { name: "Tiếp tục chỉnh sửa" }).click();
   await expectConfirm(page, false);
   await expectOpen(page, true);
 });
@@ -81,7 +81,7 @@ test("dirty state is cleared when the value returns to the original", async ({ p
   await typeValue(page, "Mai");
   await page.keyboard.press("Escape");
   await expectConfirm(page, true);
-  await page.getByRole("button", { name: "Ở lại" }).click();
+  await page.getByRole("button", { name: "Tiếp tục chỉnh sửa" }).click();
   await typeValue(page, "");
   await expect
     .poll(async () => (await state(page)).dirty, { timeout: 3000 })

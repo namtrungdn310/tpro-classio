@@ -117,17 +117,14 @@ test("historical table receives the scope and reuses the sparse grid", () => {
     /<HistoricalClassesTable\s+classes=\{classes\}\s+onRowClick=\{onRowClick\}\s+scope=\{scope\}\s*\/>/,
   );
   assert.match(tableSource, /const isCancelledScope = scope === "cancelled"/);
-  assert.match(tableSource, /const lastColumnLabel = isCancelledScope \? "Ngày huỷ" : "Kết thúc"/);
+  assert.match(tableSource, /const lastColumnLabel = isCancelledScope \? "Ngày huỷ" : "Ngày ngừng"/);
   assert.match(tableSource, /label: lastColumnLabel/);
 });
 
-test("historical rows never repeat the end date and show the start date once", () => {
-  assert.equal(
-    (tableSource.match(/\–\{formatDate\(class_\.end_date\)\}/g) ?? []).length,
-    1,
-  );
+test("historical rows show the start and explicit stop date without legacy end dates", () => {
+  assert.doesNotMatch(tableSource, /formatDate\(class_\.end_date\)/);
   assert.match(tableSource, /Bắt đầu: \{formatDate\(class_\.start_date\)\}/);
-  assert.match(tableSource, /class_\.cancelled_at \?\? class_\.end_date/);
+  assert.match(tableSource, /class_\.cancelled_at \?\? class_\.stopped_on/);
   assert.match(tableSource, /getClassGradeYearLabel\(class_\)/);
   assert.doesNotMatch(
     tableSource,

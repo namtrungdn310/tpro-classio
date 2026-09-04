@@ -1,6 +1,7 @@
-﻿"use client";
+"use client";
 
 import { ClassScheduleList } from "@/components/classes/class-schedule-list";
+import { StatusPill } from "@/components/ui/status-pill";
 import { useClickableRowProps } from "@/lib/ui/click-guard";
 import type { ClassResponse, ClassScope } from "@/lib/types";
 import {
@@ -20,6 +21,7 @@ import { formatCurrency, formatDate } from "@/lib/utils/format";
 type ClassesTableProps = {
   classes: ClassResponse[];
   onRowClick: (class_: ClassResponse) => void;
+  onPostponedClick: (class_: ClassResponse) => void;
   scope: ClassScope;
   selectedDay: string;
 };
@@ -67,6 +69,7 @@ const TABLE_BODY_CLASS =
 export function ClassesTable({
   classes,
   onRowClick,
+  onPostponedClick,
   scope,
   selectedDay,
 }: ClassesTableProps) {
@@ -127,9 +130,9 @@ export function ClassesTable({
                 <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
                   <ClassStatus status={class_.effective_status} />
                   {class_.active_suspension ? (
-                    <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-1.5 py-0.5 text-[12px] font-semibold leading-4 text-amber-800 ring-1 ring-inset ring-amber-200">
+                    <StatusPill tone="amber">
                       Đang hoãn · đến {formatDate(class_.active_suspension.resume_on)}
-                    </span>
+                    </StatusPill>
                   ) : null}
                   {totalDurationLabel ? (
                     <span className="whitespace-nowrap text-[13px] font-medium leading-[18px] text-gray-600">
@@ -139,11 +142,14 @@ export function ClassesTable({
                 </div>
                 {class_.unresolved_makeup_count ? (
                   <div className="mt-1">
-                    <MakeupPendingBadge count={class_.unresolved_makeup_count} />
+                    <MakeupPendingBadge
+                      count={class_.unresolved_makeup_count}
+                      onClick={() => onPostponedClick(class_)}
+                    />
                   </div>
                 ) : null}
                 <span className="mt-1 block text-[13px] font-medium leading-[18px] tabular-nums text-gray-600">
-                  {formatDate(class_.start_date)}–{formatDate(class_.end_date)}
+                  Bắt đầu {formatDate(class_.start_date)}
                 </span>
               </DataCell>
               <DataCell col="fee" className="px-3 text-gray-700">
@@ -153,7 +159,11 @@ export function ClassesTable({
                 <FeeMetaLine class_={class_} />
               </DataCell>
               <DataCell col="staff" className="px-3 text-gray-700">
-                <StaffValue teachers={teacherNames} assistants={assistantNames} />
+                <StaffValue
+                  staffingStatus={class_.staffing_status}
+                  teachers={teacherNames}
+                  assistants={assistantNames}
+                />
               </DataCell>
               <DataCell col="schedule" className="self-stretch pl-3 pr-4 text-gray-700">
                 <div className="flex h-full min-h-0 flex-col justify-center">
@@ -174,7 +184,7 @@ function HistoricalClassesTable({
   scope,
 }: Pick<ClassesTableProps, "classes" | "onRowClick" | "scope">) {
   const isCancelledScope = scope === "cancelled";
-  const lastColumnLabel = isCancelledScope ? "Ngày huỷ" : "Kết thúc";
+  const lastColumnLabel = isCancelledScope ? "Ngày huỷ" : "Ngày ngừng";
   const historicalColumns: ClassColumn[] = [
     ...HISTORICAL_COLUMNS.slice(0, 4),
     { key: "end", label: lastColumnLabel },
@@ -202,8 +212,8 @@ function HistoricalClassesTable({
           const totalDurationLabel = getClassTotalDurationLabel(class_);
           const gradeYearLabel = getClassGradeYearLabel(class_);
           const endDateLabel = isCancelledScope
-            ? class_.cancelled_at ?? class_.end_date
-            : class_.end_date;
+            ? class_.cancelled_at ?? class_.stopped_on
+            : class_.stopped_on;
           return (
             <ClickableRow key={class_.id} gridClass={SPARSE_GRID_CLASS} onClick={() => onRowClick(class_)}>
               <DataCell col="info" className="pl-4 pr-3 font-semibold text-gray-950">
@@ -244,7 +254,11 @@ function HistoricalClassesTable({
                 </span>
               </DataCell>
               <DataCell col="staff" className="px-3 text-gray-700">
-                <StaffValue teachers={teacherNames} assistants={assistantNames} />
+                <StaffValue
+                  staffingStatus={class_.staffing_status}
+                  teachers={teacherNames}
+                  assistants={assistantNames}
+                />
               </DataCell>
               <DataCell col="headcount" className="self-stretch px-3 text-gray-700">
                 <div className="flex h-full min-h-0 items-center justify-center text-center">
@@ -371,26 +385,36 @@ function FeeMetaLine({ class_ }: { class_: ClassResponse }) {
 }
 
 function StaffValue({
+  staffingStatus,
   teachers,
   assistants,
 }: {
+  staffingStatus?: "UNASSIGNED" | "PARTIAL" | "READY" | null;
   teachers: string[];
   assistants: string[];
 }) {
-  if (teachers.length === 0 && assistants.length === 0) {
-    return <EmptyValue />;
-  }
+  const status = staffingStatus ?? (teachers.length > 0 ? "READY" : "UNASSIGNED");
+
   return (
-    <div className="min-w-0 space-y-0.5">
+    <div className="min-w-0 space-y-1">
+      <div>
+        {status === "UNASSIGNED" ? (
+          <StatusPill tone="gray">Chưa phân công</StatusPill>
+        ) : status === "PARTIAL" ? (
+          <StatusPill tone="amber">Thiếu giáo viên</StatusPill>
+        ) : (
+          <StatusPill tone="emerald">Đã phân công</StatusPill>
+        )}
+      </div>
       {teachers.length > 0 ? (
-        <span className="block break-words text-sm font-medium leading-5 text-gray-800">
-          <span className="text-[13px] font-medium leading-[18px] text-gray-500">Giáo viên: </span>
+        <span className="block break-words text-xs font-medium leading-4 text-gray-800">
+          <span className="text-gray-500">GV: </span>
           {teachers.join(", ")}
         </span>
       ) : null}
       {assistants.length > 0 ? (
-        <span className="block break-words text-sm font-medium leading-5 text-gray-800">
-          <span className="text-[13px] font-medium leading-[18px] text-gray-500">Trợ giảng: </span>
+        <span className="block break-words text-xs font-medium leading-4 text-gray-800">
+          <span className="text-gray-500">TG: </span>
           {assistants.join(", ")}
         </span>
       ) : null}
@@ -456,7 +480,7 @@ function ClassStatus({ status }: { status: ClassResponse["effective_status"] }) 
     SCHEDULED: { label: "Sắp mở", className: "bg-sky-50 text-sky-700" },
     ACTIVE: { label: "Đang học", className: "bg-emerald-50 text-emerald-700" },
     LEGACY: { label: "Dữ liệu cũ", className: "bg-gray-100 text-gray-600" },
-    COMPLETED: { label: "Đã kết thúc", className: "bg-gray-100 text-gray-600" },
+    STOPPED: { label: "Đã ngừng", className: "bg-gray-100 text-gray-600" },
     CANCELLED: { label: "Đã hủy", className: "bg-red-50 text-red-700" },
   }[status];
   return (
@@ -468,17 +492,20 @@ function ClassStatus({ status }: { status: ClassResponse["effective_status"] }) 
   );
 }
 
-export function MakeupPendingBadge({ count }: { count: number }) {
+export function MakeupPendingBadge({ count, onClick }: { count: number; onClick: () => void }) {
   if (!count) {
     return null;
   }
   return (
-    <span
-      title={`${count} buổi đã hoãn`}
-      className="inline-flex items-center gap-1 rounded-md bg-sky-50 px-1.5 py-0.5 text-[12px] font-semibold leading-4 text-sky-700 ring-1 ring-inset ring-sky-200"
+    <StatusPill
+      title={`Xem chi tiết ${count} buổi đã hoãn`}
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
     >
       {count} buổi đã hoãn
-    </span>
+    </StatusPill>
   );
 }
 

@@ -13,6 +13,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import {
+  RiAlertLine as AlertCircle,
   RiCloseLine as X,
   RiLoader4Line as LoaderCircle,
   RiRefreshLine as RefreshCw,
@@ -853,49 +854,56 @@ export function ScheduleGridSlide({
     [],
   );
 
-  // Mọi buổi đã commit phải còn ít nhất một giáo viên thuộc tập đã chọn.
+  // Mọi buổi đã commit phải còn ít nhất một giáo viên thuộc tập đã chọn (ngoại trừ chế độ class-schedule hoặc khi chưa chọn giáo viên).
   const hasAssignmentError = useMemo(
     () =>
-      slots.some((slot) => {
-        const effective = getSlotEffectiveTeacherIds(slot, defaultTeacherIds);
-        return effective.filter((id) => selectedTeacherById.has(id)).length === 0;
-      }),
-    [defaultTeacherIds, selectedTeacherById, slots],
+      scheduleMode === "class-schedule" || selectedTeachers.length === 0
+        ? false
+        : slots.some((slot) => {
+            const effective = getSlotEffectiveTeacherIds(slot, defaultTeacherIds);
+            return effective.filter((id) => selectedTeacherById.has(id)).length === 0;
+          }),
+    [defaultTeacherIds, scheduleMode, selectedTeacherById, selectedTeachers.length, slots],
   );
 
-  const getSlotAssignmentConflict = (
-    slot: ScheduleSlot,
-  ): { busyTeachers: string[]; busyAssistants: string[] } | null => {
-    const assignedTeachers = getSlotEffectiveTeacherIds(
-      slot,
-      defaultTeacherIds,
-    ).filter((id) => selectedTeacherById.has(id));
-    const assignedAssistants = getSlotEffectiveAssistantIds(slot);
-    const freeTeachers = getAvailableStaffForInterval(
-      slot.day,
-      timeToMinutes(slot.start),
-      timeToMinutes(slot.end),
-      "TEACHER",
-    );
-    const freeAssistants = getAvailableStaffForInterval(
-      slot.day,
-      timeToMinutes(slot.start),
-      timeToMinutes(slot.end),
-      "ASSISTANT",
-    );
-    const busyTeachers = assignedTeachers.filter(
-      (id) => !freeTeachers.includes(id),
-    );
-    const busyAssistants = assignedAssistants.filter(
-      (id) => !freeAssistants.includes(id),
-    );
-    if (busyTeachers.length === 0 && busyAssistants.length === 0) {
-      return null;
-    }
-    return { busyTeachers, busyAssistants };
-  };
-  const hasAssignmentConflict = slots.some(
-    (slot) => getSlotAssignmentConflict(slot) !== null,
+  const getSlotAssignmentConflict = useCallback(
+    (slot: ScheduleSlot): { busyTeachers: string[]; busyAssistants: string[] } | null => {
+      const assignedTeachers = getSlotEffectiveTeacherIds(
+        slot,
+        defaultTeacherIds,
+      ).filter((id) => selectedTeacherById.has(id));
+      const assignedAssistants = getSlotEffectiveAssistantIds(slot);
+      const freeTeachers = getAvailableStaffForInterval(
+        slot.day,
+        timeToMinutes(slot.start),
+        timeToMinutes(slot.end),
+        "TEACHER",
+      );
+      const freeAssistants = getAvailableStaffForInterval(
+        slot.day,
+        timeToMinutes(slot.start),
+        timeToMinutes(slot.end),
+        "ASSISTANT",
+      );
+      const busyTeachers = assignedTeachers.filter(
+        (id) => !freeTeachers.includes(id),
+      );
+      const busyAssistants = assignedAssistants.filter(
+        (id) => !freeAssistants.includes(id),
+      );
+      if (busyTeachers.length === 0 && busyAssistants.length === 0) {
+        return null;
+      }
+      return { busyTeachers, busyAssistants };
+    },
+    [defaultTeacherIds, getAvailableStaffForInterval, selectedTeacherById],
+  );
+  const hasAssignmentConflict = useMemo(
+    () =>
+      scheduleMode === "class-schedule" || selectedTeachers.length === 0
+        ? false
+        : slots.some((slot) => getSlotAssignmentConflict(slot) !== null),
+    [getSlotAssignmentConflict, scheduleMode, selectedTeachers.length, slots],
   );
 
   // Lane theo interval partitioning — chỉ dùng ở chế độ Tổng quan (view-only).
@@ -2201,20 +2209,23 @@ export function ScheduleGridSlide({
             <div
               role="alertdialog"
               aria-label="Xác nhận bỏ thay đổi lịch"
-              className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[13px] text-amber-900"
+              className="mb-3 flex flex-wrap items-start justify-between gap-2 text-[13px] text-amber-900"
             >
-              <span>Thay đổi lịch chưa áp dụng. Bỏ thay đổi?</span>
+              <span className="flex min-w-0 flex-1 items-start gap-2 leading-5">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" aria-hidden="true" />
+                <span>Thay đổi lịch chưa áp dụng. Bỏ thay đổi?</span>
+              </span>
               <span className="flex items-center gap-2">
                 <button
                   type="button"
-                  className="h-8 rounded-md px-3 text-sm font-medium text-gray-700 transition hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                  className="h-8 rounded-md px-3 text-sm font-medium text-gray-700 transition hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
                   onClick={() => setDiscardPrompt(false)}
                 >
-                  Ở lại
+                  Tiếp tục chỉnh sửa
                 </button>
                 <button
                   type="button"
-                  className="h-8 rounded-md border border-amber-300 bg-white px-3 text-sm font-semibold text-amber-900 transition hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/30"
+                  className="h-8 rounded-md border border-amber-300 px-3 text-sm font-semibold text-amber-900 transition hover:bg-amber-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/30"
                   onClick={() => {
                     setDiscardPrompt(false);
                     onClose();

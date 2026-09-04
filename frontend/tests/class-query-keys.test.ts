@@ -30,14 +30,12 @@ test("canonical class query keys cover list, detail, history, occurrences, adjus
   const availabilityKey = classQueryKeys.availability({
     classId: "c-1",
     startDate: "2026-09-01",
-    endDate: "2026-09-07",
     teacherIds: ["b", "a"],
     assistantIds: [],
   });
   const reversedAvailabilityKey = classQueryKeys.availability({
     classId: "c-1",
     startDate: "2026-09-01",
-    endDate: "2026-09-07",
     teacherIds: ["a", "b"],
     assistantIds: [],
   });

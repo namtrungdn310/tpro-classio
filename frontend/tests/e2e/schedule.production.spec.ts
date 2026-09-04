@@ -47,36 +47,6 @@ const fakeToken = () => {
   return `header.${Buffer.from(JSON.stringify(payload)).toString("base64url")}.signature`;
 };
 
-// The product's date domain is Asia/Ho_Chi_Minh.  CI runners use UTC, so
-// deriving these values from `new Date().getDate()` can select yesterday and
-// make the legitimate start date disabled around 17:00 UTC.  Keep test data
-// in the same canonical timezone as the application.
-const vietnamTodayParts = () => {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Ho_Chi_Minh",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date());
-  const get = (type: Intl.DateTimeFormatPartTypes) =>
-    parts.find((part) => part.type === type)?.value ?? "";
-  return {
-    year: Number(get("year")),
-    month: Number(get("month")),
-    day: Number(get("day")),
-  };
-};
-
-// Pick a stable future date for the E2E form. It is not a domain minimum.
-const today = vietnamTodayParts();
-const chosenEndDate = () => {
-  const m = new Date(today.year, today.month, today.day + 1);
-  const y = m.getFullYear();
-  const mo = String(m.getMonth() + 1).padStart(2, "0");
-  const d = String(m.getDate()).padStart(2, "0");
-  return `${y}-${mo}-${d}`;
-};
-
 const classResponse = (overrides: Record<string, unknown> = {}) => ({
   id: "88888888-8888-4888-8888-888888888888",
   name: "Lớp Mới E2E",
@@ -211,10 +181,6 @@ const openSchedulePicker = async (page: Parameters<Parameters<typeof test>[1]>[0
   await formDialog.waitFor();
   await formDialog.locator("#class-name").fill("Lớp Mới E2E");
   await formDialog.locator("#class-fee").fill("750000");
-  await formDialog.getByRole("button", { name: /Ngày bắt đầu/i }).click();
-  // DatePicker là dialog LỒNG trong form dialog; có 3 section (năm/tháng/ngày).
-  const picker = page.getByRole("dialog").nth(1);
-  await picker.waitFor();
   const now = await page.evaluate(() => {
     const parts = new Intl.DateTimeFormat("en-CA", {
       timeZone: "Asia/Ho_Chi_Minh",
@@ -226,25 +192,9 @@ const openSchedulePicker = async (page: Parameters<Parameters<typeof test>[1]>[0
       parts.find((part) => part.type === type)?.value ?? "";
     return { year: Number(get("year")), month: Number(get("month")), day: Number(get("day")) };
   });
-  await picker.getByRole("button", { name: String(now.year), exact: true }).click();
-  await picker.getByRole("button", { name: `Tháng ${now.month}`, exact: true }).click();
-  await picker.getByRole("button", { name: String(now.day), exact: true }).click();
-  await picker.getByRole("button", { name: "Xác nhận" }).click();
-  await picker.waitFor({ state: "detached" });
-  // The end date is freely selected and remains independent from fee cadence.
-  await formDialog.locator("#class-end-date").click();
-  const endPicker = page.getByRole("dialog").nth(1);
-  await endPicker.waitFor();
-  const chosenEnd = chosenEndDate().split("-").map(Number);
-  await endPicker
-    .getByRole("button", { name: String(chosenEnd[0]), exact: true })
-    .click();
-  await endPicker
-    .getByRole("button", { name: `Tháng ${chosenEnd[1]}`, exact: true })
-    .click();
-  await endPicker.getByRole("button", { name: String(chosenEnd[2]), exact: true }).click();
-  await endPicker.getByRole("button", { name: "Xác nhận" }).click();
-  await endPicker.waitFor({ state: "detached" });
+  await formDialog.locator("#class-start-date").fill(
+    `${String(now.day).padStart(2, "0")}/${String(now.month).padStart(2, "0")}/${now.year}`,
+  );
   await page.getByRole("button", { name: /Giáo viên \/ Trợ giảng/i }).click();
   const teacherSlide = page.getByRole("dialog").nth(1);
   await teacherSlide.waitFor();

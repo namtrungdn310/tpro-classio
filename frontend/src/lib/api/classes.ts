@@ -1,7 +1,10 @@
 import { apiClient } from "@/lib/api/client";
 import {
   classAdjustmentListSchema,
-  classEndDatePreviewSchema,
+  classStartDatePreviewSchema,
+  classBillingCyclePreviewSchema,
+  classBillingCycleUpdateResponseSchema,
+  classStopPreviewSchema,
   classContinuationCreateResponseSchema,
   classContinuationPreviewSchema,
   classHistorySchema,
@@ -15,6 +18,7 @@ import {
   makeupSchedulePreviewSchema,
   postponementCreateSchema,
   postponementPreviewSchema,
+  staffAvailabilityPreviewResponseSchema,
   suspensionPreviewSchema,
 } from "@/lib/schemas/class";
 import type {
@@ -23,8 +27,10 @@ import type {
   ClassContinuationCreate,
   ClassContinuationCreateResponse,
   ClassContinuationPreview,
-  ClassEndDateUpdate,
-  ClassEndDatePreview,
+  ClassStartDatePreview,
+  ClassBillingCyclePreview,
+  ClassBillingCycleUpdateResponse,
+  ClassStopPreview,
   ClassHistory,
   ClassOccurrenceListResponse,
   ClassResponse,
@@ -43,6 +49,8 @@ import type {
   PostponementCreateRequest,
   PostponementCreateResponse,
   PostponementPreviewResponse,
+  StaffAvailabilityPreviewRequest,
+  StaffAvailabilityPreviewResponse,
 } from "@/lib/types";
 
 type GetClassesParams = {
@@ -104,15 +112,92 @@ export async function updateClass(id: string, data: ClassUpdate): Promise<ClassR
   return classResponseSchema.parse(response.data);
 }
 
-export async function previewClassEndDate(
+export async function previewClassStartDate(
   id: string,
-  data: Pick<ClassEndDateUpdate, "end_date" | "expected_version">,
-): Promise<ClassEndDatePreview> {
-  const response = await apiClient.post<ClassEndDatePreview>(
-    `/classes/${id}/end-date/preview`,
+  data: {
+    start_date: string;
+    expected_version: number;
+    default_decision?: string;
+    enrollment_decisions?: Record<string, string>;
+    class_patch?: ClassUpdate;
+  },
+): Promise<ClassStartDatePreview> {
+  const response = await apiClient.post<ClassStartDatePreview>(
+    `/classes/${id}/start-date/preview`,
     data,
   );
-  return classEndDatePreviewSchema.parse(response.data);
+  return classStartDatePreviewSchema.parse(response.data);
+}
+
+export async function updateClassStartDate(
+  id: string,
+  data: {
+    start_date: string;
+    reason: string;
+    expected_version: number;
+    expected_fingerprint: string;
+    request_id?: string;
+    default_decision?: string;
+    enrollment_overrides?: Array<{
+      enrollment_id: string;
+      decision_code: string;
+      selected_historical_cycles?: number[];
+    }>;
+    class_patch?: ClassUpdate;
+  },
+): Promise<ClassResponse> {
+  const response = await apiClient.post<ClassResponse>(`/classes/${id}/start-date/apply`, data);
+  return classResponseSchema.parse(response.data);
+}
+
+export async function previewClassBillingCycle(
+  id: string,
+  data: { billing_cycle_weeks: number; expected_version: number },
+): Promise<ClassBillingCyclePreview> {
+  const response = await apiClient.post<unknown>(
+    `/classes/${id}/billing-cycle/preview`,
+    data,
+  );
+  return classBillingCyclePreviewSchema.parse(response.data);
+}
+
+export async function updateClassBillingCycle(
+  id: string,
+  data: {
+    billing_cycle_weeks: number;
+    reason: string;
+    request_id: string;
+    expected_version: number;
+    expected_fingerprint: string;
+  },
+): Promise<ClassBillingCycleUpdateResponse> {
+  const response = await apiClient.post<unknown>(`/classes/${id}/billing-cycle`, data, {
+    timeout: 60_000,
+  });
+  return classBillingCycleUpdateResponseSchema.parse(response.data);
+}
+
+export async function previewClassStop(
+  id: string,
+  expectedVersion: number,
+): Promise<ClassStopPreview> {
+  const response = await apiClient.post<ClassStopPreview>(`/classes/${id}/stop/preview`, {
+    expected_version: expectedVersion,
+  });
+  return classStopPreviewSchema.parse(response.data);
+}
+
+export async function stopClass(
+  id: string,
+  data: {
+    reason: string;
+    request_id: string;
+    expected_version: number;
+    expected_fingerprint: string;
+  },
+): Promise<ClassResponse> {
+  const response = await apiClient.post<ClassResponse>(`/classes/${id}/stop`, data);
+  return classResponseSchema.parse(response.data);
 }
 
 export async function deleteClass(id: string): Promise<void> {
@@ -131,6 +216,18 @@ export async function getClassScheduleAvailability(
     conflicts: ClassScheduleAvailabilityConflict[];
   }>("/classes/schedule-availability", payload);
   return classScheduleAvailabilityResponseSchema.parse(response.data).conflicts;
+}
+
+export async function previewStaffAvailability(
+  payload: StaffAvailabilityPreviewRequest,
+  options?: { signal?: AbortSignal },
+): Promise<StaffAvailabilityPreviewResponse> {
+  const response = await apiClient.post<StaffAvailabilityPreviewResponse>(
+    "/classes/staff-availability",
+    payload,
+    { signal: options?.signal },
+  );
+  return staffAvailabilityPreviewResponseSchema.parse(response.data);
 }
 
 export async function getClassOccurrences(

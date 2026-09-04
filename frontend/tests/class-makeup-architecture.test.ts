@@ -22,6 +22,14 @@ const pageSource = readFileSync(
   new URL("../src/app/(dashboard)/classes/page.tsx", import.meta.url),
   "utf8",
 );
+const studentPageSource = readFileSync(
+  new URL("../src/app/(dashboard)/students/page.tsx", import.meta.url),
+  "utf8",
+);
+const statusPillSource = readFileSync(
+  new URL("../src/components/ui/status-pill.tsx", import.meta.url),
+  "utf8",
+);
 
 test("postpone workspace does not expose make-up scheduling controls", () => {
   assert.doesNotMatch(workspaceSource, /scheduleTarget|schedulePreviewQuery|formatDateTime/);
@@ -47,13 +55,15 @@ test("postpone workspace keeps the intended notes and aligned controls", () => {
   assert.match(workspaceSource, />Ghi chú<\/span>/);
   assert.doesNotMatch(workspaceSource, /Ghi chú \(tùy chọn\)/);
   assert.match(workspaceSource, /formTextControlClassName/);
+  assert.equal((workspaceSource.match(/<ManualDateInput/g) ?? []).length, 2);
+  assert.doesNotMatch(workspaceSource, /DatePickerSlide|datePickerTarget/);
   assert.match(workspaceSource, /<Button/);
   assert.doesNotMatch(workspaceSource, /hoàn tiền|refund/i);
 });
 
 test("postpone reason and note use full-width controls matching the student note field", () => {
   assert.match(workspaceSource, /className="mt-3 grid gap-3"/);
-  assert.match(workspaceSource, /<select[\s\S]*?"mt-1 w-full"/);
+  assert.match(workspaceSource, /<select[\s\S]*?"mt-1\.5 w-full"/);
   assert.match(workspaceSource, /<textarea[\s\S]*?rows=\{2\}[\s\S]*?h-16 min-h-16 w-full resize-none py-2 leading-5/);
 });
 
@@ -66,14 +76,33 @@ test("postpone preview uses per-enrollment credit semantics", () => {
 
 test("class table never renders FINALIZING and labels postponed sessions without a make-up action", () => {
   assert.doesNotMatch(tableSource, /FINALIZING/);
-  assert.match(tableSource, /COMPLETED: \{ label: "Đã kết thúc"/);
+  assert.match(tableSource, /STOPPED: \{ label: "Đã ngừng"/);
   assert.match(tableSource, /MakeupPendingBadge/);
   assert.match(tableSource, /buổi đã hoãn/);
+  assert.match(tableSource, /onPostponedClick/);
+  assert.match(tableSource, /Xem chi tiết/);
 });
 
 test("history slide contains the class adjustment timeline", () => {
   assert.match(historySource, /Điều chỉnh buổi học/);
   assert.match(historySource, /data\.adjustments/);
+  assert.match(historySource, /Buổi học:/);
+  assert.match(historySource, /formatSessionRange\(adjustment\.original_start_at, adjustment\.original_end_at\)/);
+  assert.ok(
+    historySource.indexOf('title="Điều chỉnh buổi học"') <
+      historySource.indexOf('title="Lịch học và giáo viên theo buổi"'),
+  );
+});
+
+test("upcoming enrollment and postponed-session badges share one status primitive", () => {
+  assert.match(
+    studentPageSource,
+    /<StatusPill className="text-xs font-semibold" title="Ngày bắt đầu trong tương lai">/,
+  );
+  assert.match(tableSource, /<StatusPill/);
+  assert.match(statusPillSource, /rounded-full border/);
+  assert.match(statusPillSource, /aria-label=\{title\}/);
+  assert.match(statusPillSource, /onKeyDown=\{\(event\) => event\.stopPropagation\(\)\}/);
 });
 
 test("dashboard board marks postponed and make-up occurrences", () => {
@@ -85,4 +114,5 @@ test("dashboard board marks postponed and make-up occurrences", () => {
 test("classes page wires suspension mode without legacy scheduling mutation", () => {
   assert.doesNotMatch(pageSource, /makeupMutation|onMakeupAction/);
   assert.match(pageSource, /onPostponed/);
+  assert.match(pageSource, /onPostponedClick=\{openClassHistory\}/);
 });

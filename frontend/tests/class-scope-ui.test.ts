@@ -16,6 +16,6 @@ test("class navigation exposes only real lifecycle states", () => {
   assert.doesNotMatch(tableSource, /LegacyClassesTable|Cần hoàn tất/);
   assert.match(pageSource, /Đang hoạt động/);
   assert.match(pageSource, /Sắp mở/);
-  assert.match(pageSource, /Đã kết thúc/);
+  assert.match(pageSource, /Đã ngừng/);
   assert.match(pageSource, /Đã hủy/);
 });

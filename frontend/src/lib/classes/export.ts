@@ -12,7 +12,7 @@ import { formatClassType } from "@/lib/utils/format";
 const STATUS_LABELS: Record<string, string> = {
   ACTIVE: "Đang hoạt động",
   SCHEDULED: "Sắp mở",
-  COMPLETED: "Đã kết thúc",
+  STOPPED: "Đã ngừng",
   CANCELLED: "Đã hủy",
 };
 
@@ -32,7 +32,7 @@ export async function exportClasses(
     "Trợ giảng": getClassAssistantNames(class_).join(", "),
     "Số học viên": class_.student_count,
     "Ngày bắt đầu": toExcelDate(class_.start_date),
-    "Ngày kết thúc": toExcelDate(class_.end_date),
+    "Ngày ngừng": toExcelDate(class_.stopped_on),
     "Trạng thái": STATUS_LABELS[class_.effective_status] ?? class_.effective_status,
   }));
 

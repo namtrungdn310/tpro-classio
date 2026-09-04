@@ -39,20 +39,16 @@ const weeklyScheduleSource = readFileSync(
   "utf8",
 );
 
-test("overview metrics preserve the four operational meanings", () => {
+test("overview metrics preserve the operational meanings with contextual staffing", () => {
   assert.match(dashboardSource, /label="Học viên"/);
   assert.match(dashboardSource, /label="Lớp học"/);
-  assert.match(dashboardSource, /label="Giáo viên"/);
-  assert.match(dashboardSource, /label="Trợ giảng"/);
+  assert.match(dashboardSource, /label="Nhân sự"/);
+  assert.match(dashboardSource, /label="Cần phân công"/);
   assert.doesNotMatch(dashboardSource, /label="Đội ngũ"/);
   assert.match(dashboardSource, /active_student_count/);
   assert.match(dashboardSource, /active_class_count/);
-  assert.match(dashboardSource, /weekly_session_count/);
-  assert.match(dashboardSource, /active_teacher_count/);
-  assert.match(dashboardSource, /active_assistant_count/);
-  assert.match(dashboardSource, /giáo viên/i);
-  assert.match(dashboardSource, /trợ giảng/i);
-  assert.doesNotMatch(dashboardSource, /\bGV\b|\bTG\b/);
+  assert.match(dashboardSource, /active_staff_count/);
+  assert.match(dashboardSource, /unstaffed_class_count/);
   assert.match(dashboardSource, /overview\.fees/);
 });
 

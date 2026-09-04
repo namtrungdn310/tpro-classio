@@ -36,7 +36,7 @@ function Harness() {
       confirmVisible:
         bodyText.includes("Thay đổi chưa được lưu") &&
         bodyText.includes("Rời khỏi") &&
-        bodyText.includes("Ở lại"),
+        bodyText.includes("Tiếp tục chỉnh sửa"),
     };
   }, [open, value]);
 

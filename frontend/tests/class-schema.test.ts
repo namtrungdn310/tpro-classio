@@ -112,17 +112,10 @@ test("class form requires grade and academic year together for specialized/custo
   assert.match(classFormDialogSource, /const hasYear = values\.academic_year_start !== null/);
 });
 
-test("class duration shortcut controls keep the white form surface when read-only", () => {
+test("class form keeps package cycle input but removes end-date shortcut controls", () => {
+  assert.doesNotMatch(classFormDialogSource, /class-total-months|class-package-count|end_date/);
   assert.match(
     classFormDialogSource,
-    /id="class-total-months"[\s\S]*?disabled:bg-white disabled:text-gray-400/,
-  );
-  assert.match(
-    classFormDialogSource,
-    /id="class-duration-weeks"[\s\S]*?disabled:bg-transparent disabled:text-gray-400/,
-  );
-  assert.match(
-    classFormDialogSource,
-    /id="class-package-count"[\s\S]*?disabled:bg-transparent disabled:text-gray-400/,
+    /id="class-duration-weeks"[\s\S]*?disabled=\{billingConfigurationLocked\}/,
   );
 });

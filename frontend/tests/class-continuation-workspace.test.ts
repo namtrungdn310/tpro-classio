@@ -70,7 +70,15 @@ test("each continuation student has an explicit schedule and reviewed fee", () =
   assert.match(workspaceSource, /selected_slots/);
   assert.match(workspaceSource, /partial_fee_reviewed/);
   assert.match(workspaceSource, /Áp dụng gợi ý/);
-  assert.match(workspaceSource, /Dùng học phí lớp/);
+  assert.doesNotMatch(workspaceSource, /Dùng học phí lớp/);
+  assert.match(
+    workspaceSource,
+    /mt-2 grid grid-cols-\[minmax\(0,1fr\)_auto\] gap-2/,
+  );
+  assert.match(
+    workspaceSource,
+    /form-input-text inline-flex h-8 shrink-0 items-center gap-1\.5 rounded-md border border-gray-200 bg-white px-2\.5 font-medium text-primary/,
+  );
 });
 
 test("search can return to the selected roster without clearing characters manually", () => {

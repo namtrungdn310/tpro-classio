@@ -1,8 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import dynamic from "next/dynamic";
-import { createPortal } from "react-dom";
 import { RiErrorWarningLine as ErrorWarning } from "react-icons/ri";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getApiErrorMessage } from "@/lib/api/errors";
@@ -14,21 +12,15 @@ import { formTextControlClassName } from "@/components/ui/form-text-control";
 import { LoadingLabel } from "@/components/ui/loading-label";
 import { PendingActionButton } from "@/components/ui/pending-action-button";
 import { Button } from "@/components/ui/button";
+import { ManualDateInput } from "@/components/ui/manual-date-input";
 import type { ClassResponse, MakeupReasonCode } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { formatDate } from "@/lib/utils/format";
-
-const DatePickerSlide = dynamic(
-  () => import("@/components/layout/date-picker-slide").then((module) => module.DatePickerSlide),
-  { ssr: false },
-);
 
 type MakeupWorkspaceProps = {
   class_: ClassResponse;
   isSaving: boolean;
   onClose: () => void;
   onPostponed?: () => void;
-  onNestedOverlayChange?: (open: boolean) => void;
 };
 
 const REASON_OPTIONS: Array<{ value: MakeupReasonCode; label: string }> = [
@@ -68,16 +60,15 @@ function isValidIsoDate(value: string) {
   return probe.getUTCFullYear() === year && probe.getUTCMonth() === month - 1 && probe.getUTCDate() === day;
 }
 
-export function ClassMakeupWorkspace({ class_, isSaving, onClose, onPostponed, onNestedOverlayChange }: MakeupWorkspaceProps) {
+export function ClassMakeupWorkspace({ class_, isSaving, onClose, onPostponed }: MakeupWorkspaceProps) {
   const queryClient = useQueryClient();
   const classDateMin = maxIsoDate(todayIso(), isValidIsoDate(class_.start_date ?? "") ? class_.start_date! : todayIso());
-  const classDateMax = isValidIsoDate(class_.end_date ?? "") ? class_.end_date! : addIsoDays(classDateMin, 120);
+  const classDateMax = addIsoDays(classDateMin, 120);
   const classDateRangeAvailable = classDateMin <= classDateMax;
   const [rangeFrom, setRangeFrom] = useState(classDateMin);
   const [rangeTo, setRangeTo] = useState("");
   const [reasonCode, setReasonCode] = useState<MakeupReasonCode>("TEACHER_UNAVAILABLE");
   const [reasonNote, setReasonNote] = useState("");
-  const [datePickerTarget, setDatePickerTarget] = useState<"from" | "to" | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
 
   const datesAreValid = isValidIsoDate(rangeFrom) && isValidIsoDate(rangeTo);
@@ -101,13 +92,7 @@ export function ClassMakeupWorkspace({ class_, isSaving, onClose, onPostponed, o
     setRangeFrom(classDateMin);
     setRangeTo("");
     setFormError(null);
-    setDatePickerTarget(null);
   }, [class_.id, classDateMin]);
-
-  useEffect(() => {
-    onNestedOverlayChange?.(datePickerTarget !== null);
-    return () => onNestedOverlayChange?.(false);
-  }, [datePickerTarget, onNestedOverlayChange]);
 
   const occurrencesQuery = useQuery({
     queryKey: classQueryKeys.occurrences(class_.id, { from: rangeFrom, to: rangeTo }),
@@ -151,8 +136,6 @@ export function ClassMakeupWorkspace({ class_, isSaving, onClose, onPostponed, o
     postponeMutation.mutate({ suspended_from: rangeFrom, resume_on: rangeTo, reason_code: reasonCode, reason_note: reasonNote.trim() || null, request_id: crypto.randomUUID() });
   }
 
-  const datePickerToMin = isValidIsoDate(rangeFrom) ? rangeFrom : classDateMin;
-
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-gray-50">
       <div className="scrollbar-hidden min-h-0 flex-1 overflow-y-auto px-5 py-4">
@@ -162,28 +145,14 @@ export function ClassMakeupWorkspace({ class_, isSaving, onClose, onPostponed, o
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <div className="min-w-0">
               <label id="makeup-range-from-label" htmlFor="makeup-range-from" className="form-label-text inline-block select-none text-gray-800">Từ ngày</label>
-              <button id="makeup-range-from" type="button" aria-haspopup="dialog" aria-labelledby="makeup-range-from-label makeup-range-from-value" aria-describedby={rangeError ? "makeup-range-error" : undefined} onClick={() => setDatePickerTarget("from")} className={cn(formTextControlClassName, "mt-1 select-none text-left tabular-nums")}><span id="makeup-range-from-value">{formatDate(rangeFrom, "Chọn ngày")}</span></button>
+              <ManualDateInput id="makeup-range-from" value={rangeFrom} onChange={(value) => { setRangeFrom(value ?? ""); setFormError(null); }} ariaLabel="Từ ngày" ariaDescribedBy={rangeError ? "makeup-range-error" : undefined} error={Boolean(rangeError)} className="mt-1" />
             </div>
             <div className="min-w-0">
               <label id="makeup-range-to-label" htmlFor="makeup-range-to" className="form-label-text inline-block select-none text-gray-800">Đến ngày</label>
-              <button id="makeup-range-to" type="button" aria-haspopup="dialog" aria-labelledby="makeup-range-to-label makeup-range-to-value" aria-describedby={rangeError ? "makeup-range-error" : undefined} onClick={() => setDatePickerTarget("to")} className={cn(formTextControlClassName, "mt-1 select-none text-left tabular-nums")}><span id="makeup-range-to-value">{formatDate(rangeTo, "Chọn ngày")}</span></button>
+              <ManualDateInput id="makeup-range-to" value={rangeTo} onChange={(value) => { setRangeTo(value ?? ""); setFormError(null); }} ariaLabel="Đến ngày" ariaDescribedBy={rangeError ? "makeup-range-error" : undefined} error={Boolean(rangeError)} className="mt-1" />
             </div>
           </div>
           {rangeError ? <p id="makeup-range-error" role="alert" aria-live="polite" className="mt-2 text-[13px] leading-[18px] text-red-700">{rangeError}</p> : null}
-          {typeof document !== "undefined" ? createPortal(
-            <DatePickerSlide
-              isOpen={datePickerTarget !== null}
-              title={datePickerTarget === "to" ? "Chọn ngày kết thúc hoãn" : "Chọn ngày bắt đầu hoãn"}
-              description="Chọn ngày trong phạm vi cần rà soát. Bạn có thể đổi lại ngày trước khi lưu hoãn lớp."
-              currentValue={datePickerTarget === "to" ? rangeTo || undefined : rangeFrom}
-              initialViewDate={datePickerTarget === "to" && !rangeTo ? rangeFrom : undefined}
-              minDate={datePickerTarget === "to" ? datePickerToMin : classDateMin}
-              maxDate={classDateMax}
-              onClose={() => setDatePickerTarget(null)}
-              onSelectDate={(value) => { if (datePickerTarget === "to") setRangeTo(value); else setRangeFrom(value); setFormError(null); }}
-            />,
-            document.body,
-          ) : null}
           {occurrencesQuery.isFetching || suspensionPreviewQuery.isFetching ? <div aria-busy="true" className="mt-3 rounded-lg border border-primary/20 bg-primary-soft/30 px-3 py-2 text-[13px] leading-[18px] text-gray-700"><LoadingLabel label="Đang rà soát các buổi học và ngày thu" /></div> : occurrencesQuery.isError ? <div className="mt-3"><DataSectionError title="Không tải được các buổi học" description={getApiErrorMessage(occurrencesQuery.error, "Vui lòng thử lại.")} onRetry={() => void occurrencesQuery.refetch()} /></div> : suspensionPreviewQuery.isError ? <div className="mt-3"><DataSectionError title="Không thể tính ngày thu sau hoãn" description={getApiErrorMessage(suspensionPreviewQuery.error, "Vui lòng thử lại.")} onRetry={() => void suspensionPreviewQuery.refetch()} /></div> : occurrencesQuery.isSuccess && suspensionPreviewQuery.isSuccess ? <div className="mt-3 rounded-lg border border-primary/20 bg-primary-soft/30 px-3 py-2 text-[13px] leading-[18px] text-gray-700">{postponableOccurrences.length > 0 ? <>Hệ thống sẽ tự động hoãn <strong className="tabular-nums">{postponableOccurrences.length}</strong> buổi hợp lệ.{affectedMembers.length > 0 ? <> Ngày thu sẽ dời theo số ngày hoãn thực tế của <strong className="tabular-nums">{affectedMembers.length}</strong> học viên bị ảnh hưởng.</> : null}</> : "Không có buổi học hợp lệ để hoãn trong khoảng ngày đã chọn."}</div> : null}
           <div className="mt-3 grid gap-3">
             <label className="form-label-text block w-full select-none text-gray-800">
@@ -191,7 +160,7 @@ export function ClassMakeupWorkspace({ class_, isSaving, onClose, onPostponed, o
               <select
                 value={reasonCode}
                 onChange={(event) => setReasonCode(event.target.value as MakeupReasonCode)}
-                className={cn(formTextControlClassName, "mt-1 w-full")}
+                className={cn(formTextControlClassName, "mt-1.5 w-full")}
               >
                 {REASON_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
@@ -207,7 +176,7 @@ export function ClassMakeupWorkspace({ class_, isSaving, onClose, onPostponed, o
                 rows={2}
                 onChange={(event) => setReasonNote(event.target.value)}
                 placeholder="Thông tin cần lưu ý về lần hoãn lớp (nếu có)"
-                className={cn(formTextControlClassName, "mt-1 block h-16 min-h-16 w-full resize-none py-2 leading-5")}
+                className={cn(formTextControlClassName, "mt-1.5 block h-16 min-h-16 w-full resize-none py-2 leading-5")}
               />
             </label>
           </div>

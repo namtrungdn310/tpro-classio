@@ -10,6 +10,8 @@ export const dashboardOverviewSchema = z.object({
     weekly_session_count: z.number().int().nonnegative(),
     active_teacher_count: z.number().int().nonnegative(),
     active_assistant_count: z.number().int().nonnegative(),
+    active_staff_count: z.number().int().nonnegative().default(0),
+    unstaffed_class_count: z.number().int().nonnegative().default(0),
   }),
   fees: z.object({
     total_amount: z.number().int().nonnegative(),

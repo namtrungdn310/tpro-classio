@@ -14,26 +14,21 @@ test("new course forms do not invent a package duration", () => {
 
 test("new classes start from the current Vietnam business date by default", () => {
   assert.match(source, /start_date:\s*getVietnamTodayIso\(\)/);
-  assert.match(source, /onClick=\{\(\) => setDatePickerTarget\("start"\)\}/);
+  assert.match(source, /<ManualDateInput[\s\S]*?id="class-start-date"/);
 });
 
-test("class metadata and package timing keep compact equal columns", () => {
+test("class metadata and open-ended package timing keep compact equal columns", () => {
   assert.match(source, /minmax\(0,1fr\)_minmax\(0,1fr\)/);
   assert.match(source, /label="Khối lớp"/);
   assert.match(source, /label="Năm học"/);
   assert.match(source, /label="Thời lượng mỗi gói"/);
   assert.match(source, /label="Ngày bắt đầu"/);
-  assert.match(source, /label="Ngày kết thúc"/);
+  assert.doesNotMatch(source, /label="Ngày kết thúc"/);
 });
 
-test("month and package counts are optional shortcuts while end date stays editable", () => {
-  assert.doesNotMatch(source, /getClassMinimumEndDate|minimumEndDate/);
-  assert.match(source, /setDatePickerTarget\("end"\)/);
-  assert.match(source, /id="class-total-months"/);
-  assert.match(source, /id="class-package-count"/);
-  assert.match(source, /applyEndDateShortcut/);
-  assert.match(source, /onSelectDate=\{applySelectedEndDate\}/);
-  assert.match(source, /Tổng số tuần:/);
+test("class form has no end-date shortcuts or hidden end-date controls", () => {
+  assert.doesNotMatch(source, /end_date|endDate|Ngày kết thúc/);
+  assert.doesNotMatch(source, /class-total-months|class-package-count/);
 });
 
 test("combined grade and academic year selectors do not render extra arrow icons", () => {
@@ -42,8 +37,15 @@ test("combined grade and academic year selectors do not render extra arrow icons
   assert.match(source, /controlId="class-academic-year"[\s\S]*?label="Năm học"/);
 });
 
-test("start date picker uses one year of future options", () => {
-  assert.match(source, /yearOptions=\{getClassDatePickerYears\(1\)\}/);
+test("class start date uses the shared manual date control", () => {
+  assert.match(source, /value=\{startDate \?\? null\}/);
+  assert.match(source, /Ngày bắt đầu không hợp lệ/);
+  assert.doesNotMatch(source, /DatePickerSlide|datePickerTarget/);
+});
+
+test("an incomplete class start date stays a draft until it is valid", () => {
+  assert.match(source, /start_date:\s*comparableManualDate\(/);
+  assert.match(source, /hasCommittedStartDateChange/);
 });
 
 test("class form rows share one equal column ratio and IELTS start date fills its row", () => {

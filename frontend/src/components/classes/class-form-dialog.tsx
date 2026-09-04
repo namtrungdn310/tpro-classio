@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import dynamic from "next/dynamic";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -13,6 +13,7 @@ import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { ClassScheduleList } from "@/components/classes/class-schedule-list";
+import { ClassPackageDurationDialog } from "@/components/classes/class-package-duration-dialog";
 import {
   createEntityDialogFrameClassName,
   editEntityDialogFrameClassName,
@@ -29,10 +30,9 @@ import {
   formTextControlErrorClassName,
 } from "@/components/ui/form-text-control";
 import { SaveButton } from "@/components/ui/save-button";
-import { LoadingLabel } from "@/components/ui/loading-label";
 import { SegmentedControl } from "@/components/ui/segmented-control";
-import { SplitTextField } from "@/components/ui/split-text-field";
 import { SmartMoneyInput } from "@/components/ui/smart-money-input";
+import { comparableManualDate, ManualDateInput, isValidIsoDate } from "@/components/ui/manual-date-input";
 import {
   shouldShowUnsavedChanges,
   UnsavedChangesNotice,
@@ -40,16 +40,11 @@ import {
 import type { ScheduleSlot } from "@/components/layout/weekly-schedule-board";
 import {
   getClassScheduleSlotsLabel,
-  getSlotEffectiveAssistantIds,
-  getSlotEffectiveTeacherIds,
   normalizeCourseBillingMonths,
   normalizeCourseBillingWeeks,
 } from "@/lib/classes/presentation";
 import { classQueryKeys } from "@/lib/classes/query-keys";
-import {
-  getClassScheduleAvailability,
-  previewClassEndDate,
-} from "@/lib/api/classes";
+import { getClassScheduleAvailability, previewStaffAvailability } from "@/lib/api/classes";
 import { getApiErrorMessage } from "@/lib/api/errors";
 import type {
   ClassCreate,
@@ -59,44 +54,26 @@ import type {
   ClassResponse,
   ClassType,
   ClassUpdate,
+  StaffAvailabilityCandidateResponse,
   TeacherOptionResponse,
 } from "@/lib/types";
 import { validationMessages } from "@/lib/forms/validation-messages";
-import {
-  getCourseShortcutTotalWeeks,
-  getExactEndDateShortcutCount,
-  getSuggestedClassEndDate,
-} from "@/lib/classes/end-date-shortcut";
 import {
   noSavedInfoFormProps,
   savedInfoAutocomplete,
 } from "@/lib/forms/saved-info-policy";
 import { useFormFieldFeedback } from "@/lib/forms/use-form-field-feedback";
-import { moveFocusByFormArrow } from "@/lib/forms/field-navigation";
+import {
+  isNativeTextEditingTarget,
+  moveFocusByFormArrow,
+} from "@/lib/forms/field-navigation";
 import { collapseSelectionOnKeyboardFocus } from "@/lib/forms/keyboard-focus";
 import { cn } from "@/lib/utils";
-import { formatDate } from "@/lib/utils/format";
 
 const ScheduleGridSlide = dynamic(
   () =>
     import("@/components/layout/schedule-grid-slide").then(
       (module) => module.ScheduleGridSlide,
-    ),
-  { ssr: false },
-);
-
-const DatePickerSlide = dynamic(
-  () =>
-    import("@/components/layout/date-picker-slide").then(
-      (module) => module.DatePickerSlide,
-    ),
-  { ssr: false },
-);
-
-const TeacherSlide = dynamic(
-  () =>
-    import("@/components/classes/teacher-slide").then(
-      (module) => module.TeacherSlide,
     ),
   { ssr: false },
 );
@@ -111,14 +88,11 @@ const CLASS_FEEDBACK_FIELDS = [
   "grade_level",
   "academic_year_start",
   "start_date",
-  "end_date",
-  "end_date_change_reason",
+  "start_date_change_reason",
   "type",
   "base_fee",
   "billing_cycle_months",
   "billing_cycle_weeks",
-  "teacher_ids",
-  "assistant_ids",
   "schedule",
 ] as const;
 
@@ -135,12 +109,7 @@ export const classFormSchema = z
     grade_level: z.number().int().min(1).max(12).nullable(),
     academic_year_start: z.number().int().min(2000).max(2200).nullable(),
     start_date: z.string(),
-    end_date: z.string(),
-    end_date_change_reason: z
-      .string()
-      .trim()
-      .max(500)
-      .refine((value) => value.length === 0 || value.length >= 3, "Vui lòng nêu lý do đổi ngày kết thúc."),
+    start_date_change_reason: z.string().trim().max(500).default(""),
     type: z.enum(["MONTHLY", "COURSE"]),
     base_fee: z
       .number({ message: validationMessages.feeFormat })
@@ -151,10 +120,7 @@ export const classFormSchema = z
       .transform((value) => value as number),
     billing_cycle_months: z.number().int().min(1, validationMessages.billingCycle),
     billing_cycle_weeks: z.number().int().min(1, validationMessages.billingCycle).max(32_767).nullable(),
-    teacher_ids: z
-      .array(z.string().uuid())
-      .min(1, validationMessages.selectRequired("ít nhất một giáo viên"))
-      .max(10, "Mỗi lớp được chọn tối đa 10 giáo viên."),
+    teacher_ids: z.array(z.string().uuid()).max(10).default([]),
     assistant_ids: z.array(z.string().uuid()).max(10).default([]),
   })
   .superRefine((values, context) => {
@@ -162,16 +128,10 @@ export const classFormSchema = z
       context.addIssue({ code: "custom", path: ["class_category"], message: "Vui lòng chọn loại lớp." });
       return;
     }
+    if (!isValidIsoDate(values.start_date)) {
+      context.addIssue({ code: "custom", path: ["start_date"], message: "Ngày bắt đầu không hợp lệ. Vui lòng nhập theo định dạng dd/mm/yyyy." });
+    }
     if (values.identity_scheme !== "LEGACY") {
-      if (!isIsoDate(values.start_date)) {
-        context.addIssue({ code: "custom", path: ["start_date"], message: "Vui lòng chọn ngày bắt đầu." });
-      }
-      if (!isIsoDate(values.end_date)) {
-        context.addIssue({ code: "custom", path: ["end_date"], message: "Vui lòng chọn ngày học cuối cùng." });
-      }
-      if (isIsoDate(values.start_date) && isIsoDate(values.end_date) && values.end_date <= values.start_date) {
-        context.addIssue({ code: "custom", path: ["end_date"], message: "Ngày kết thúc phải sau ngày bắt đầu." });
-      }
       const expectedScheme = values.class_category === "IELTS" ? "INTAKE" : "ACADEMIC_YEAR";
       if (values.identity_scheme !== expectedScheme) {
         context.addIssue({ code: "custom", path: ["class_category"], message: "Thông tin loại lớp không nhất quán." });
@@ -197,8 +157,6 @@ export const classFormSchema = z
         ) {
           context.addIssue({ code: "custom", path: ["grade_level"], message: "Vui lòng chọn khối lớp hoặc chọn Không." });
         }
-        // Khối lớp và năm học phải đi cùng nhau: có khối thì phải có năm học
-        // và ngược lại, hoặc cả hai đều để "Không".
         const hasGrade = values.grade_level !== null;
         const hasYear = values.academic_year_start !== null;
         if (hasGrade && !hasYear) {
@@ -242,23 +200,13 @@ const DEFAULT_VALUES: ClassFormInputValues = {
   grade_level: 6,
   academic_year_start: getDefaultAcademicYearStart(),
   start_date: getVietnamTodayIso(),
-  end_date: "",
-  end_date_change_reason: "",
+  start_date_change_reason: "",
   type: "MONTHLY",
   base_fee: null,
   billing_cycle_months: 3,
   billing_cycle_weeks: null,
   teacher_ids: [],
   assistant_ids: [],
-};
-
-type OccupiedScheduleSlot = ScheduleSlot & {
-  classId: string;
-  className: string;
-  classCategory?: ClassCategory | null;
-  gradeLevel?: number | null;
-  busyTeacherIds?: string[];
-  busyAssistantIds?: string[];
 };
 
 type ClassFormDialogProps = {
@@ -281,6 +229,7 @@ type ClassFormDialogProps = {
   onDirtyChange?: (dirty: boolean) => void;
   /** Reports when a nested picker slide opens so the workspace can suspend. */
   onNestedOverlayChange?: (open: boolean) => void;
+  onPackageDurationChanged?: (class_: ClassResponse) => void;
   onRetryTeachers: () => void;
   onSubmit: (payload: ClassCreate | ClassUpdate) => void;
   teachers: TeacherOptionResponse[];
@@ -289,6 +238,14 @@ type ClassFormDialogProps = {
 export type ClassFormDraftContext = {
   baseFee: number | null;
   schedule: { text: string; slots: ScheduleSlot[] } | null;
+};
+
+type PreviewState = {
+  isChecking: boolean;
+  error: string | null;
+  canApply: boolean;
+  candidates: StaffAvailabilityCandidateResponse[];
+  draftKey: string;
 };
 
 export function ClassFormDialog({
@@ -308,19 +265,16 @@ export function ClassFormDialog({
   onDirtyChange,
   onNestedOverlayChange,
   onRetryTeachers,
+  onPackageDurationChanged,
   onSubmit,
   teachers,
 }: ClassFormDialogProps) {
   const [mounted, setMounted] = useState(false);
+  const [isPackageDurationOpen, setIsPackageDurationOpen] = useState(false);
   const [isSchedulePickerOpen, setIsSchedulePickerOpen] = useState(false);
-  const [isTeacherSlideOpen, setIsTeacherSlideOpen] = useState(false);
-  const [datePickerTarget, setDatePickerTarget] = useState<"start" | "end" | null>(null);
-  const [endDateShortcutCount, setEndDateShortcutCount] = useState("");
-  const [lastEndDateChangeSource, setLastEndDateChangeSource] = useState<
-    "shortcut_months" | "shortcut_packages" | "date_picker" | null
-  >(null);
   const [scheduleValue, setScheduleValue] = useState<{ text: string; slots: ScheduleSlot[] } | null>(null);
   const [initialScheduleKey, setInitialScheduleKey] = useState(scheduleKey(null));
+
   const {
     control,
     formState: { errors, isSubmitted },
@@ -334,6 +288,7 @@ export function ClassFormDialog({
     mode: "onChange",
     shouldFocusError: true,
   });
+
   const {
     markBlur,
     markInput,
@@ -341,6 +296,7 @@ export function ClassFormDialog({
     resetFeedback,
     shouldShowError,
   } = useFormFieldFeedback(CLASS_FEEDBACK_FIELDS);
+
   const type = useWatch({ control, name: "type" });
   const customName = useWatch({ control, name: "name" });
   const identityScheme = useWatch({ control, name: "identity_scheme" });
@@ -348,81 +304,246 @@ export function ClassFormDialog({
   const gradeLevel = useWatch({ control, name: "grade_level" });
   const academicYearStart = useWatch({ control, name: "academic_year_start" });
   const startDate = useWatch({ control, name: "start_date" });
-  const endDate = useWatch({ control, name: "end_date" });
-  const endDateChangeReason = useWatch({ control, name: "end_date_change_reason" });
+  const startDateChangeReason = useWatch({ control, name: "start_date_change_reason" }) ?? "";
   const baseFee = useWatch({ control, name: "base_fee" });
   const billingCycleWeeks = useWatch({ control, name: "billing_cycle_weeks" });
-  const watchedTeacherIds = useWatch({ control, name: "teacher_ids" });
-  const watchedAssistantIds = useWatch({ control, name: "assistant_ids" });
   const watchedFormValues = useWatch({ control });
+
   const activeClassLabel = class_?.name || initialValues?.name || customName?.trim() || "Lớp này";
-  const teacherIds = useMemo(() => watchedTeacherIds ?? [], [watchedTeacherIds]);
-  const assistantIds = useMemo(
-    () => watchedAssistantIds ?? [],
-    [watchedAssistantIds],
+
+  // Candidate staff IDs: exact set union of all slot teacher_ids and assistant_ids
+  const candidateStaffIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const slot of scheduleValue?.slots ?? []) {
+      for (const id of slot.teacher_ids ?? []) ids.add(id);
+      for (const id of slot.assistant_ids ?? []) ids.add(id);
+    }
+    return Array.from(ids).sort();
+  }, [scheduleValue?.slots]);
+
+  // Strict invariant: A staff member CANNOT be both Teacher and Assistant in the same class
+  const hasRoleOverlap = useMemo(() => {
+    const teacherIdSet = new Set<string>();
+    const assistantIdSet = new Set<string>();
+    for (const slot of scheduleValue?.slots ?? []) {
+      for (const id of slot.teacher_ids ?? []) teacherIdSet.add(id);
+      for (const id of slot.assistant_ids ?? []) assistantIdSet.add(id);
+    }
+    for (const id of teacherIdSet) {
+      if (assistantIdSet.has(id)) return true;
+    }
+    return false;
+  }, [scheduleValue?.slots]);
+
+  // DraftKey fingerprint for state machine
+  const draftKey = useMemo(() => {
+    const slotFingerprint = (scheduleValue?.slots ?? [])
+      .map(
+        (s) =>
+          `${s.day}_${s.start}_${s.end}_${[...(s.teacher_ids ?? [])].sort().join(",")}_${[...(s.assistant_ids ?? [])].sort().join(",")}`,
+      )
+      .sort()
+      .join(";");
+    return `${class_?.id ?? "new"}|${class_?.version ?? 0}|${startDate ?? ""}|${slotFingerprint}|${candidateStaffIds.join(",")}`;
+  }, [candidateStaffIds, class_?.id, class_?.version, scheduleValue?.slots, startDate]);
+
+  const [previewState, setPreviewState] = useState<PreviewState>({
+    isChecking: false,
+    error: null,
+    canApply: true,
+    candidates: [],
+    draftKey: "",
+  });
+
+  // State machine preview effect: 300ms debounce, AbortController, draftKey validation
+  useEffect(() => {
+    // If no candidate staff are selected, preview is NOT called: UNASSIGNED is allowed.
+    if (candidateStaffIds.length === 0) {
+      setPreviewState({
+        isChecking: false,
+        error: null,
+        canApply: true,
+        candidates: [],
+        draftKey,
+      });
+      return;
+    }
+
+    if (hasRoleOverlap || !startDate || !isValidIsoDate(startDate) || (scheduleValue?.slots.length ?? 0) === 0) {
+      setPreviewState({
+        isChecking: false,
+        error: hasRoleOverlap ? "Một nhân sự không thể vừa là giáo viên vừa là trợ giảng trong cùng lớp" : null,
+        canApply: false,
+        candidates: [],
+        draftKey,
+      });
+      return;
+    }
+
+    // Immediately clear old valid preview and lock save while checking
+    setPreviewState((prev) => ({
+      ...prev,
+      isChecking: true,
+      error: null,
+      canApply: false,
+      draftKey,
+    }));
+
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      try {
+        const response = await previewStaffAvailability(
+          {
+            class_id: class_?.id,
+            expected_version: class_?.version,
+            start_date: startDate,
+            schedule: {
+              text: scheduleValue?.text ?? "",
+              slots: (scheduleValue?.slots ?? []).map((s) => ({
+                day: s.day as ScheduleSlot["day"],
+                start: s.start,
+                end: s.end,
+                teacher_ids: s.teacher_ids ?? [],
+                assistant_ids: s.assistant_ids ?? [],
+                id: s.id,
+                version: s.version,
+              })),
+            },
+            candidate_staff_ids: candidateStaffIds,
+          },
+          { signal: controller.signal },
+        );
+
+        // Stale response guard: only commit if response matches current draftKey
+        setPreviewState((current) => {
+          if (current.draftKey !== draftKey) {
+            return current;
+          }
+          return {
+            isChecking: false,
+            error: null,
+            canApply: response.can_apply,
+            candidates: response.candidates,
+            draftKey,
+          };
+        });
+      } catch (err: unknown) {
+        if (controller.signal.aborted) return;
+        setPreviewState((current) => {
+          if (current.draftKey !== draftKey) return current;
+          return {
+            isChecking: false,
+            error: getApiErrorMessage(
+              err,
+              "Không thể kiểm tra lịch bận nhân sự. Vui lòng thử lại.",
+            ),
+            canApply: false,
+            candidates: [],
+            draftKey,
+          };
+        });
+      }
+    }, 300);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [candidateStaffIds, class_?.id, class_?.version, draftKey, hasRoleOverlap, scheduleValue, startDate]);
+
+  // Map conflicts specifically to matching slot & role
+  const slotConflicts = useMemo(() => {
+    const conflictsBySlotKey = new Map<
+      string,
+      Array<{ staffName: string; role: "TEACHER" | "ASSISTANT"; message: string }>
+    >();
+    if (!previewState.candidates) return conflictsBySlotKey;
+
+    for (const slot of scheduleValue?.slots ?? []) {
+      const slotKey = `${slot.day}-${slot.start}-${slot.end}`;
+      const slotConflictList: Array<{
+        staffName: string;
+        role: "TEACHER" | "ASSISTANT";
+        message: string;
+      }> = [];
+
+      for (const candidate of previewState.candidates) {
+        const isAssignedTeacher = (slot.teacher_ids ?? []).includes(candidate.staff_id);
+        const isAssignedAssistant = (slot.assistant_ids ?? []).includes(candidate.staff_id);
+        if (!isAssignedTeacher && !isAssignedAssistant) continue;
+
+        const role = isAssignedTeacher ? "TEACHER" : "ASSISTANT";
+        const staffName =
+          teachers.find((t) => t.id === candidate.staff_id)?.full_name ?? "Nhân sự";
+
+        for (const conflict of candidate.conflicts) {
+          if (
+            conflict.day === slot.day &&
+            conflict.start < slot.end &&
+            slot.start < conflict.end
+          ) {
+            slotConflictList.push({
+              staffName,
+              role,
+              message: `${staffName} (${role === "TEACHER" ? "Giáo viên" : "Trợ giảng"}) trùng lịch với lớp ${conflict.class_name} (${conflict.day} ${conflict.start}–${conflict.end})`,
+            });
+          }
+        }
+      }
+      if (slotConflictList.length > 0) {
+        conflictsBySlotKey.set(slotKey, slotConflictList);
+      }
+    }
+    return conflictsBySlotKey;
+  }, [previewState.candidates, scheduleValue?.slots, teachers]);
+
+  const updateSlotStaff = useCallback(
+    (slotIndex: number, field: "teacher_ids" | "assistant_ids", staffIds: string[]) => {
+      setScheduleValue((prev) => {
+        if (!prev) return prev;
+        const nextSlots = prev.slots.map((slot, i) => {
+          if (i !== slotIndex) return slot;
+          return {
+            ...slot,
+            [field]: staffIds,
+          };
+        });
+        return {
+          ...prev,
+          slots: nextSlots,
+        };
+      });
+    },
+    [],
   );
-  const teacherOptions = useMemo(
-    () => teachers.filter((teacher) => teacher.staff_type === "TEACHER"),
-    [teachers],
-  );
-  const assistantOptions = useMemo(
-    () => teachers.filter((teacher) => teacher.staff_type === "ASSISTANT"),
-    [teachers],
-  );
-  const selectedTeacherNames = useMemo(
-    () =>
-      teacherOptions
-        .filter((teacher) => teacherIds.includes(teacher.id))
-        .map((teacher) => teacher.full_name),
-    [teacherIds, teacherOptions],
-  );
-  const selectedAssistantNames = useMemo(
-    () =>
-      assistantOptions
-        .filter((assistant) => assistantIds.includes(assistant.id))
-        .map((assistant) => assistant.full_name),
-    [assistantIds, assistantOptions],
-  );
-  // Panel lịch chỉ nhận nhân sự ĐÃ CHỌN cho lớp; pool toàn hệ thống chỉ dùng
-  // cho panel chọn nhân sự ở trên.
-  const selectedTeacherOptions = useMemo(
-    () => teacherOptions.filter((teacher) => teacherIds.includes(teacher.id)),
-    [teacherIds, teacherOptions],
-  );
-  const selectedAssistantOptions = useMemo(
-    () => assistantOptions.filter((assistant) => assistantIds.includes(assistant.id)),
-    [assistantIds, assistantOptions],
-  );
+
+  // Availability query for occupied schedule blocks of all other classes
   const availabilityQuery = useQuery({
     queryKey: classQueryKeys.availability({
       classId: class_?.id ?? null,
       startDate,
-      endDate,
-      teacherIds,
-      assistantIds,
+      teacherIds: [],
+      assistantIds: [],
+      scope: "all_classes",
     }),
     queryFn: () =>
       getClassScheduleAvailability({
         class_id: class_?.id,
         start_date: startDate,
-        end_date: endDate,
-        teacher_ids: teacherIds,
-        assistant_ids: assistantIds,
+        scope: "all_classes",
+        teacher_ids: [],
+        assistant_ids: [],
       }),
     enabled:
       Boolean(mounted) &&
       isSchedulePickerOpen &&
       Boolean(startDate) &&
-      Boolean(endDate) &&
-      teacherIds.length > 0,
-    // Schedule availability is safe to reuse briefly while the picker is
-    // reopened. This avoids a duplicate request during the same edit flow,
-    // while the short window still keeps conflicts reasonably fresh.
-    staleTime: 10_000,
-    refetchOnMount: true,
+      isValidIsoDate(startDate),
+    staleTime: 60_000,
     refetchOnWindowFocus: false,
     retry: false,
   });
+
   const occupiedSlots = useMemo(
     () =>
       (availabilityQuery.data ?? []).map((conflict) => ({
@@ -438,57 +559,19 @@ export function ClassFormDialog({
       })),
     [availabilityQuery.data],
   );
-  const missingScheduleDates = !startDate || !endDate;
+
+  const missingScheduleDates = !startDate || !isValidIsoDate(startDate);
   const occupiedLoading =
     Boolean(availabilityQuery.isFetching) && !availabilityQuery.isSuccess;
   const occupiedError = missingScheduleDates
-    ? "Vui lòng chọn ngày bắt đầu và ngày kết thúc trước khi thiết lập lịch học."
+    ? "Vui lòng chọn ngày bắt đầu trước khi thiết lập lịch học."
     : availabilityQuery.isError
       ? getApiErrorMessage(
           availabilityQuery.error,
           "Không tải được lịch bận. Vui lòng thử lại.",
         )
       : null;
-  const scheduleAssignmentError = useMemo(() => {
-    if (teacherIds.length === 0) return undefined;
-    const slots = scheduleValue?.slots ?? [];
-    if (slots.length === 0) return undefined;
-    const broken = slots.find((slot) => {
-      const effective = getSlotEffectiveTeacherIds(slot, teacherIds);
-      return effective.filter((id) => teacherIds.includes(id)).length === 0;
-    });
-    return broken
-      ? `Buổi ${broken.day} ${broken.start}–${broken.end} không còn giáo viên. Vui lòng chọn lại nhân sự cho lớp hoặc xóa buổi này.`
-      : undefined;
-  }, [scheduleValue, teacherIds]);
 
-  // Xóa nhân sự khỏi lớp → loại ID đó khỏi slot liên quan ngay (không âm thầm
-  // gán người khác); nếu slot mất giáo viên cuối cùng, scheduleAssignmentError
-  // chặn lưu cho tới khi user xử lý.
-  useEffect(() => {
-    setScheduleValue((current) => {
-      if (!current || current.slots.length === 0) return current;
-      const nextSlots = current.slots.map((slot) => ({
-        ...slot,
-        teacher_ids: (slot.teacher_ids ?? []).filter((id) => teacherIds.includes(id)),
-        assistant_ids: (slot.assistant_ids ?? []).filter((id) =>
-          assistantIds.includes(id),
-        ),
-      }));
-      const changed = nextSlots.some(
-        (slot, index) =>
-          JSON.stringify(slot.teacher_ids) !==
-            JSON.stringify(current.slots[index].teacher_ids ?? []) ||
-          JSON.stringify(slot.assistant_ids) !==
-            JSON.stringify(current.slots[index].assistant_ids ?? []),
-      );
-      return changed ? { ...current, slots: nextSlots } : current;
-    });
-  }, [assistantIds, teacherIds]);
-  const scheduleConflict = useMemo(
-      () => findScheduleConflict(scheduleValue?.slots ?? [], occupiedSlots, teacherIds),
-    [occupiedSlots, scheduleValue?.slots, teacherIds],
-  );
   const scheduleRequiredError =
     !class_ && !hasConfiguredSchedule(scheduleValue)
       ? validationMessages.selectRequired("lịch học")
@@ -505,12 +588,28 @@ export function ClassFormDialog({
             initialRecord.billing_cycle_months,
           )
         : null;
+
     const nextSchedule = initialRecord?.schedule
       ? {
           text: initialRecord.schedule?.text ?? "",
-          slots: initialRecord.schedule?.slots ?? [],
+          slots: (initialRecord.schedule?.slots ?? []).map((slot) => ({
+            ...slot,
+            teacher_ids:
+              slot.teacher_ids && slot.teacher_ids.length > 0
+                ? slot.teacher_ids
+                : initialRecord.teacher_ids?.length === 1
+                  ? initialRecord.teacher_ids
+                  : [],
+            assistant_ids:
+              slot.assistant_ids && slot.assistant_ids.length > 0
+                ? slot.assistant_ids
+                : initialRecord.assistant_ids?.length === 1
+                  ? initialRecord.assistant_ids
+                  : [],
+          })),
         }
       : null;
+
     reset(
       initialRecord
         ? {
@@ -521,8 +620,7 @@ export function ClassFormDialog({
             grade_level: initialRecord.grade_level ?? null,
             academic_year_start: initialRecord.academic_year_start ?? null,
             start_date: initialRecord.start_date ?? "",
-            end_date: initialRecord.end_date ?? "",
-            end_date_change_reason: "",
+            start_date_change_reason: "",
             type: initialRecord.type,
             base_fee: initialRecord.base_fee,
             billing_cycle_months:
@@ -537,24 +635,32 @@ export function ClassFormDialog({
         : DEFAULT_VALUES,
     );
     setScheduleValue(nextSchedule);
-    const shortcutCount = initialRecord?.start_date && initialRecord.end_date
-      ? getExactEndDateShortcutCount({
-          startDate: initialRecord.start_date,
-          endDate: initialRecord.end_date,
-          type: initialRecord.type,
-          billingCycleWeeks: normalizedBillingWeeks,
-        })
-      : null;
-    setEndDateShortcutCount(shortcutCount ? String(shortcutCount) : "");
     setInitialScheduleKey(scheduleKey(nextSchedule));
     resetFeedback();
   }, [class_, initialValues, reset, resetFeedback]);
 
   const baselineRecord = class_ ?? initialValues;
+  const hasCommittedStartDateChange = Boolean(
+    class_ &&
+      startDate &&
+      isValidIsoDate(startDate) &&
+      startDate !== class_.start_date,
+  );
+
   const hasUnsavedChanges = Boolean(
     externalDirty ||
     (baselineRecord &&
-      (normalizedClassFormKey(watchedFormValues) !==
+      (normalizedClassFormKey({
+        ...watchedFormValues,
+        start_date:
+          comparableManualDate(
+            watchedFormValues.start_date,
+            baselineRecord.start_date,
+          ) ?? undefined,
+        start_date_change_reason: hasCommittedStartDateChange
+          ? watchedFormValues.start_date_change_reason
+          : "",
+      }) !==
         normalizedClassFormKey({
           name: baselineRecord.name,
           identity_scheme: baselineRecord.identity_scheme,
@@ -563,8 +669,7 @@ export function ClassFormDialog({
           grade_level: baselineRecord.grade_level ?? null,
           academic_year_start: baselineRecord.academic_year_start ?? null,
           start_date: baselineRecord.start_date ?? "",
-          end_date: baselineRecord.end_date ?? "",
-          end_date_change_reason: "",
+          start_date_change_reason: "",
           type: baselineRecord.type,
           base_fee: baselineRecord.base_fee,
           billing_cycle_months:
@@ -583,91 +688,18 @@ export function ClassFormDialog({
         }) ||
         scheduleKey(scheduleValue) !== initialScheduleKey)),
   );
-  const endDateChanged = Boolean(
-    class_ && endDate !== (class_.end_date ?? ""),
-  );
-  const canPreviewEndDate = Boolean(
-    class_ &&
-      endDateChanged &&
-      isIsoDate(endDate),
-  );
-  const endDatePreviewQuery = useQuery({
-    queryKey: classQueryKeys.endDatePreview(class_?.id ?? "", endDate, class_?.version ?? 0),
-    queryFn: () =>
-      previewClassEndDate(class_!.id, {
-        end_date: endDate,
-        expected_version: class_!.version,
-      }),
-    enabled: canPreviewEndDate,
-    retry: false,
-    staleTime: 0,
-  });
-  const isEndDatePreviewBlocked = Boolean(
-    canPreviewEndDate &&
-      (endDatePreviewQuery.isFetching || endDatePreviewQuery.isError),
-  );
-  const isEndDatePreviewError = Boolean(
-    canPreviewEndDate && endDatePreviewQuery.isError,
-  );
-  const rawPreviewError = isEndDatePreviewError
-    ? getApiErrorMessage(
-        endDatePreviewQuery.error,
-        "Không thể áp dụng ngày kết thúc này.",
-      )
-    : null;
 
-  const isEnrollmentHistoryError = Boolean(
-    rawPreviewError &&
-      (rawPreviewError.includes("lịch sử học viên") ||
-        rawPreviewError.includes("ngày bắt đầu gần nhất") ||
-        rawPreviewError.includes("học viên")),
-  );
-
-  const formattedEndDatePreviewError = useMemo(() => {
-    if (!rawPreviewError) return null;
-    if (!isEnrollmentHistoryError) return rawPreviewError;
-
-    const dateText = isIsoDate(endDate) ? formatDate(endDate) : endDate;
-    if (lastEndDateChangeSource === "shortcut_months") {
-      const monthText = endDateShortcutCount ? `${endDateShortcutCount} tháng` : "Số tháng đã chọn";
-      return `${monthText} khiến ngày kết thúc (${dateText}) sớm hơn ngày bắt đầu học gần nhất trong lịch sử học viên của lớp. Vui lòng tăng tổng số tháng hoặc chọn lại ngày kết thúc.`;
-    }
-    if (lastEndDateChangeSource === "shortcut_packages") {
-      const packageText = endDateShortcutCount ? `${endDateShortcutCount} gói` : "Số gói đã chọn";
-      return `${packageText} khiến ngày kết thúc (${dateText}) sớm hơn ngày bắt đầu học gần nhất trong lịch sử học viên của lớp. Vui lòng tăng số gói hoặc chọn lại ngày kết thúc.`;
-    }
-    return `Ngày kết thúc (${dateText}) phải sau ngày bắt đầu gần nhất trong lịch sử học viên của lớp. Vui lòng chọn ngày kết thúc muộn hơn.`;
-  }, [
-    rawPreviewError,
-    isEnrollmentHistoryError,
-    lastEndDateChangeSource,
-    endDateShortcutCount,
-    endDate,
-  ]);
-
-  const monthCountFieldHasError = Boolean(
-    isEndDatePreviewError &&
-      lastEndDateChangeSource === "shortcut_months" &&
-      isEnrollmentHistoryError,
-  );
-  const packageCountFieldHasError = Boolean(
-    isEndDatePreviewError &&
-      lastEndDateChangeSource === "shortcut_packages" &&
-      isEnrollmentHistoryError,
-  );
   const hasFormErrors =
     !classFormSchema.safeParse(watchedFormValues).success ||
     Object.keys(errors).length > 0 ||
-    Boolean(scheduleConflict) ||
     Boolean(scheduleRequiredError) ||
-    Boolean(scheduleAssignmentError) ||
+    hasRoleOverlap ||
+    (candidateStaffIds.length > 0 && (!previewState.canApply || previewState.isChecking || Boolean(previewState.error))) ||
     Boolean(
-      class_ &&
-        endDateChanged &&
-        endDateChangeReason.trim().length < 3,
-    ) ||
-    Boolean(canPreviewEndDate && endDatePreviewQuery.isError) ||
-    (isTeachersError && teachers.length === 0);
+      hasCommittedStartDateChange &&
+        startDateChangeReason.trim().length < 3,
+    );
+
   const shouldShowUnsavedNotice = shouldShowUnsavedChanges({
     hasChanges: hasUnsavedChanges,
     hasErrors: hasFormErrors,
@@ -683,15 +715,9 @@ export function ClassFormDialog({
   }, [baseFee, onDraftChange, scheduleValue]);
 
   useEffect(() => {
-    onNestedOverlayChange?.(
-      isSchedulePickerOpen || datePickerTarget !== null || isTeacherSlideOpen,
-    );
-  }, [
-    isSchedulePickerOpen,
-    datePickerTarget,
-    isTeacherSlideOpen,
-    onNestedOverlayChange,
-  ]);
+    onNestedOverlayChange?.(isSchedulePickerOpen);
+  }, [isSchedulePickerOpen, onNestedOverlayChange]);
+
   const nameError = shouldShowError("name", isSubmitted)
     ? errors.name?.message
     : undefined;
@@ -707,16 +733,6 @@ export function ClassFormDialog({
   const startDateError = shouldShowError("start_date", isSubmitted)
     ? errors.start_date?.message
     : undefined;
-  const endDateError = shouldShowError("end_date", isSubmitted)
-    ? errors.end_date?.message
-    : undefined;
-  const endDateReasonError =
-    class_ &&
-    endDate !== (class_.end_date ?? "") &&
-    endDateChangeReason.trim().length < 3 &&
-    shouldShowError("end_date_change_reason", isSubmitted)
-      ? "Vui lòng nêu lý do đổi ngày kết thúc."
-      : undefined;
   const typeError = shouldShowError("type", isSubmitted)
     ? errors.type?.message
     : undefined;
@@ -729,63 +745,12 @@ export function ClassFormDialog({
   )
     ? errors.billing_cycle_weeks?.message
     : undefined;
-  const teacherIdsError = shouldShowError("teacher_ids", isSubmitted)
-    ? errors.teacher_ids?.message
+  const scheduleError = shouldShowError("schedule", isSubmitted)
+    ? scheduleRequiredError
     : undefined;
-  const scheduleError = scheduleConflict
-    ? `Lịch học trùng với lớp ${scheduleConflict.className} vào ${scheduleConflict.day}, ${scheduleConflict.start}–${scheduleConflict.end}. Vui lòng chọn ca khác.`
-    : scheduleAssignmentError
-      ? scheduleAssignmentError
-      : shouldShowError("schedule", isSubmitted)
-        ? scheduleRequiredError
-        : undefined;
-  const billingConfigurationLocked = Boolean(
-    class_ && class_.effective_status !== "SCHEDULED",
-  );
-  const endDateLocked = Boolean(class_ && !class_.can_edit_end_date);
-  const totalCourseWeeks = getCourseShortcutTotalWeeks(
-    billingCycleWeeks,
-    endDateShortcutCount,
-  );
 
-  function applySelectedEndDate(nextEndDate: string) {
-    setLastEndDateChangeSource("date_picker");
-    markInput("end_date", nextEndDate);
-    setValue("end_date", nextEndDate, {
-      shouldDirty: true,
-      shouldValidate: true,
-    });
-    const exactCount = getExactEndDateShortcutCount({
-      startDate,
-      endDate: nextEndDate,
-      type,
-      billingCycleWeeks,
-    });
-    setEndDateShortcutCount(exactCount ? String(exactCount) : "");
-  }
-
-  function applyEndDateShortcut(
-    rawValue: string,
-    source: "shortcut_months" | "shortcut_packages" = "shortcut_months",
-  ) {
-    setLastEndDateChangeSource(source);
-    const normalized = rawValue.replace(/\D/g, "").slice(0, 4);
-    setEndDateShortcutCount(normalized);
-    const count = normalized ? Number(normalized) : 0;
-    const suggested = getSuggestedClassEndDate({
-      startDate,
-      type,
-      count,
-      billingCycleWeeks,
-    });
-    if (!suggested) return;
-    markInput("end_date", suggested);
-    setValue("end_date", suggested, {
-      shouldDirty: true,
-      shouldValidate: true,
-    });
-  }
-
+  const billingModeLocked = Boolean(class_ && !class_.can_edit_billing_mode);
+  const billingConfigurationLocked = Boolean(class_);
   if (!mounted) return null;
 
   const pickerSlides = (
@@ -797,127 +762,126 @@ export function ClassFormDialog({
         occupiedLoading={occupiedLoading}
         occupiedError={occupiedError}
         onRetryOccupied={() => void availabilityQuery.refetch()}
-        selectedTeachers={selectedTeacherOptions}
-        selectedAssistants={selectedAssistantOptions}
+        selectedTeachers={[]}
+        selectedAssistants={[]}
         classLabel={activeClassLabel}
+        scheduleMode="class-schedule"
         onClose={() => setIsSchedulePickerOpen(false)}
         onSave={(value) => {
-          setScheduleValue(value);
+          setScheduleValue((prev) => {
+            if (!value) return null;
+            const prevSlots = prev?.slots ?? [];
+            const nextSlots = value.slots.map((newSlot) => {
+              const matched = prevSlots.find(
+                (p) => p.day === newSlot.day && p.start === newSlot.start && p.end === newSlot.end,
+              );
+              return {
+                ...newSlot,
+                id: matched?.id ?? newSlot.id,
+                version: matched?.version ?? newSlot.version,
+                teacher_ids: matched?.teacher_ids ?? newSlot.teacher_ids ?? [],
+                assistant_ids: matched?.assistant_ids ?? newSlot.assistant_ids ?? [],
+              };
+            });
+            return {
+              text: value.text ?? "",
+              slots: nextSlots,
+            };
+          });
           markInput("schedule", value?.slots ?? value?.text ?? "");
         }}
       />
-      <DatePickerSlide
-        isOpen={datePickerTarget === "start"}
-        title="Chọn ngày bắt đầu"
-        description="Ngày bắt đầu chỉ được chọn từ hôm nay trở đi và sẽ cố định sau khi mở lớp."
-        currentValue={startDate || undefined}
-        minDate={getVietnamTodayIso()}
-        yearOptions={getClassDatePickerYears(1)}
-        onClose={() => setDatePickerTarget(null)}
-        onSelectDate={(value) => {
-          markInput("start_date", value);
-          setValue("start_date", value, { shouldDirty: true, shouldValidate: true });
-          if (value !== startDate) {
-            setEndDateShortcutCount("");
-            setValue("end_date", "", {
-              shouldDirty: true,
+      {isPackageDurationOpen && class_ ? (
+        <ClassPackageDurationDialog
+          class_={class_}
+          onClose={() => {
+            setIsPackageDurationOpen(false);
+            onNestedOverlayChange?.(false);
+          }}
+          onApplied={(updatedClass) => {
+            setValue("billing_cycle_weeks", updatedClass.billing_cycle_weeks ?? null, {
+              shouldDirty: false,
               shouldValidate: true,
             });
-          }
-        }}
-      />
-      <DatePickerSlide
-        isOpen={datePickerTarget === "end"}
-        title="Chọn ngày kết thúc"
-        description="Có thể chọn ngày kết thúc phù hợp với kế hoạch vận hành của lớp."
-        currentValue={endDate || undefined}
-        onClose={() => setDatePickerTarget(null)}
-        onSelectDate={applySelectedEndDate}
-      />
-      <TeacherSlide
-        isOpen={isTeacherSlideOpen}
-        options={teachers}
-        currentTeacherIds={teacherIds}
-        currentAssistantIds={assistantIds}
-        onClose={() => setIsTeacherSlideOpen(false)}
-        onSave={(nextTeacherIds, nextAssistantIds) => {
-          markInput("teacher_ids", nextTeacherIds);
-          setValue("teacher_ids", nextTeacherIds, {
-            shouldDirty: true,
-            shouldValidate: true,
-          });
-          markInput("assistant_ids", nextAssistantIds);
-          setValue("assistant_ids", nextAssistantIds, {
-            shouldDirty: true,
-            shouldValidate: true,
-          });
-        }}
-      />
+            onPackageDurationChanged?.(updatedClass);
+          }}
+        />
+      ) : null}
     </>
   );
 
   const editForm = (
     <form
-        {...noSavedInfoFormProps}
-        noValidate
-        className="flex min-h-0 flex-1 flex-col"
-        data-vertical-arrow-scope="class-primary"
-        onKeyDown={moveFocusByFormArrow}
-        onSubmit={(event) => {
-          markSubmitted();
-          void handleSubmit((values) => {
-              if (scheduleRequiredError || scheduleAssignmentError) {
-                return;
-              }
-              if (!values.class_category) {
-                return;
-              }
-              onSubmit({
-                name: values.name.trim(),
-                type: values.type,
-                base_fee: values.base_fee,
-                billing_cycle_months: 1,
-                billing_cycle_weeks:
-                  values.type === "COURSE" ? values.billing_cycle_weeks : null,
-                schedule: scheduleValue,
-                teacher_id: values.teacher_ids[0] ?? null,
-                teacher_ids: values.teacher_ids,
-                assistant_ids: values.assistant_ids,
-                identity_scheme: values.class_category === "IELTS" ? "INTAKE" : "ACADEMIC_YEAR",
-                class_category: values.class_category,
-                grade_mode: values.class_category === "IELTS" ? "NONE" : values.grade_mode,
-                program_name: null,
-                grade_level:
-                  values.class_category !== "IELTS" && values.grade_mode === "GRADE"
-                    ? values.grade_level
-                    : null,
-                academic_year_start:
-                  values.class_category === "IELTS" ? null : values.academic_year_start,
-                start_date: values.start_date,
-                end_date: values.end_date,
-                ...(class_
-                  ? {
-                      expected_version: class_.version,
-                      ...(values.end_date !== (class_.end_date ?? "")
-                        ? {
-                            end_date_change_reason: values.end_date_change_reason.trim(),
-                            expected_fingerprint:
-                              endDatePreviewQuery.data?.preview_fingerprint ?? "",
-                          }
-                        : {}),
-                    }
-                  : {}),
-                ...(!class_ && initialValues?.source_class_id
-                  ? { source_class_id: initialValues.source_class_id }
-                  : {}),
-              });
-            })(event);
-          }}
-        >
-          <FormDialogBody>
-            <FormSection label="Thông tin lớp học" order={1}>
-            <div className={`grid gap-3 ${CLASS_FORM_COLUMNS}`}>
-              <FormField className="min-w-0 sm:col-span-2" error={identityError} label="Loại lớp" labelId="class-identity-label">
+      {...noSavedInfoFormProps}
+      noValidate
+      className="flex min-h-0 flex-1 flex-col"
+      data-vertical-arrow-scope="class-primary"
+      onKeyDown={moveFocusByFormArrow}
+      onSubmit={(event) => {
+        markSubmitted();
+        void handleSubmit((values) => {
+          if (scheduleRequiredError) {
+            return;
+          }
+          if (!values.class_category) {
+            return;
+          }
+          if (hasRoleOverlap) {
+            return;
+          }
+          if (candidateStaffIds.length > 0 && !previewState.canApply) {
+            return;
+          }
+
+          const allTeacherIds = Array.from(
+            new Set((scheduleValue?.slots ?? []).flatMap((slot) => slot.teacher_ids ?? [])),
+          );
+          const allAssistantIds = Array.from(
+            new Set((scheduleValue?.slots ?? []).flatMap((slot) => slot.assistant_ids ?? [])),
+          );
+
+          onSubmit({
+            name: values.name.trim(),
+            type: values.type,
+            base_fee: values.base_fee,
+            billing_cycle_months: 1,
+            billing_cycle_weeks:
+              values.type === "COURSE" ? values.billing_cycle_weeks : null,
+            schedule: scheduleValue,
+            teacher_ids: allTeacherIds,
+            assistant_ids: allAssistantIds,
+            identity_scheme: values.class_category === "IELTS" ? "INTAKE" : "ACADEMIC_YEAR",
+            class_category: values.class_category,
+            grade_mode: values.class_category === "IELTS" ? "NONE" : values.grade_mode,
+            program_name: null,
+            grade_level:
+              values.class_category !== "IELTS" && values.grade_mode === "GRADE"
+                ? values.grade_level
+                : null,
+            academic_year_start:
+              values.class_category === "IELTS" ? null : values.academic_year_start,
+            start_date: values.start_date,
+            ...(class_ && values.start_date !== class_.start_date
+              ? {
+                  start_date_change_reason: values.start_date_change_reason.trim(),
+                }
+              : {}),
+            ...(class_
+              ? {
+                  expected_version: class_.version,
+                }
+              : {}),
+            ...(!class_ && initialValues?.source_class_id
+              ? { source_class_id: initialValues.source_class_id }
+              : {}),
+          });
+        })(event);
+      }}
+    >
+      <FormDialogBody>
+        <FormSection label="Thông tin lớp học" order={1}>
+          <div className={`grid gap-3 ${CLASS_FORM_COLUMNS}`}>
+            <FormField className="min-w-0 sm:col-span-2" error={identityError} label="Loại lớp" labelId="class-identity-label">
               {!classCategory ? (
                 <FormNotice tone="warning">Lớp chưa được phân loại. Chọn loại lớp để hoàn thiện hồ sơ mà không suy đoán từ tên.</FormNotice>
               ) : null}
@@ -958,568 +922,482 @@ export function ClassFormDialog({
                   }
                 }}
               />
-              </FormField>
-              {identityScheme !== "LEGACY" && classCategory && classCategory !== "IELTS" ? (
-                <>
-                  <FormField className="min-w-0" controlId="class-grade" error={gradeLevelError} label="Khối lớp">
-                    <select
-                      id="class-grade"
-                      key={classCategory}
-                      {...register("grade_level", {
-                        setValueAs: (value) => (value ? Number(value) : null),
-                        onChange: (event) => {
-                          const nextMode: ClassGradeMode = event.target.value ? "GRADE" : "NONE";
-                          markInput("grade_level", event.target.value);
-                          markInput("grade_mode", nextMode);
-                          setValue("grade_mode", nextMode, {
-                            shouldDirty: true,
-                            shouldValidate: true,
-                          });
-                        },
-                        onBlur: () => markBlur("grade_level"),
-                      })}
-                      aria-invalid={Boolean(gradeLevelError)}
-                      className={`${formTextControlClassName} appearance-none bg-white px-3 ${gradeLevelError ? formTextControlErrorClassName : ""}`}
-                    >
-                      {Array.from({ length: 12 }, (_, index) => index + 1).map((grade) => (
-                        <option key={grade} value={grade}>Lớp {grade}</option>
-                      ))}
-                      {classCategory !== "GENERAL" ? <option value="">Không</option> : null}
-                    </select>
-                  </FormField>
-                  <FormField className="min-w-0" controlId="class-academic-year" error={academicYearError} label="Năm học">
-                    <select
-                      id="class-academic-year"
-                      key={classCategory}
-                      {...register("academic_year_start", {
-                        setValueAs: (value) => (value ? Number(value) : null),
-                        onChange: (event) => markInput("academic_year_start", event.target.value),
-                        onBlur: () => markBlur("academic_year_start"),
-                      })}
-                      aria-invalid={Boolean(academicYearError)}
-                      className={`${formTextControlClassName} appearance-none bg-white px-3 ${academicYearError ? formTextControlErrorClassName : ""}`}
-                    >
-                      {getAcademicYearOptions().map((year) => (
-                        <option key={year} value={year}>{year}–{year + 1}</option>
-                      ))}
-                      {classCategory !== "GENERAL" ? <option value="">Không</option> : null}
-                    </select>
-                  </FormField>
-                </>
-              ) : (
-                <FormField className="min-w-0 sm:col-span-2" controlId="class-name" error={nameError} label="Tên lớp">
-                  <input
-                    id="class-name"
-                    {...register("name", {
-                      onChange: (event) => markInput("name", event.target.value),
-                      onBlur: () => markBlur("name"),
+            </FormField>
+            {identityScheme !== "LEGACY" && classCategory && classCategory !== "IELTS" ? (
+              <>
+                <FormField className="min-w-0" controlId="class-grade" error={gradeLevelError} label="Khối lớp">
+                  <select
+                    id="class-grade"
+                    key={classCategory}
+                    {...register("grade_level", {
+                      setValueAs: (value) => (value ? Number(value) : null),
+                      onChange: (event) => {
+                        const nextMode: ClassGradeMode = event.target.value ? "GRADE" : "NONE";
+                        markInput("grade_level", event.target.value);
+                        markInput("grade_mode", nextMode);
+                        setValue("grade_mode", nextMode, {
+                          shouldDirty: true,
+                          shouldValidate: true,
+                        });
+                      },
+                      onBlur: () => markBlur("grade_level"),
                     })}
-                    maxLength={120}
-                    autoComplete={savedInfoAutocomplete.disabled}
-                    aria-invalid={Boolean(nameError)}
-                    aria-describedby={nameError ? "class-name-error" : undefined}
-                    className={inputClass(Boolean(nameError))}
-                    data-row={0}
-                    data-col={1}
-                    data-vertical-arrow-scope="class-primary"
+                    aria-invalid={Boolean(gradeLevelError)}
+                    className={`${formTextControlClassName} appearance-none bg-white px-3 ${gradeLevelError ? formTextControlErrorClassName : ""}`}
+                  >
+                    {Array.from({ length: 12 }, (_, index) => index + 1).map((grade) => (
+                      <option key={grade} value={grade}>Lớp {grade}</option>
+                    ))}
+                    {classCategory !== "GENERAL" ? <option value="">Không</option> : null}
+                  </select>
+                </FormField>
+                <FormField className="min-w-0" controlId="class-academic-year" error={academicYearError} label="Năm học">
+                  <select
+                    id="class-academic-year"
+                    key={classCategory}
+                    {...register("academic_year_start", {
+                      setValueAs: (value) => (value ? Number(value) : null),
+                      onChange: (event) => markInput("academic_year_start", event.target.value),
+                      onBlur: () => markBlur("academic_year_start"),
+                    })}
+                    aria-invalid={Boolean(academicYearError)}
+                    className={`${formTextControlClassName} appearance-none bg-white px-3 ${academicYearError ? formTextControlErrorClassName : ""}`}
+                  >
+                    {getAcademicYearOptions().map((year) => (
+                      <option key={year} value={year}>{year}–{year + 1}</option>
+                    ))}
+                    {classCategory !== "GENERAL" ? <option value="">Không</option> : null}
+                  </select>
+                </FormField>
+              </>
+            ) : (
+              <FormField className="min-w-0 sm:col-span-2" controlId="class-name" error={nameError} label="Tên lớp">
+                <input
+                  id="class-name"
+                  {...register("name", {
+                    onChange: (event) => markInput("name", event.target.value),
+                    onBlur: () => markBlur("name"),
+                  })}
+                  maxLength={120}
+                  autoComplete={savedInfoAutocomplete.disabled}
+                  aria-invalid={Boolean(nameError)}
+                  aria-describedby={nameError ? "class-name-error" : undefined}
+                  className={inputClass(Boolean(nameError))}
+                  data-row={0}
+                  data-col={1}
+                  data-vertical-arrow-scope="class-primary"
+                />
+              </FormField>
+            )}
+          </div>
+
+          {identityScheme !== "LEGACY" && classCategory ? (
+            <>
+              <div className={`grid gap-3 ${CLASS_FORM_COLUMNS}`}>
+                {classCategory !== "IELTS" ? (
+                  <FormField className="min-w-0" controlId="class-name" error={nameError} label="Tên lớp">
+                    <input
+                      id="class-name"
+                      {...register("name", {
+                        onChange: (event) => markInput("name", event.target.value),
+                        onBlur: () => markBlur("name"),
+                      })}
+                      maxLength={120}
+                      autoComplete={savedInfoAutocomplete.disabled}
+                      aria-invalid={Boolean(nameError)}
+                      aria-describedby={nameError ? "class-name-error" : undefined}
+                      className={inputClass(Boolean(nameError))}
+                      data-row={0}
+                      data-col={1}
+                      data-vertical-arrow-scope="class-primary"
+                    />
+                  </FormField>
+                ) : null}
+                <FormField
+                  className={cn("min-w-0", classCategory === "IELTS" && "sm:col-span-2")}
+                  controlId="class-start-date"
+                  error={startDateError}
+                  label="Ngày bắt đầu"
+                >
+                  <ManualDateInput
+                    id="class-start-date"
+                    value={startDate ?? null}
+                    onChange={(value) => {
+                      markInput("start_date", value ?? "");
+                      setValue("start_date", value ?? "", {
+                        shouldDirty: true,
+                        shouldValidate: true,
+                      });
+                    }}
+                    onBlur={() => markBlur("start_date")}
+                    error={Boolean(startDateError)}
+                    ariaLabel="Ngày bắt đầu"
+                    ariaDescribedBy={startDateError ? "class-start-date-error" : undefined}
+                    dataRow={2}
+                    dataCol={1}
                   />
                 </FormField>
-              )}
-            </div>
-
-            {identityScheme !== "LEGACY" && classCategory ? (
-              <>
-                <div
-                  className={`grid gap-3 ${CLASS_FORM_COLUMNS}`}
+              </div>
+              {hasCommittedStartDateChange ? (
+                <FormField
+                  controlId="class-start-date-reason"
+                  label="Lý do đổi ngày bắt đầu"
+                  error={
+                    startDateChangeReason.trim().length < 3
+                      ? "Vui lòng nhập ít nhất 3 ký tự."
+                      : undefined
+                  }
                 >
-                  {classCategory !== "IELTS" ? (
-                    <FormField className="min-w-0" controlId="class-name" error={nameError} label="Tên lớp">
-                      <input
-                        id="class-name"
-                        {...register("name", {
-                          onChange: (event) => markInput("name", event.target.value),
-                          onBlur: () => markBlur("name"),
-                        })}
-                        maxLength={120}
-                        autoComplete={savedInfoAutocomplete.disabled}
-                        aria-invalid={Boolean(nameError)}
-                        aria-describedby={nameError ? "class-name-error" : undefined}
-                        className={inputClass(Boolean(nameError))}
-                        data-row={0}
-                        data-col={1}
-                        data-vertical-arrow-scope="class-primary"
-                      />
-                    </FormField>
-                  ) : null}
-              <FormField
-                className={cn("min-w-0", classCategory === "IELTS" && "sm:col-span-2")}
-                controlId="class-start-date"
-                error={startDateError}
-                label="Ngày bắt đầu"
-              >
-                      <button
-                        id="class-start-date"
-                        type="button"
-                        onBlur={() => markBlur("start_date")}
-                        onClick={() => setDatePickerTarget("start")}
-                        disabled={Boolean(class_?.start_date)}
-                        aria-haspopup="dialog"
-                        data-invalid={startDateError ? "true" : undefined}
-                        aria-describedby={startDateError ? "class-start-date-error" : undefined}
-                        className={`${formTextControlClassName} select-none text-left ${startDateError ? formTextControlErrorClassName : ""}`}
-                        data-row={2}
-                        data-col={1}
-                      >
-                        {formatDate(startDate || null, "Chọn ngày")}
-                      </button>
-                  </FormField>
-                </div>
-              </>
-            ) : null}
-            </FormSection>
+                  <input
+                    id="class-start-date-reason"
+                    {...register("start_date_change_reason", {
+                      onChange: (event) => markInput("start_date_change_reason", event.target.value),
+                      onBlur: () => markBlur("start_date_change_reason"),
+                    })}
+                    maxLength={500}
+                    autoComplete={savedInfoAutocomplete.disabled}
+                    className={inputClass(startDateChangeReason.trim().length < 3)}
+                  />
+                </FormField>
+              ) : null}
+            </>
+          ) : null}
+        </FormSection>
 
-            <FormSection label="Học phí và thời hạn" order={2}>
-            <div className={`grid gap-3 ${CLASS_FORM_COLUMNS}`}>
-              <FormField error={typeError} label="Hình thức đóng học phí" labelId="class-type-label">
-                <input type="hidden" {...register("type")} />
-                <SegmentedControl
-                  ariaLabelledBy="class-type-label"
-                  disabled={billingConfigurationLocked}
-                  options={[
-                    { label: "Theo tháng", value: "MONTHLY" },
-                    { label: "Theo gói", value: "COURSE" },
-                  ]}
-                  selected={type}
-                  onSelect={(value) => {
-                    if (billingConfigurationLocked || value === type) return;
-                    markInput("type", value);
-                    setValue("type", value as ClassType, {
-                      shouldDirty: true,
-                      shouldValidate: true,
-                    });
-                    setValue(
-                      "billing_cycle_weeks",
-                      value === "COURSE" ? billingCycleWeeks : null,
-                      { shouldDirty: true, shouldValidate: true },
-                    );
-                    setValue("end_date", "", {
-                      shouldDirty: true,
-                      shouldValidate: true,
-                    });
-                    setEndDateShortcutCount("");
-                  }}
-                />
-                {billingConfigurationLocked ? (
-                  <p className="helper-text text-gray-500">
-                    Hình thức đóng học phí được cố định sau khi lớp bắt đầu.
-                  </p>
-                ) : null}
-              </FormField>
-              <FormField controlId="class-fee" error={baseFeeError} label="Học phí">
-                <SmartMoneyInput
-                  id="class-fee"
-                  value={baseFee ?? null}
-                  required
-                  ariaInvalid={Boolean(baseFeeError)}
-                  ariaDescribedBy={baseFeeError ? "class-fee-error" : undefined}
-                  onBlur={() => markBlur("base_fee")}
-                  onDraftChange={(rawValue) => markInput("base_fee", rawValue)}
-                  onChange={(value) => {
-                    setValue("base_fee", value, {
-                      shouldDirty: true,
-                      shouldValidate: true,
-                    });
-                  }}
-                  className={inputClass(Boolean(baseFeeError))}
-                  dataRow={5}
-                  dataCol={0}
-                  dataVerticalArrowScope="class-primary"
-                />
-              </FormField>
-            </div>
+        <FormSection label="Học phí và thời hạn" order={2}>
+          <div className={`grid gap-3 ${CLASS_FORM_COLUMNS}`}>
+            <FormField error={typeError} label="Hình thức đóng học phí" labelId="class-type-label">
+              <input type="hidden" {...register("type")} />
+              <SegmentedControl
+                ariaLabelledBy="class-type-label"
+                disabled={billingModeLocked}
+                options={[
+                  { label: "Theo tháng", value: "MONTHLY" },
+                  { label: "Theo gói", value: "COURSE" },
+                ]}
+                selected={type}
+                onSelect={(value) => {
+                  if (billingModeLocked || value === type) return;
+                  markInput("type", value);
+                  setValue("type", value as ClassType, {
+                    shouldDirty: true,
+                    shouldValidate: true,
+                  });
+                  setValue(
+                    "billing_cycle_weeks",
+                    value === "COURSE" ? billingCycleWeeks : null,
+                    { shouldDirty: true, shouldValidate: true },
+                  );
+                }}
+              />
+            </FormField>
+            <FormField controlId="class-fee" error={baseFeeError} label="Học phí">
+              <SmartMoneyInput
+                id="class-fee"
+                value={baseFee ?? null}
+                required
+                ariaInvalid={Boolean(baseFeeError)}
+                ariaDescribedBy={baseFeeError ? "class-fee-error" : undefined}
+                onBlur={() => markBlur("base_fee")}
+                onDraftChange={(rawValue) => markInput("base_fee", rawValue)}
+                onChange={(value) => {
+                  setValue("base_fee", value, {
+                    shouldDirty: true,
+                    shouldValidate: true,
+                  });
+                }}
+                className={inputClass(Boolean(baseFeeError))}
+                dataRow={5}
+                dataCol={0}
+                dataVerticalArrowScope="class-primary"
+              />
+            </FormField>
+          </div>
 
-            {type === "MONTHLY" && identityScheme !== "LEGACY" && classCategory ? (
-              <div className={`grid gap-3 ${CLASS_FORM_COLUMNS}`}>
-                <FormField controlId="class-total-months" label="Tổng số tháng">
-                  <div
-                    className={`relative h-8 overflow-hidden rounded-md border bg-white ${
-                      monthCountFieldHasError
-                        ? "border-destructive ring-1 ring-destructive/40"
-                        : "border-gray-200"
-                    }`}
-                  >
+          {type === "COURSE" ? (
+            <>
+              <input type="hidden" {...register("billing_cycle_months", { valueAsNumber: true })} />
+              <FormField controlId="class-duration-weeks" error={billingCycleError} label="Thời lượng mỗi gói">
+                <div className="flex min-w-0 items-center gap-2">
+                  <div className="relative h-8 min-w-0 flex-1 overflow-hidden rounded-md border border-gray-200 bg-white">
                     <input
-                      id="class-total-months"
+                      id="class-duration-weeks"
                       type="text"
                       inputMode="numeric"
-                      value={endDateShortcutCount}
-                      maxLength={4}
+                      disabled={billingConfigurationLocked}
+                      value={billingCycleWeeks ?? ""}
+                      maxLength={5}
                       autoComplete={savedInfoAutocomplete.disabled}
-                      disabled={endDateLocked || !isIsoDate(startDate)}
-                      onFocus={collapseSelectionOnKeyboardFocus}
-                      onChange={(event) =>
-                        applyEndDateShortcut(event.target.value, "shortcut_months")
-                      }
-                      className="form-input-text h-full w-full bg-white px-3 pr-14 opacity-100 outline-none disabled:bg-white disabled:text-gray-400 disabled:opacity-100"
+                      aria-invalid={Boolean(billingCycleError)}
+                      aria-describedby={billingCycleError ? "class-duration-weeks-error" : undefined}
                       data-row={6}
                       data-col={0}
                       data-vertical-arrow-scope="class-primary"
-                      aria-invalid={monthCountFieldHasError ? "true" : undefined}
-                    />
-                    <span className="pointer-events-none absolute inset-y-0 right-2 flex items-center bg-white form-input-text text-gray-500">tháng</span>
-                  </div>
-                </FormField>
-                <FormField controlId="class-end-date" error={endDateError} label="Ngày kết thúc">
-                  <button
-                    id="class-end-date"
-                    type="button"
-                    aria-label="Ngày kết thúc"
-                    aria-describedby={endDateError ? "class-end-date-error" : undefined}
-                    data-invalid={endDateError || isEndDatePreviewError ? "true" : undefined}
-                    onBlur={() => markBlur("end_date")}
-                    onClick={() => {
-                      if (!endDateLocked) {
-                        setDatePickerTarget("end");
-                      }
-                    }}
-                    disabled={endDateLocked || !isIsoDate(startDate)}
-                    aria-haspopup="dialog"
-                    className={`${formTextControlClassName} select-none text-left ${
-                      endDateError || isEndDatePreviewError ? formTextControlErrorClassName : ""
-                    }`}
-                    data-row={6}
-                    data-col={1}
-                    data-vertical-arrow-scope="class-primary"
-                  >
-                    {isIsoDate(endDate) ? formatDate(endDate) : "Chọn ngày"}
-                  </button>
-                  {!isIsoDate(startDate) ? (
-                    <p className="helper-text text-gray-500">Chọn ngày bắt đầu trước.</p>
-                  ) : endDateLocked ? (
-                    <p className="helper-text text-gray-500">Ngày kết thúc đã được khóa.</p>
-                  ) : null}
-                </FormField>
-              </div>
-            ) : null}
-
-            {type === "COURSE" ? (
-              <>
-                <input type="hidden" {...register("billing_cycle_months", { valueAsNumber: true })} />
-                <div className={`grid gap-3 ${CLASS_FORM_COLUMNS}`}>
-                  <FormField
-                    label="Thời lượng và tổng số gói"
-                    labelId="class-package-settings-label"
-                  >
-                    <SplitTextField
-                      className={`h-8 rounded-md border bg-white ${
-                        billingCycleError || packageCountFieldHasError
-                          ? "border-destructive ring-1 ring-destructive/40"
-                          : "border-input"
-                      }`}
-                      left={
-                        <div className="relative h-full">
-                          <input
-                            id="class-duration-weeks"
-                            aria-label="Thời lượng mỗi gói"
-                            type="text"
-                            inputMode="numeric"
-                            disabled={billingConfigurationLocked}
-                            value={billingCycleWeeks ?? ""}
-                            maxLength={5}
-                            autoComplete={savedInfoAutocomplete.disabled}
-                            onFocus={collapseSelectionOnKeyboardFocus}
-                            aria-describedby={billingCycleError ? "class-billing-cycle-error" : "class-total-weeks"}
-                            onChange={(event) => {
-                              if (billingConfigurationLocked) return;
-                              const rawValue = event.target.value.replace(/\D/g, "").slice(0, 5);
-                              const nextValue = rawValue === "" ? null : Number(rawValue);
-                              markInput("billing_cycle_weeks", rawValue);
-                              setValue("billing_cycle_weeks", nextValue, { shouldDirty: true, shouldValidate: true });
-                              setLastEndDateChangeSource("shortcut_packages");
-                              const count = endDateShortcutCount ? Number(endDateShortcutCount) : 0;
-                              const suggested = getSuggestedClassEndDate({ startDate, type: "COURSE", count, billingCycleWeeks: nextValue });
-                              if (suggested) {
-                                markInput("end_date", suggested);
-                                setValue("end_date", suggested, { shouldDirty: true, shouldValidate: true });
-                              }
-                            }}
-                            onBlur={() => markBlur("billing_cycle_weeks")}
-                            className="form-input-text h-full w-full bg-transparent px-3 pr-12 outline-none disabled:bg-transparent disabled:text-gray-400"
-                            data-row={6}
-                            data-col={0}
-                            data-vertical-arrow-scope="class-primary"
-                          />
-                          <span className="pointer-events-none absolute inset-y-0 right-2 flex items-center form-input-text text-gray-500">tuần</span>
-                        </div>
-                      }
-                      right={
-                        <div className="relative h-full">
-                          <input
-                            id="class-package-count"
-                            aria-label="Tổng số gói"
-                            type="text"
-                            inputMode="numeric"
-                            value={endDateShortcutCount}
-                            maxLength={4}
-                            autoComplete={savedInfoAutocomplete.disabled}
-                            disabled={endDateLocked || !isIsoDate(startDate)}
-                            onFocus={collapseSelectionOnKeyboardFocus}
-                            onChange={(event) =>
-                              applyEndDateShortcut(event.target.value, "shortcut_packages")
-                            }
-                            className="form-input-text h-full w-full bg-transparent px-3 pr-10 outline-none disabled:bg-transparent disabled:text-gray-400"
-                            data-row={6}
-                            data-col={1}
-                            data-vertical-arrow-scope="class-primary"
-                          />
-                          <span className="pointer-events-none absolute inset-y-0 right-2 flex items-center form-input-text text-gray-500">gói</span>
-                        </div>
-                      }
-                    />
-                    <div className="mt-1 min-h-[18px]">
-                      {billingCycleError ? (
-                        <p id="class-billing-cycle-error" role="alert" className="helper-text text-destructive">
-                          {billingCycleError}
-                        </p>
-                      ) : (
-                        <p id="class-total-weeks" className="helper-text text-gray-600">
-                          Tổng số tuần: {totalCourseWeeks === null ? "—" : `${totalCourseWeeks} tuần`}
-                        </p>
-                      )}
-                    </div>
-                  </FormField>
-                  <FormField controlId="class-end-date" error={endDateError} label="Ngày kết thúc">
-                    <button
-                      id="class-end-date"
-                      type="button"
-                      aria-label="Ngày kết thúc"
-                      aria-describedby={endDateError ? "class-end-date-error" : undefined}
-                      data-invalid={endDateError || isEndDatePreviewError ? "true" : undefined}
-                      onBlur={() => markBlur("end_date")}
-                      onClick={() => {
-                        if (!endDateLocked) {
-                          setDatePickerTarget("end");
-                        }
+                      onFocus={collapseSelectionOnKeyboardFocus}
+                      onChange={(event) => {
+                        const rawValue = event.target.value.replace(/\D/g, "").slice(0, 5);
+                        setValue("billing_cycle_weeks", rawValue === "" ? null : Number(rawValue), { shouldDirty: true, shouldValidate: true });
                       }}
-                      disabled={endDateLocked || !isIsoDate(startDate)}
-                      aria-haspopup="dialog"
-                      className={`${formTextControlClassName} select-none text-left ${
-                        endDateError || isEndDatePreviewError ? formTextControlErrorClassName : ""
-                      }`}
-                      data-row={6}
-                      data-col={1}
-                      data-vertical-arrow-scope="class-primary"
+                      onBlur={() => markBlur("billing_cycle_weeks")}
+                      className="form-input-text h-full w-full bg-transparent px-3 pr-12 outline-none"
+                    />
+                    <span className="pointer-events-none absolute inset-y-0 right-2 flex items-center form-input-text text-gray-500">tuần</span>
+                  </div>
+                  {class_?.can_edit_package_duration ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={hasUnsavedChanges || isSaving}
+                      title={
+                        hasUnsavedChanges
+                          ? "Hãy lưu các thay đổi trong biểu mẫu trước"
+                          : undefined
+                      }
+                      onClick={() => {
+                        setIsPackageDurationOpen(true);
+                        onNestedOverlayChange?.(true);
+                      }}
                     >
-                      {isIsoDate(endDate) ? formatDate(endDate) : "Chọn ngày"}
-                    </button>
-                    {!isIsoDate(startDate) ? (
-                      <p className="helper-text text-gray-500">Chọn ngày bắt đầu trước.</p>
-                    ) : endDateLocked ? (
-                      <p className="helper-text text-gray-500">Ngày kết thúc đã được khóa.</p>
-                    ) : null}
-                  </FormField>
+                      Điều chỉnh
+                    </Button>
+                  ) : null}
                 </div>
-              </>
-            ) : null}
-
-            {class_ && endDate !== (class_.end_date ?? "") ? (
-              <FormField controlId="class-end-date-reason" error={endDateReasonError} label="Lý do đổi ngày kết thúc">
-                <input
-                  id="class-end-date-reason"
-                  {...register("end_date_change_reason", {
-                    onChange: (event) => markInput("end_date_change_reason", event.target.value),
-                    onBlur: () => markBlur("end_date_change_reason"),
-                  })}
-                  maxLength={500}
-                  autoComplete={savedInfoAutocomplete.disabled}
-                  className={inputClass(false)}
-                  data-row={4}
-                  data-col={0}
-                />
               </FormField>
-            ) : null}
+            </>
+          ) : null}
+        </FormSection>
 
-            {canPreviewEndDate ? (
-              <div aria-live="polite">
-                {endDatePreviewQuery.isFetching ? (
-                  <FormNotice className="mt-2" loading tone="warning">
-                    Đang kiểm tra học viên và các kỳ học phí bị ảnh hưởng.
-                  </FormNotice>
-                ) : endDatePreviewQuery.isError ? (
-                  <InlineFormError
-                    className="mt-2"
-                    action={
-                      <button
-                        type="button"
-                        disabled={endDatePreviewQuery.isFetching}
-                        onClick={() => void endDatePreviewQuery.refetch()}
-                        className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs font-medium text-destructive hover:bg-destructive-soft disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        <RefreshCw className="h-3 w-3" aria-hidden="true" />
-                        {endDatePreviewQuery.isFetching ? (
-                          <LoadingLabel label="Đang thử lại" />
-                        ) : (
-                          "Thử lại"
-                        )}
-                      </button>
-                    }
-                  >
-                    {formattedEndDatePreviewError}
-                  </InlineFormError>
-                ) : endDatePreviewQuery.data ? (
-                  <FormNotice>
-                    Ngày mới áp dụng cho {endDatePreviewQuery.data.affected_student_count} học viên
-                    {endDatePreviewQuery.data.package_count
-                      ? `, gồm ${endDatePreviewQuery.data.package_count} gói trọn vẹn`
-                      : ""}
-                    {endDatePreviewQuery.data.mutable_fee_record_count > 0
-                      ? `; hệ thống sẽ hủy ${endDatePreviewQuery.data.mutable_fee_record_count} kỳ học phí chưa phát sinh nằm ngoài thời hạn mới`
-                      : ""}
-                    {endDatePreviewQuery.data.protected_fee_record_count > 0
-                      ? `; còn ${endDatePreviewQuery.data.protected_fee_record_count} kỳ đã báo/đã nộp ngoài thời hạn mới cần review`
-                      : ""}
-                    .
-                  </FormNotice>
-                ) : null}
-              </div>
-            ) : null}
-            </FormSection>
-
-            <FormSection label="Nhân sự phụ trách" order={3} summary={`${teacherIds.length + assistantIds.length} nhân sự`}>
-            <FormField
-              error={teacherIdsError}
-              errorId="class-teachers-error"
-              label="Giáo viên / Trợ giảng"
-              labelId="class-teachers-label"
-              visuallyHiddenLabel
+        <FormSection label="Lịch học trong tuần" order={3} summary={`${scheduleValue?.slots.length ?? 0} buổi/tuần`}>
+          <FormField
+            error={scheduleError}
+            errorId="class-schedule-error"
+            label="Các buổi trong tuần"
+            labelId="class-schedule-label"
+            visuallyHiddenLabel
+          >
+            <button
+              type="button"
+              aria-label={`Lịch học: ${
+                scheduleValue?.slots.length
+                  ? getClassScheduleSlotsLabel(scheduleValue.slots)
+                  : scheduleValue?.text || "chưa thiết lập"
+              }`}
+              data-invalid={scheduleError ? "true" : undefined}
+              aria-describedby={scheduleError ? "class-schedule-error" : undefined}
+              onBlur={() => markBlur("schedule")}
+              onClick={() => setIsSchedulePickerOpen(true)}
+              className={cn(
+                "form-input-text min-h-8 w-full cursor-pointer rounded-md border bg-white px-2 py-2 text-left text-gray-700 outline-none transition-colors hover:border-primary/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-400",
+                scheduleError ? "border-destructive focus-visible:!border-destructive focus-visible:!ring-destructive/30" : "border-gray-200 focus-visible:ring-primary/15",
+              )}
             >
-              <input type="hidden" {...register("teacher_ids")} />
-              <input type="hidden" {...register("assistant_ids")} />
-              {isTeachersLoading ? (
-                <div role="status" className="form-input-text flex h-8 items-center gap-2 rounded-md border border-gray-200 px-3 text-gray-500">
-                  <LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-                  Đang tải giáo viên
+              {scheduleValue?.slots.length ? (
+                <ClassScheduleList
+                  maxVisibleSlots={4}
+                  slots={scheduleValue.slots}
+                  variant="field"
+                />
+              ) : (
+                <span className="block text-gray-500">
+                  {scheduleValue?.text || "Thiết lập lịch học trong tuần"}
+                </span>
+              )}
+            </button>
+          </FormField>
+        </FormSection>
+
+        <FormSection label="Phân công nhân sự theo lịch học" order={4} summary={candidateStaffIds.length === 0 ? "Chưa phân công" : `${candidateStaffIds.length} nhân sự`}>
+          {isTeachersLoading ? (
+            <div role="status" className="flex h-9 items-center gap-2 rounded-md border border-gray-200 bg-gray-50/50 px-3 text-xs text-gray-500">
+              <LoaderCircle className="h-3.5 w-3.5 animate-spin text-primary" aria-hidden="true" />
+              <span>Đang tải danh sách nhân sự...</span>
+            </div>
+          ) : isTeachersError && teachers.length === 0 ? (
+            <InlineFormError
+              action={
+                <button
+                  type="button"
+                  onClick={onRetryTeachers}
+                  className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs font-medium text-destructive hover:bg-destructive-soft"
+                >
+                  <RefreshCw className="h-3 w-3" aria-hidden="true" /> Thử lại
+                </button>
+              }
+            >
+              Không tải được danh sách nhân sự. Bạn vẫn có thể lưu lớp mà không phân công nhân sự.
+            </InlineFormError>
+          ) : (!scheduleValue?.slots || scheduleValue.slots.length === 0) ? (
+            <div className="rounded-md border border-dashed border-gray-200 bg-gray-50/50 p-3 text-center text-xs text-gray-500">
+              Vui lòng chọn lịch học ở bước trên trước khi phân công nhân sự.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {hasRoleOverlap ? (
+                <div role="alert" className="rounded-md border border-destructive/20 bg-destructive-soft/50 p-2 text-xs font-medium text-destructive">
+                  Một nhân sự không thể vừa là giáo viên vừa là trợ giảng trong cùng lớp.
                 </div>
-              ) : isTeachersError && teachers.length === 0 ? (
+              ) : null}
+
+              {previewState.isChecking ? (
+                <div role="status" className="flex items-center gap-2 text-xs text-gray-500">
+                  <LoaderCircle className="h-3.5 w-3.5 animate-spin text-primary" aria-hidden="true" />
+                  <span>Đang kiểm tra lịch bận nhân sự...</span>
+                </div>
+              ) : previewState.error ? (
                 <InlineFormError
                   action={
                     <button
                       type="button"
-                      onClick={onRetryTeachers}
-                      className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs font-medium text-destructive hover:bg-destructive-soft"
+                      onClick={() => {
+                        setPreviewState((prev) => ({ ...prev, draftKey: "" }));
+                      }}
+                      className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-xs font-medium text-destructive hover:bg-destructive-soft"
                     >
                       <RefreshCw className="h-3 w-3" aria-hidden="true" /> Thử lại
                     </button>
                   }
                 >
-                  Không tải được danh sách giáo viên.
+                  {previewState.error}
                 </InlineFormError>
-              ) : teachers.length > 0 ? (
-                <button
-                  type="button"
-                  aria-labelledby="class-teachers-label"
-                  aria-describedby={teacherIdsError ? "class-teachers-error" : undefined}
-                  onClick={() => setIsTeacherSlideOpen(true)}
-                  onBlur={() => markBlur("teacher_ids")}
-                  aria-haspopup="dialog"
-                  data-invalid={teacherIdsError ? "true" : undefined}
-                  className={`form-input-text min-h-8 w-full cursor-pointer select-none rounded-md border bg-white px-1.5 py-1.5 text-left text-gray-700 outline-none transition-colors hover:border-primary/40 focus-visible:ring-2 focus-visible:ring-primary/15 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-400 ${teacherIdsError ? "border-destructive" : "border-gray-200"}`}
-                >
-                  <span className="line-clamp-2 whitespace-normal">
-                    {selectedTeacherNames.length > 0
-                      ? [
-                          `GV: ${selectedTeacherNames.join(", ")}`,
-                          ...(selectedAssistantNames.length > 0
-                            ? [`TG: ${selectedAssistantNames.join(", ")}`]
-                            : []),
-                        ].join(" · ")
-                      : "Chọn giáo viên và trợ giảng"}
-                  </span>
-                </button>
-              ) : (
-                <div className="rounded-md border border-dashed border-gray-300 px-3 py-2 text-sm font-medium text-gray-500">
-                  Chưa có giáo viên đang hoạt động. Hãy thêm tại trang Nhân sự trước.
-                </div>
-              )}
-              {isTeachersError && teachers.length > 0 ? (
-                <p className="helper-text mt-1 text-amber-700" aria-live="polite">
-                  Chưa cập nhật được danh sách mới nhất; đang dùng dữ liệu đã lưu.
-                </p>
               ) : null}
-            </FormField>
-            </FormSection>
 
-            <FormSection label="Lịch học" order={4} summary={`${scheduleValue?.slots.length ?? 0} buổi/tuần`}>
-            <FormField
-              error={scheduleError}
-              errorId="class-schedule-error"
-              label="Các buổi trong tuần"
-              labelId="class-schedule-label"
-              visuallyHiddenLabel
-            >
-              <button
-                type="button"
-                aria-label={`Lịch học: ${
-                  scheduleValue?.slots.length
-                    ? getClassScheduleSlotsLabel(scheduleValue.slots)
-                    : scheduleValue?.text || "chưa thiết lập"
-                }`}
-                disabled={isTeachersLoading || teacherIds.length === 0}
-                data-invalid={scheduleError ? "true" : undefined}
-                aria-describedby={scheduleError ? "class-schedule-error" : undefined}
-                onBlur={() => markBlur("schedule")}
-                onClick={() => setIsSchedulePickerOpen(true)}
-                className={`form-input-text min-h-8 w-full cursor-pointer rounded-md border bg-white px-1.5 py-1.5 text-left text-gray-700 outline-none transition-colors hover:border-primary/40 focus-visible:ring-2 focus-visible:ring-primary/15 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-400 ${scheduleError ? "border-destructive" : "border-gray-200"}`}
-              >
-                {isTeachersLoading ? (
-                  <LoadingLabel label="Đang tải giáo viên" />
-                ) : teacherIds.length === 0 ? (
-                  "Chọn giáo viên trước"
-                ) : scheduleValue?.slots.length ? (
-                  <ClassScheduleList
-                    maxVisibleSlots={4}
-                    slots={scheduleValue.slots}
-                    variant="field"
-                  />
-                ) : (
-                  <span className="block whitespace-normal break-words">
-                    {scheduleValue?.text || "Thiết lập lịch học"}
-                  </span>
-                )}
-              </button>
-            </FormField>
-            </FormSection>
-            {typeof additionalSection === "function"
-              ? additionalSection({ baseFee: baseFee ?? null, schedule: scheduleValue })
-              : additionalSection}
-          </FormDialogBody>
+              {scheduleValue.slots.map((slot, index) => {
+                const slotKey = `${slot.day}-${slot.start}-${slot.end}`;
+                const assignedTeacherId = slot.teacher_ids?.[0] ?? "";
+                const assignedAssistantId = slot.assistant_ids?.[0] ?? "";
+                const conflictsForSlot = slotConflicts.get(slotKey) ?? [];
 
-          <FormDialogFooter
-            left={
-              shouldShowUnsavedNotice ? (
-                <UnsavedChangesNotice
-                  hasChanges={hasUnsavedChanges}
-                  hasErrors={hasFormErrors}
-                  isSaving={isSaving}
-                />
-              ) : null
-            }
-            right={
-              <>
-                <Button type="button" variant="outline" className="h-8 rounded-md px-3 text-sm" disabled={isSaving} onClick={onClose}>
-                  Huỷ
-                </Button>
-                <SaveButton
-                  type="submit"
-                  isSaving={isSaving}
-                  idleLabel={submitLabel}
-                  pendingLabel={submitLabel ? `Đang ${submitLabel.toLocaleLowerCase("vi-VN")}` : undefined}
-                  disabled={externalSubmitDisabled || isTeachersLoading || teachers.length === 0 || Boolean(scheduleConflict) || isEndDatePreviewBlocked || Boolean(class_ && !hasUnsavedChanges)}
-                />
-              </>
-            }
-          />
-        </form>
+                return (
+                  <div
+                    key={slotKey}
+                    className="rounded-lg border border-gray-200 bg-gray-50/40 p-3 transition-colors hover:border-gray-300"
+                  >
+                    <div className="mb-2.5 flex items-center justify-between">
+                      <span className="text-xs font-semibold text-gray-800">
+                        Buổi {index + 1}: {slot.day} · {slot.start}–{slot.end}
+                      </span>
+                      {slot.id ? (
+                        <span className="text-[11px] font-normal text-gray-400">Ca hiện hữu</span>
+                      ) : null}
+                    </div>
+
+                    <div className="grid gap-2.5 sm:grid-cols-2">
+                      <div>
+                        <label
+                          htmlFor={`slot-teacher-${index}`}
+                          className="mb-1 block text-xs font-medium text-gray-600"
+                        >
+                          Giáo viên
+                        </label>
+                        <select
+                          id={`slot-teacher-${index}`}
+                          value={assignedTeacherId}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            updateSlotStaff(index, "teacher_ids", val ? [val] : []);
+                          }}
+                          className={cn(
+                            formTextControlClassName,
+                            "h-8 text-xs bg-white",
+                            conflictsForSlot.some((c) => c.role === "TEACHER") && formTextControlErrorClassName,
+                          )}
+                        >
+                          <option value="">-- Chưa phân công --</option>
+                          {teachers.map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.full_name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label
+                          htmlFor={`slot-assistant-${index}`}
+                          className="mb-1 block text-xs font-medium text-gray-600"
+                        >
+                          Trợ giảng
+                        </label>
+                        <select
+                          id={`slot-assistant-${index}`}
+                          value={assignedAssistantId}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            updateSlotStaff(index, "assistant_ids", val ? [val] : []);
+                          }}
+                          className={cn(
+                            formTextControlClassName,
+                            "h-8 text-xs bg-white",
+                            conflictsForSlot.some((c) => c.role === "ASSISTANT") && formTextControlErrorClassName,
+                          )}
+                        >
+                          <option value="">-- Không có trợ giảng --</option>
+                          {teachers.map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.full_name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    {conflictsForSlot.length > 0 ? (
+                      <div className="mt-2 space-y-1">
+                        {conflictsForSlot.map((conflict, cIdx) => (
+                          <p
+                            key={cIdx}
+                            role="alert"
+                            className="flex items-start gap-1 text-xs font-medium text-destructive"
+                          >
+                            <span>•</span>
+                            <span>{conflict.message}</span>
+                          </p>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </FormSection>
+
+        {typeof additionalSection === "function"
+          ? additionalSection({ baseFee: baseFee ?? null, schedule: scheduleValue })
+          : additionalSection}
+      </FormDialogBody>
+
+      <FormDialogFooter
+        left={
+          shouldShowUnsavedNotice ? (
+            <UnsavedChangesNotice
+              hasChanges={hasUnsavedChanges}
+              hasErrors={hasFormErrors}
+              isSaving={isSaving}
+            />
+          ) : null
+        }
+        right={
+          <>
+            <Button type="button" variant="outline" className="h-8 rounded-md px-3 text-sm" disabled={isSaving} onClick={onClose}>
+              Huỷ
+            </Button>
+            <SaveButton
+              type="submit"
+              isSaving={isSaving}
+              idleLabel={submitLabel}
+              pendingLabel={submitLabel ? `Đang ${submitLabel.toLocaleLowerCase("vi-VN")}` : undefined}
+              disabled={
+                externalSubmitDisabled ||
+                isSaving ||
+                hasFormErrors ||
+                Boolean(class_ && !hasUnsavedChanges)
+              }
+            />
+          </>
+        }
+      />
+    </form>
   );
 
   if (embedded) {
@@ -1538,10 +1416,10 @@ export function ClassFormDialog({
       isBusy={isSaving}
       dirty={hasUnsavedChanges}
       onClose={onClose}
-      suspended={isSchedulePickerOpen || datePickerTarget !== null || isTeacherSlideOpen}
+      suspended={isSchedulePickerOpen}
       frameProps={{
         className: class_ ? editEntityDialogFrameClassName : createEntityDialogFrameClassName,
-        inert: isSchedulePickerOpen || datePickerTarget !== null,
+        inert: isSchedulePickerOpen,
         onKeyDown: (event) => {
           const target = event.target;
           const isArrowKey = [
@@ -1550,11 +1428,7 @@ export function ClassFormDialog({
             "ArrowLeft",
             "ArrowRight",
           ].includes(event.key);
-          const hasActiveCaret =
-            target instanceof HTMLElement &&
-            target.getAttribute("data-unified-caret-active") === "true";
-          // Form navigation prevents the event after moving focus. Do not
-          // steal that focus while the old input's caret state is cleared.
+          const hasActiveCaret = isNativeTextEditingTarget(target);
           if (isArrowKey && !event.defaultPrevented && !hasActiveCaret) {
             event.preventDefault();
             event.currentTarget.focus({ preventScroll: true });
@@ -1578,44 +1452,22 @@ function hasConfiguredSchedule(
   return Boolean(schedule && (schedule.slots.length > 0 || schedule.text.trim()));
 }
 
-function findScheduleConflict(
-  requestedSlots: ScheduleSlot[],
-  occupiedSlots: OccupiedScheduleSlot[],
-  teacherIds: string[],
-): OccupiedScheduleSlot | null {
-  return (
-    occupiedSlots.find((occupied) =>
-      requestedSlots.some((requested) => {
-        if (
-          requested.day !== occupied.day ||
-          !(requested.start < occupied.end && occupied.start < requested.end)
-        ) {
-          return false;
-        }
-        // Canonical block giữ đồng thời busy teacher + assistant. Block không
-        // kèm staff (dữ liệu cũ) được coi là bận với mọi nhân sự đã chọn.
-        const busyTeachers = occupied.busyTeacherIds ?? [];
-        const busyAssistants = occupied.busyAssistantIds ?? [];
-        if (busyTeachers.length === 0 && busyAssistants.length === 0) {
-          return true;
-        }
-        return (
-          getSlotEffectiveTeacherIds(requested, teacherIds).some((id) =>
-            busyTeachers.includes(id),
-          ) ||
-          getSlotEffectiveAssistantIds(requested).some((id) =>
-            busyAssistants.includes(id),
-          )
-        );
-      }),
-    ) ?? null
-  );
-}
-
 function scheduleKey(schedule: { text: string; slots: ScheduleSlot[] } | null) {
   return JSON.stringify({
     text: schedule?.text.trim() ?? "",
-    slots: [...(schedule?.slots ?? [])].sort((left, right) => `${left.day}-${left.start}-${left.end}`.localeCompare(`${right.day}-${right.start}-${right.end}`)),
+    slots: [...(schedule?.slots ?? [])]
+      .sort((left, right) =>
+        `${left.day}-${left.start}-${left.end}`.localeCompare(
+          `${right.day}-${right.start}-${right.end}`,
+        ),
+      )
+      .map((s) => ({
+        day: s.day,
+        start: s.start,
+        end: s.end,
+        teacher_ids: [...(s.teacher_ids ?? [])].sort(),
+        assistant_ids: [...(s.assistant_ids ?? [])].sort(),
+      })),
   });
 }
 
@@ -1629,11 +1481,10 @@ function normalizedClassFormKey(values: Partial<ClassFormInputValues>) {
     grade_level: values.grade_level ?? null,
     academic_year_start: values.academic_year_start ?? null,
     start_date: values.start_date ?? "",
-    end_date: values.end_date ?? "",
+    start_date_change_reason: values.start_date_change_reason ?? "",
     type,
     base_fee: values.base_fee ?? null,
-    billing_cycle_months:
-      1,
+    billing_cycle_months: 1,
     billing_cycle_weeks:
       type === "COURSE"
         ? normalizeCourseBillingWeeks(
@@ -1641,7 +1492,6 @@ function normalizedClassFormKey(values: Partial<ClassFormInputValues>) {
             values.billing_cycle_months,
           )
         : null,
-    teacher_ids: [...(values.teacher_ids ?? [])].sort(),
   });
 }
 
@@ -1661,24 +1511,9 @@ function getDefaultAcademicYearStart(now = new Date()) {
   return month >= 8 ? year : year - 1;
 }
 
-function getClassDatePickerYears(
-  futureYearCount: number,
-  today = getVietnamTodayIso(),
-) {
-  const currentYear = Number(today.slice(0, 4));
-  return Array.from(
-    { length: futureYearCount + 1 },
-    (_, index) => currentYear + index,
-  );
-}
-
 function getAcademicYearOptions() {
   const current = getDefaultAcademicYearStart();
   return [current - 1, current, current + 1];
-}
-
-function isIsoDate(value: string) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
 
 function getVietnamTodayIso(now = new Date()) {
