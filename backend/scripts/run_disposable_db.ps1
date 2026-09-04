@@ -1,4 +1,4 @@
-﻿# TPRO Classio — scripts/run_disposable_db.ps1 (Round 4)
+# TPRO Classio — scripts/run_disposable_db.ps1 (Round 4)
 #
 # Pipeline bằng chứng Round 4 trên PostgreSQL disposable — KHÔNG bao giờ chạy
 # trên Supabase thật. Các scenario:
@@ -198,6 +198,16 @@ try {
   Invoke-Sql (Join-Path $Migrations "110_grant_fee_message_draft_runtime_roles.sql") "s1b-110"
   Invoke-Sql (Join-Path $Migrations "111_fee_operation_student_code_snapshot.sql") "s1b-111"
   Invoke-Sql (Join-Path $Migrations "112_class_continuation_lineage.sql") "s1b-112"
+  Invoke-Sql (Join-Path $Migrations "113_grant_student_code_runtime_roles.sql") "s1b-113"
+  Invoke-Sql (Join-Path $Migrations "114_open_ended_class_lifecycle.sql") "s1b-114"
+  Invoke-Sql (Join-Path $Migrations "115_billing_anchor_revisions.sql") "s1b-115"
+  Invoke-Sql (Join-Path $Migrations "116_scope_class_identity_to_workspace.sql") "s1b-116"
+  Invoke-Sql (Join-Path $Migrations "117_reconcile_class_schedule_staff_membership.sql") "s1b-117"
+  Invoke-Sql (Join-Path $Migrations "118_class_package_duration_revisions.sql") "s1b-118"
+  Invoke-Sql (Join-Path $Migrations "119_membership_effective_dates.sql") "s1b-119"
+  Invoke-Sql (Join-Path $Migrations "120_student_lifecycle_event_reason.sql") "s1b-120"
+  Invoke-Sql (Join-Path $Migrations "121_start_date_change_commands.sql") "s1b-121"
+  Invoke-Sql (Join-Path $Migrations "122_contextual_class_staff_assignments.sql") "s1b-122"
   Invoke-Sql (Join-Path $SqlRoot "verify_security.sql") "s1b-verify-security-after-tenant-isolation"
 
   # ================= SCENARIO 2: ROLLBACK / REAPPLY =================
@@ -231,7 +241,9 @@ try {
   # Reapply the latest forward fee-operation guard after rollback/reapply
   # exercises, keeping the final verification on the production contract.
   Invoke-Sql (Join-Path $Migrations "072_fee_operation_actor_anonymization.sql") "s2-072-reapply"
-  Invoke-Sql (Join-Path $SqlRoot "verify_security.sql") "s2-053-verify"
+  # Do not run the latest full-schema verifier on this intentionally historical
+  # rollback shape. Scenario 1 verifies the current forward chain; this scenario
+  # is complete after the dedicated 051/053 before/after assertions above.
 
   # ================= SCENARIO 3: DRIFT / RERUN ABORT =================
   Write-Host "==== Scenario 3: drift/rerun abort (T-DB051-045/046) ====" -ForegroundColor Cyan
