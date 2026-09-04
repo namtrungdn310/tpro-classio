@@ -34,8 +34,8 @@ const appProvidersSource = readFileSync(
   new URL("../src/components/providers/app-providers.tsx", import.meta.url),
   "utf8",
 );
-const unifiedCaretSource = readFileSync(
-  new URL("../src/components/providers/unified-caret-provider.tsx", import.meta.url),
+const feeMessageEditorSource = readFileSync(
+  new URL("../src/components/fees/fee-message-code-editor.tsx", import.meta.url),
   "utf8",
 );
 const loginSource = readFileSync(
@@ -56,17 +56,10 @@ const userAccessSource = readFileSync(
 );
 
 test("shared form controls keep the same typography during browser autofill", () => {
-  assert.match(globalStyles, /--form-caret-color: #000000/);
-  assert.match(globalStyles, /--form-caret-width: 1px/);
-  assert.match(globalStyles, /--form-caret-height: 1\.25rem/);
   assert.match(globalStyles, /--form-input-font-family: var\(--font-body\), system-ui, sans-serif;/);
   assert.match(globalStyles, /--form-input-font-size: 0\.9375rem;/);
   assert.match(globalStyles, /--form-input-line-height: 1\.25rem;/);
   assert.match(globalStyles, /--form-input-font-weight: 500;/);
-  assert.match(
-    globalStyles,
-    /:where\(input, textarea, \[contenteditable="true"\]\)\s*\{[\s\S]*?caret-color: var\(--form-caret-color\)/,
-  );
   assert.match(globalStyles, /\.form-input-text\s*\{[\s\S]*?font-family: var\(--form-input-font-family\)/);
   assert.match(globalStyles, /\.form-input-text\s*\{[\s\S]*?font-synthesis: none;/);
   assert.match(globalStyles, /\.form-input-text:-webkit-autofill\s*\{/);
@@ -83,17 +76,13 @@ test("shared form controls keep the same typography during browser autofill", ()
     globalStyles,
     /font-weight: var\(--form-input-font-weight\) !important;/,
   );
-  assert.equal(
-    globalStyles.match(/caret-color: var\(--form-caret-color\)/g)?.length,
-    1,
-  );
 });
 
 test("text-like one-off controls do not opt out of the shared caret contract", () => {
   assert.match(globalStyles, /\.otp-digit-text\s*\{[\s\S]*?font-family: var\(--form-input-font-family\)/);
   assert.match(globalStyles, /\.otp-digit-text\s*\{[\s\S]*?font-weight: var\(--form-input-font-weight\)/);
   assert.match(otpInputSource, /className=\{cn\(\s*"otp-digit-text/);
-  assert.match(loginTotpSource, /className=\{cn\(authInputClassName, "h-10"\)\}/);
+  assert.match(loginTotpSource, /className=\{cn\([\s\S]*?authInputClassName,[\s\S]*?"h-10"/);
   assert.doesNotMatch(loginTotpSource, /font-mono|tracking-widest/);
   assert.doesNotMatch(refundDialogSource, /form-input-text[^"`]*h-9/);
   assert.doesNotMatch(refundDialogSource, /focus:ring-gray-100/);
@@ -117,35 +106,10 @@ test("dashboard form input helpers derive from the same header search caret cont
   );
 });
 
-test("unified caret overlay is scoped to real editable form controls only", () => {
-  assert.match(appProvidersSource, /<UnifiedCaretProvider \/>/);
-  assert.match(
-    unifiedCaretSource,
-    /supportsUnifiedCaret/,
-  );
-  assert.match(
-    globalStyles,
-    /:where\(input, textarea, \[contenteditable="true"\]\)\[data-unified-caret-active="true"\]\s*\{[\s\S]*?caret-color: transparent !important;/,
-  );
-  assert.match(unifiedCaretSource, /document\.createElement\("span"\)/);
-  assert.match(unifiedCaretSource, /snapCaretCoordinate/);
-  assert.match(unifiedCaretSource, /snapCaretLength/);
-  assert.match(unifiedCaretSource, /ResizeObserver/);
-  assert.match(unifiedCaretSource, /compositionstart/);
-  assert.match(unifiedCaretSource, /forced-colors: active/);
-  assert.match(unifiedCaretSource, /activeElement\.contains\(target\)/);
-  assert.match(unifiedCaretSource, /animation\.currentTime = 0/);
-  assert.match(unifiedCaretSource, /syncActiveElementFromDocument/);
-  assert.match(unifiedCaretSource, /getUnifiedCaretElementFromEventTarget/);
-  assert.match(
-    unifiedCaretSource,
-    /addEventListener\("pointerdown", handleElementEvent, true\)/,
-  );
-  assert.doesNotMatch(unifiedCaretSource, /useState/);
-  assert.doesNotMatch(globalStyles, /\.unified-form-caret\s*\{[^}]*translateZ/);
-  assert.doesNotMatch(globalStyles, /\.unified-form-caret\s*\{[^}]*border-radius/);
-  assert.doesNotMatch(unifiedCaretSource, /inline-field-divider|InlineFieldDivider/);
-  assert.doesNotMatch(unifiedCaretSource, /data-unified-caret-kind|getCaretKind/);
+test("all editable controls retain the browser-native caret", () => {
+  assert.doesNotMatch(appProvidersSource, /UnifiedCaretProvider/);
+  assert.doesNotMatch(globalStyles, /caret-color|form-caret|unified-form-caret/i);
+  assert.doesNotMatch(feeMessageEditorSource, /caretColor|data-unified-caret/i);
 });
 
 test("editable email fields retain email keyboards while exposing measurable selections", () => {

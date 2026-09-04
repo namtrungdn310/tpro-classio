@@ -35,9 +35,6 @@
     --input: #e5e7eb;
     --ring: #002787;
     --radius: 0.5rem;
-    --form-caret-color: #000000;
-    --form-caret-width: 1px;
-    --form-caret-height: 1.25rem;
     --form-input-font-family: var(--font-body), system-ui, sans-serif;
     --form-input-font-size: 0.9375rem;
     --form-input-line-height: 1.25rem;
@@ -51,10 +48,6 @@
 
   * {
     @apply border-border;
-  }
-
-  :where(input, textarea, [contenteditable="true"]) {
-    caret-color: var(--form-caret-color);
   }
 
   body {
@@ -162,8 +155,6 @@ input[type="password"]::-ms-clear {
   }
 
   .form-input-text {
-    --form-caret-height: var(--form-input-line-height);
-    --form-caret-width: 1px;
     font-family: var(--form-input-font-family);
     font-size: var(--form-input-font-size);
     line-height: var(--form-input-line-height);
@@ -198,31 +189,6 @@ input[type="password"]::-ms-clear {
     font-weight: 400;
   }
 
-  :where(input, textarea, [contenteditable="true"])[data-unified-caret-active="true"] {
-    caret-color: transparent !important;
-  }
-
-  .unified-form-caret {
-    position: fixed;
-    z-index: 1000;
-    background: var(--form-caret-color);
-    pointer-events: none;
-    animation: unified-form-caret-blink 1.05s steps(1, end) infinite;
-  }
-
-  @keyframes unified-form-caret-blink {
-
-    0%,
-    54% {
-      opacity: 1;
-    }
-
-    55%,
-    100% {
-      opacity: 0;
-    }
-  }
-
   /* Native password masking keeps pointer placement, selection and IME correct. */
   .password-input-native {
     --form-input-letter-spacing: 0.12em;
@@ -253,8 +219,6 @@ input[type="password"]::-ms-clear {
   }
 
   .otp-digit-text {
-    --form-caret-height: 1.5rem;
-    --form-caret-width: 1px;
     font-family: var(--form-input-font-family);
     font-size: 1.125rem;
     line-height: 1.5rem;
@@ -264,13 +228,6 @@ input[type="password"]::-ms-clear {
     font-synthesis: none;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .unified-form-caret {
-      animation: none;
-      opacity: 1;
-    }
   }
 
   .auth-action-link {

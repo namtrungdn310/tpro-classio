@@ -12,6 +12,7 @@ const navbar = source("../src/components/layout/navbar.tsx");
 const navigationFeedback = source(
   "../src/lib/hooks/useOptimisticNavigation.ts",
 );
+const dashboardShell = source("../src/components/layout/dashboard-shell.tsx");
 const globalStyles = source("../src/app/globals.css");
 const bankingLoading = source(
   "../src/app/(dashboard)/banking/loading.tsx",
@@ -24,6 +25,10 @@ test("primary navigation gives immediate optimistic selection feedback", () => {
     assert.match(navigation, /isActive\(optimisticPathname, tab\.href\)/);
   }
   assert.match(navigationFeedback, /NAVIGATION_FEEDBACK_TIMEOUT_MS = 4_000/);
+  assert.match(navigationFeedback, /useSyncExternalStore/);
+  assert.match(dashboardShell, /useOptimisticNavigation\(pathname\)/);
+  assert.doesNotMatch(dashboardShell, /DashboardRouteTransition/);
+  assert.match(dashboardShell, /\{children\}/);
 });
 
 test("settings and banking use App Router prefetch and loading boundaries", () => {

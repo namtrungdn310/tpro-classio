@@ -59,6 +59,6 @@ test("filter trigger stays compact inside the shared header input", () => {
 test("filter chips stay compact while retaining their readable label size", () => {
   assert.match(
     source,
-    /className=\{`inline-flex h-7 shrink-0 items-center rounded-full border px-2\.5 text-\[12px\] transition/,
+    /className=\{`inline-flex h-7 shrink-0 items-center rounded-full border px-2\.5 text-\[11px\] font-medium leading-4 transition/,
   );
 });

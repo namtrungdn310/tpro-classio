@@ -9,6 +9,8 @@ import {
 } from "@/lib/forms/money-input";
 import { savedInfoAutocomplete } from "@/lib/forms/saved-info-policy";
 import { collapseSelectionOnKeyboardFocus } from "@/lib/forms/keyboard-focus";
+import { formTextControlClassName } from "@/components/ui/form-text-control";
+import { cn } from "@/lib/utils";
 
 type SmartMoneyInputProps = {
   ariaLabel?: string;
@@ -94,7 +96,9 @@ export function SmartMoneyInput({
     }
 
     setInputValue(formatMoneyInput(expandedValue));
-    onChange(expandedValue);
+    if (expandedValue !== value) {
+      onChange(expandedValue);
+    }
     setPreviewText(null);
     setExpandedValue(null);
     return true;
@@ -210,7 +214,9 @@ export function SmartMoneyInput({
           if (!commitExpandedValue()) {
             const plainValue = parsePlainMoneyInput(inputValue);
             setInputValue(formatMoneyInput(plainValue));
-            onChange(plainValue);
+            if (plainValue !== value) {
+              onChange(plainValue);
+            }
             onDraftChange?.(inputValue, inputValue.length === 0 || plainValue !== null);
           }
           setIsFocused(false);
@@ -219,7 +225,7 @@ export function SmartMoneyInput({
         placeholder={placeholder}
         required={required}
         autoComplete={savedInfoAutocomplete.disabled}
-        className={className}
+        className={cn(formTextControlClassName, className)}
         style={{
           paddingRight: previewText
             ? trailingControl
@@ -236,7 +242,7 @@ export function SmartMoneyInput({
       />
       {previewText ? (
         <span
-          className="pointer-events-none absolute select-none text-sm text-gray-400"
+          className="form-input-text pointer-events-none absolute top-1/2 -translate-y-1/2 select-none font-normal text-gray-400"
           style={{ right: trailingControl ? "2.5rem" : "0.75rem" }}
         >
           {previewText}

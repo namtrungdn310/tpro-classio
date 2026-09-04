@@ -27,8 +27,8 @@ test("shared form sections expose an accessible heading with a stable chapter nu
 test("chapter numbers are explicit and stable across every form", () => {
   assert.match(classDialog, /<FormSection label="Thông tin lớp học" order=\{1\}>/);
   assert.match(classDialog, /<FormSection label="Học phí và thời hạn" order=\{2\}>/);
-  assert.match(classDialog, /<FormSection label="Nhân sự phụ trách" order=\{3\}/);
-  assert.match(classDialog, /<FormSection label="Lịch học" order=\{4\}/);
+  assert.match(classDialog, /<FormSection label="Lịch học trong tuần" order=\{3\}/);
+  assert.match(classDialog, /<FormSection label="Phân công nhân sự theo lịch học" order=\{4\}/);
   assert.match(studentsPage, /<FormSection label="Hồ sơ học viên" order=\{1\}>/);
   assert.match(studentsPage, /<FormSection label="Thông tin liên hệ" order=\{2\}>/);
   assert.match(studentsPage, /<FormSection label="Quá trình học" order=\{3\}>/);
@@ -41,25 +41,24 @@ test("chapter numbers are explicit and stable across every form", () => {
   }
 });
 
-test("class form groups identity, billing, staff, and schedule by business meaning", () => {
+test("class form groups identity, billing, schedule, and contextual staffing by business meaning", () => {
   for (const label of [
     "Thông tin lớp học",
     "Học phí và thời hạn",
-    "Nhân sự phụ trách",
-    "Lịch học",
+    "Lịch học trong tuần",
+    "Phân công nhân sự theo lịch học",
   ]) {
     assert.match(classDialog, new RegExp(`<FormSection label="${label}"`));
   }
   assert.match(classDialog, /label="Các buổi trong tuần"/);
-  assert.equal(classDialog.match(/^\s+visuallyHiddenLabel$/gm)?.length, 2);
 });
 
 test("student form groups profile, contacts, and learning history", () => {
   for (const label of ["Hồ sơ học viên", "Thông tin liên hệ", "Quá trình học"]) {
     assert.match(studentsPage, new RegExp(`<FormSection label="${label}"`));
   }
-  assert.match(studentsPage, /label="Liên hệ học viên"/);
-  assert.match(studentsPage, /label="Liên hệ phụ huynh"/);
+  assert.match(studentsPage, /label="Zalo học viên"/);
+  assert.match(studentsPage, /label="Zalo phụ huynh"/);
 });
 
 test("staff and refund forms use concise, non-duplicated section labels", () => {

@@ -20,6 +20,9 @@ test("report page separates receipts, activity and reconciliation", () => {
   assert.match(reportPage, /label="Nhật ký học phí"/);
   assert.match(reportPage, /label="Giao dịch cần kiểm tra"/);
   assert.doesNotMatch(reportPage, /<ReportTab icon=/);
+  assert.match(reportPage, /const \[view, setLocalView\] = useState<ReportView>\(routeView\)/);
+  assert.match(reportPage, /setLocalView\(nextView\);[\s\S]{0,120}startNavigationTransition/);
+  assert.doesNotMatch(reportPage, /useOptimistic/);
 });
 
 test("reconciliation requires an explicit action and never auto-accepts review rows", () => {

@@ -13,6 +13,7 @@ type FormFieldProps = {
   hint?: ReactNode;
   label: string;
   labelId?: string;
+  labelTrailing?: ReactNode;
   visuallyHiddenLabel?: boolean;
 };
 
@@ -29,6 +30,7 @@ export function FormField({
   hint,
   label,
   labelId,
+  labelTrailing,
   visuallyHiddenLabel = false,
 }: FormFieldProps) {
   const errorId = providedErrorId ?? (controlId ? `${controlId}-error` : undefined);
@@ -49,15 +51,18 @@ export function FormField({
         }
       }}
     >
-      {controlId ? (
-        <label htmlFor={controlId} className={labelClassName}>
-          {label}
-        </label>
-      ) : (
-        <span id={labelId} className={labelClassName}>
-          {label}
-        </span>
-      )}
+      <div className={cn("flex min-w-0 items-center justify-between gap-2", visuallyHiddenLabel && "sr-only")}>
+        {controlId ? (
+          <label htmlFor={controlId} className={labelClassName}>
+            {label}
+          </label>
+        ) : (
+          <span id={labelId} className={labelClassName}>
+            {label}
+          </span>
+        )}
+        {labelTrailing ? <span className="flex shrink-0 items-center">{labelTrailing}</span> : null}
+      </div>
       {children}
       {hint ? <p className="helper-text select-none text-gray-500">{hint}</p> : null}
       {error ? (

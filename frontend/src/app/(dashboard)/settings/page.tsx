@@ -4,15 +4,27 @@ import { AccountSettingsSection } from "@/components/settings/account-settings-s
 import { SecuritySettingsSection } from "@/components/settings/security-settings-section";
 import { UserAccessPanel } from "@/components/settings/user-access-panel";
 import { useAuth } from "@/lib/hooks/useAuth";
+import { useQuery } from "@tanstack/react-query";
+import { authQueryKeys } from "@/lib/auth/query-keys";
+import { getUsers } from "@/lib/api/auth";
+import SettingsLoading from "./loading";
 import Link from "next/link";
 import { RiPulseLine } from "react-icons/ri";
 
 export default function SettingsPage() {
   const { user } = useAuth();
+  const canManageUsers = Boolean(user?.is_owner);
+  const usersQuery = useQuery({
+    queryKey: authQueryKeys.users,
+    queryFn: getUsers,
+    enabled: canManageUsers,
+    staleTime: 2 * 60 * 1000,
+  });
+  const isInitialLoading =
+    canManageUsers && usersQuery.isPending && usersQuery.data === undefined;
 
-  if (!user) return null;
-
-  const canManageUsers = Boolean(user.is_owner);
+  if (!user) return <SettingsLoading />;
+  if (isInitialLoading) return <SettingsLoading />;
 
   return (
     <div

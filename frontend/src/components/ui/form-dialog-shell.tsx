@@ -130,9 +130,10 @@ export function FormDialogShell({
         <ConfirmationDialog
           open
           title="Thay đổi chưa được lưu"
-          description="Bạn có thay đổi chưa được lưu. Rời khỏi sẽ bỏ qua các thay đổi này."
+          description="Nếu rời khỏi, các thay đổi trong biểu mẫu sẽ bị mất."
           confirmLabel="Rời khỏi"
-          cancelLabel="Ở lại"
+          cancelLabel="Tiếp tục chỉnh sửa"
+          tone="danger"
           isPending={isBusy}
           onCancel={() => setConfirmDiscardOpen(false)}
           onConfirm={() => {

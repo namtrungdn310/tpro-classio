@@ -35,6 +35,7 @@ const REFRESH_RESULT_GRACE_MS = 10_000;
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 const DEFAULT_UPSTREAM_TIMEOUT_MS = 15_000;
 const LONG_CLASS_MUTATION_TIMEOUT_MS = 60_000;
+const LONG_STUDENT_MUTATION_TIMEOUT_MS = 60_000;
 type RawBackendRequestBody = string | ArrayBuffer;
 
 type RouteContext = {
@@ -187,6 +188,12 @@ function upstreamTimeoutFor(path: string, method: string): number {
     /^classes\/[0-9a-f-]+\/continuation$/i.test(path)
   ) {
     return LONG_CLASS_MUTATION_TIMEOUT_MS;
+  }
+  if (
+    method === "POST" &&
+    /^students\/[0-9a-f-]+\/membership-command$/i.test(path)
+  ) {
+    return LONG_STUDENT_MUTATION_TIMEOUT_MS;
   }
   return DEFAULT_UPSTREAM_TIMEOUT_MS;
 }

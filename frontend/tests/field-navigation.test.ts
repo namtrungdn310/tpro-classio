@@ -104,16 +104,16 @@ test("horizontal navigation changes fields only at a collapsed caret boundary", 
   assert.equal(isHorizontalNavigationBoundary(8, null, null, 1), false);
 });
 
-test("form arrow navigation requires a visibly active editable caret", () => {
+test("form arrow navigation preserves browser-native text editing", () => {
   assert.match(
     fieldNavigationSource,
-    /current\.getAttribute\(ACTIVE_CARET_ATTRIBUTE\) !== "true"/,
+    /supportsFormArrowNavigation\(current\)/,
   );
   assert.match(shellSource, /useModalDialog\(\{/);
   assert.doesNotMatch(classDialogSource, /data-dialog-autofocus/);
   assert.match(
     classDialogSource,
-    /const isArrowKey =[\s\S]*?"ArrowUp"[\s\S]*?data-unified-caret-active[\s\S]*?if \(isArrowKey && !event\.defaultPrevented && !hasActiveCaret\)[\s\S]*?event\.preventDefault\(\)[\s\S]*?event\.currentTarget\.focus\(\{ preventScroll: true \}\)/,
+    /const isArrowKey =[\s\S]*?"ArrowUp"[\s\S]*?isNativeTextEditingTarget\(target\)[\s\S]*?if \(isArrowKey && !event\.defaultPrevented && !hasActiveCaret\)[\s\S]*?event\.preventDefault\(\)[\s\S]*?event\.currentTarget\.focus\(\{ preventScroll: true \}\)/,
   );
   assert.match(shellSource, /shadow-xl outline-none/);
 });
@@ -134,10 +134,7 @@ test("student, class, staff and refund forms share one arrow navigation helper",
     classDialogSource,
     /id="class-duration-weeks"[\s\S]*?data-row=\{6\}[\s\S]*?data-col=\{0\}/,
   );
-  assert.match(
-    classDialogSource,
-    /id="class-end-date"[\s\S]*?data-row=\{6\}[\s\S]*?data-col=\{1\}/,
-  );
+  assert.doesNotMatch(classDialogSource, /id="class-end-date"/);
   assert.match(staffDialogSource, /data-row=\{1\}/);
   assert.match(refundDialogSource, /dataRow=\{index\}/);
   assert.match(

@@ -11,6 +11,7 @@ const EXPIRY_SKEW_MS = 30_000;
 
 type TokenPayload = {
   sub?: string;
+  workspace_id?: string;
   email?: string;
   username?: string | null;
   full_name?: string | null;
@@ -92,6 +93,7 @@ function getUserFromPayload(payload: TokenPayload): UserMe | null {
 
   return {
     id: payload.sub,
+    workspace_id: payload.workspace_id ?? "",
     email: payload.email,
     role: payload.role,
     username: payload.username ?? null,

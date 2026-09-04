@@ -30,7 +30,6 @@
     "react-dom": "^18",
     "react-hook-form": "^7.79.0",
     "react-icons": "^5.7.0",
-    "recharts": "^3.9.1",
     "tailwind-merge": "^3.6.0",
     "write-excel-file": "^4.1.1",
     "zod": "^4.4.3"

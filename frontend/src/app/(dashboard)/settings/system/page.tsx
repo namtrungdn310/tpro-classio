@@ -44,6 +44,10 @@ export default function OperationsCenterPage() {
 
   if (!user?.is_owner) return null;
 
+  if (overviewQuery.isPending && overviewQuery.data === undefined) {
+    return <OperationsCenterSkeleton />;
+  }
+
   const overview = overviewQuery.data;
   const reviewCount = overview?.workspaces.reduce((sum, item) => sum + item.review_request_count, 0) ?? 0;
   const quarantineCount = overview?.workspaces.reduce((sum, item) => sum + item.quarantined_count, 0) ?? 0;
@@ -162,4 +166,16 @@ function Metric({ icon, label, value, tone = "normal" }: { icon: React.ReactNode
 
 function InfoCard({ icon, title, text }: { icon: React.ReactNode; title: string; text: string }) {
   return <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"><div className="flex items-center gap-2 text-sm font-semibold text-slate-900"><span className="text-primary">{icon}</span>{title}</div><p className="mt-2 text-xs leading-5 text-slate-600">{text}</p></article>;
+}
+
+function OperationsCenterSkeleton() {
+  return (
+    <div className="scrollbar-hidden h-full min-h-0 animate-pulse overflow-hidden px-1 pb-8" aria-hidden="true">
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-4">
+        <div className="h-44 rounded-xl border border-slate-200 bg-white p-5"><div className="h-4 w-24 rounded bg-slate-200" /><div className="mt-5 h-7 w-64 rounded bg-slate-200" /><div className="mt-3 h-4 w-2/3 rounded bg-slate-100" /></div>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{Array.from({ length: 4 }, (_, index) => <div key={index} className="h-28 rounded-xl border border-slate-200 bg-white" />)}</div>
+        <div className="grid min-h-72 gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(300px,0.8fr)]"><div className="rounded-xl border border-slate-200 bg-white" /><div className="rounded-xl border border-slate-200 bg-white" /></div>
+      </div>
+    </div>
+  );
 }

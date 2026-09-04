@@ -10,7 +10,13 @@ type EditableField = HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
 
 const EDITABLE_FIELD_SELECTOR =
   'input[data-row]:not([type="hidden"]):not([disabled]), textarea[data-row]:not([disabled]), select[data-row]:not([disabled])';
-const ACTIVE_CARET_ATTRIBUTE = "data-unified-caret-active";
+const SINGLE_LINE_TEXT_INPUT_TYPES = new Set([
+  "text",
+  "search",
+  "tel",
+  "url",
+  "password",
+]);
 
 export function moveFocusByVerticalArrow(
   event: KeyboardEvent<HTMLElement>,
@@ -30,7 +36,7 @@ export function moveFocusByVerticalArrow(
   const current = getEditableField(event.target);
   if (
     !current ||
-    current.getAttribute(ACTIVE_CARET_ATTRIBUTE) !== "true" ||
+    !supportsFormArrowNavigation(current) ||
     !event.currentTarget.contains(current)
   ) {
     return false;
@@ -105,7 +111,7 @@ export function moveFocusByFormArrow(
   const current = getEditableField(event.target);
   if (
     !current ||
-    current.getAttribute(ACTIVE_CARET_ATTRIBUTE) !== "true" ||
+    !supportsFormArrowNavigation(current) ||
     !event.currentTarget.contains(current) ||
     !isAtHorizontalBoundary(current, direction)
   ) {
@@ -218,6 +224,24 @@ function getEditableField(
     return target;
   }
   return null;
+}
+
+function supportsFormArrowNavigation(field: EditableField): boolean {
+  return (
+    field instanceof HTMLInputElement &&
+    !field.readOnly &&
+    SINGLE_LINE_TEXT_INPUT_TYPES.has(field.type)
+  );
+}
+
+export function isNativeTextEditingTarget(
+  target: EventTarget | null,
+): boolean {
+  return (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    (target instanceof HTMLElement && target.isContentEditable)
+  );
 }
 
 function getFieldCoordinate(

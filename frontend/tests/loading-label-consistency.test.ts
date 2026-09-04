@@ -49,6 +49,6 @@ test("persisted actions expand only while the shared save button is pending", ()
   assert.match(studentWorkspaceSource, /pendingLabel="Đang xử lý"/);
   assert.match(classCancelSource, /<PendingActionButton/);
   assert.match(classCancelSource, /isPending=\{isDeleting\}/);
-  assert.match(classCancelSource, /pendingLabel="Đang hủy"/);
+  assert.match(classCancelSource, /pendingLabel="Đang ngừng"/);
   assert.match(confirmationDialogSource, /<LoadingLabel label=\{activePendingLabel\} \/>/);
 });

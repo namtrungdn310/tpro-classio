@@ -156,7 +156,7 @@ export function HeaderFilterControls({
           <div className="space-y-2.5">
             {visibleFilters.map((filter, index) => (
               <div key={filter.label} className="space-y-1.5">
-                <p className="table-heading-text text-gray-500">{filter.label}</p>
+                <p className="table-heading-text text-gray-500 text-[11px] font-semibold leading-4 tracking-[0.02em]">{filter.label}</p>
                 <div
                   ref={(element) => {
                     rowRefs.current[index] = element;
@@ -175,7 +175,7 @@ export function HeaderFilterControls({
                           }
                           filter.onChange(selected ? "" : option.value);
                         }}
-                        className={`inline-flex h-7 shrink-0 items-center rounded-full border px-2.5 text-[12px] transition ${
+                        className={`inline-flex h-7 shrink-0 items-center rounded-full border px-2.5 text-[11px] font-medium leading-4 transition ${
                           selected
                             ? "border-primary/20 bg-primary-soft font-medium text-primary"
                             : "border-gray-200 bg-gray-100 text-gray-700 hover:border-primary/20 hover:bg-primary-soft/60"

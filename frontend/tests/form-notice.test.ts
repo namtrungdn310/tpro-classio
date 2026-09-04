@@ -10,8 +10,8 @@ const studentsSource = readFileSync(
   new URL("../src/app/(dashboard)/students/page.tsx", import.meta.url),
   "utf8",
 );
-const datePickerSource = readFileSync(
-  new URL("../src/components/layout/date-picker-slide.tsx", import.meta.url),
+const unsavedChangesSource = readFileSync(
+  new URL("../src/components/ui/unsaved-changes-notice.tsx", import.meta.url),
   "utf8",
 );
 
@@ -48,8 +48,12 @@ test("student transfer guidance uses the shared blue notice", () => {
   assert.doesNotMatch(studentsSource, />\s*\* Lưu xong/);
 });
 
-test("date-picker guidance uses the same blue notice", () => {
-  assert.match(datePickerSource, /<FormNotice/);
-  assert.match(datePickerSource, /id="date-picker-slide-note"/);
-  assert.doesNotMatch(datePickerSource, /FormFootnote/);
+test("unsaved changes use a shared icon-and-text line without a warning surface", () => {
+  assert.match(unsavedChangesSource, /RiAlertLine/);
+  assert.match(unsavedChangesSource, /message\?: ReactNode/);
+  assert.doesNotMatch(unsavedChangesSource, /border-amber-200 bg-amber-50/);
+  assert.doesNotMatch(
+    unsavedChangesSource,
+    /rounded-md border border-amber-200 bg-amber-50 px-3 py-2/,
+  );
 });

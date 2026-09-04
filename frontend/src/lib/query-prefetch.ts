@@ -1,26 +1,28 @@
 import type { QueryClient, QueryKey } from "@tanstack/react-query";
 import { getUsers } from "@/lib/api/auth";
 import { authQueryKeys } from "@/lib/auth/query-keys";
-import { getClasses, getClassScopeSummary } from "@/lib/api/classes";
+import { getClasses, getClassScopeSummary, getEffectiveOccurrences } from "@/lib/api/classes";
 import { classQueryKeys } from "@/lib/classes/query-keys";
 import { getDashboardOverview } from "@/lib/api/dashboard";
-import { getFeeMessageTemplates, getFeeRecords } from "@/lib/api/fees";
-import { getActiveTeacherOptions, getStaffMembers } from "@/lib/api/staff";
+import { getFeeMessageTemplates, getFeePeriods, getFeeRecords } from "@/lib/api/fees";
+import { getActiveStaffOptions, getStaffMembers } from "@/lib/api/staff";
 import { staffQueryKeys } from "@/lib/staff/query-keys";
 import { getFeePaidReceipts } from "@/lib/api/reports";
 import { getBankingOverview } from "@/lib/api/banking";
-import type { FeePaidReceiptListResponse } from "@/lib/types";
+import type { FeePaidReceiptListResponse, StudentListPageResponse } from "@/lib/types";
+import { getStudentScopeSummary, getStudentsPage } from "@/lib/api/students";
+import { studentQueryKeys, type StudentListFilters } from "@/lib/students/query-keys";
 
 const ROOT_STALE_MS: Record<string, number> = {
   "auth-users": 2 * 60 * 1000,
   classes: 10 * 60 * 1000,
-  dashboard: 30 * 1000,
-  fees: 60 * 1000,
+  dashboard: 60 * 1000,
+  fees: 2 * 60 * 1000,
   "fee-message-templates": 5 * 60 * 1000,
-  reports: 30 * 1000,
+  reports: 2 * 60 * 1000,
   staff: 10 * 60 * 1000,
-  students: 3 * 60 * 1000,
-  "banking-overview": 15 * 1000,
+  students: 5 * 60 * 1000,
+  "banking-overview": 60 * 1000,
 };
 
 type PrefetchContext = {
@@ -38,6 +40,33 @@ function getCurrentPeriod() {
   const year = parts.find((part) => part.type === "year")?.value;
   const month = parts.find((part) => part.type === "month")?.value;
   return year && month ? `${year}-${month}` : new Date().toISOString().slice(0, 7);
+}
+
+function getCurrentWeekRange() {
+  const now = new Date();
+  const start = new Date(now);
+  const day = (now.getDay() + 6) % 7;
+  start.setDate(now.getDate() - day);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  const localDate = (value: Date) =>
+    `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+  return { from: localDate(start), to: localDate(end) };
+}
+
+function prefetchStudentList(
+  queryClient: QueryClient,
+  filters: StudentListFilters,
+) {
+  return queryClient.prefetchInfiniteQuery({
+    queryKey: studentQueryKeys.list(filters),
+    queryFn: ({ pageParam, signal }) =>
+      getStudentsPage({ ...filters, cursor: pageParam as string | undefined }, signal),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (page: StudentListPageResponse) =>
+      page.has_more ? page.next_cursor ?? undefined : undefined,
+    staleTime: ROOT_STALE_MS.students,
+  });
 }
 
 async function prefetchIfStale<T>(
@@ -72,21 +101,44 @@ export async function prefetchRouteData(
   const tasks: Array<() => Promise<unknown>> = [];
 
   switch (href) {
-    case "/":
+    case "/": {
+      const week = getCurrentWeekRange();
       tasks.push(
         () => prefetchIfStale(queryClient, ["dashboard", "overview"], getDashboardOverview),
         () =>
           prefetchIfStale(queryClient, classQueryKeys.list("active"), () =>
             getClasses({ scope: "active" }),
           ),
+        () =>
+          prefetchIfStale(
+            queryClient,
+            classQueryKeys.effectiveOccurrences(week.from, week.to),
+            () => getEffectiveOccurrences(week.from, week.to),
+          ),
       );
       break;
+    }
     case "/students":
-      tasks.push(() =>
-        prefetchIfStale(queryClient, classQueryKeys.list("enrollable"), () =>
-          getClasses({ scope: "enrollable" }),
-        ),
+      tasks.push(
+        () =>
+          prefetchIfStale(queryClient, classQueryKeys.list("enrollable"), () =>
+            getClasses({ scope: "enrollable" }),
+          ),
+        () =>
+          prefetchIfStale(
+            queryClient,
+            studentQueryKeys.summary(),
+            getStudentScopeSummary,
+          ),
       );
+      if (context.selectedStudentClassId) {
+        const filters: StudentListFilters = {
+          class_id: context.selectedStudentClassId,
+          status: "active",
+          limit: 80,
+        };
+        tasks.push(() => prefetchStudentList(queryClient, filters));
+      }
       break;
     case "/classes":
       tasks.push(() =>
@@ -99,8 +151,8 @@ export async function prefetchRouteData(
       );
       if (context.isAdmin) {
         tasks.push(() =>
-          prefetchIfStale(queryClient, staffQueryKeys.teacherOptions, () =>
-            getActiveTeacherOptions(),
+          prefetchIfStale(queryClient, staffQueryKeys.staffOptions, () =>
+            getActiveStaffOptions(),
           ),
         );
       }
@@ -115,6 +167,7 @@ export async function prefetchRouteData(
           prefetchIfStale(queryClient, ["fees", { period }], () =>
             getFeeRecords({ period }),
           ),
+        () => prefetchIfStale(queryClient, ["fee-periods"], getFeePeriods),
       );
       if (context.isAdmin) {
         tasks.push(() =>

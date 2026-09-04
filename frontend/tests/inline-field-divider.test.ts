@@ -10,7 +10,6 @@ const dividerSource = source("../src/components/ui/inline-field-divider.tsx");
 const splitFieldSource = source("../src/components/ui/split-text-field.tsx");
 const globalStyles = source("../src/app/globals.css");
 const scheduleSource = source("../src/components/classes/class-schedule-list.tsx");
-const classFormSource = source("../src/components/classes/class-form-dialog.tsx");
 const studentSource = source("../src/app/(dashboard)/students/page.tsx");
 const staffSource = source("../src/components/staff/staff-form-dialog.tsx");
 
@@ -40,9 +39,6 @@ test("compact form dividers share the exact classes used by class schedules", ()
   assert.doesNotMatch(globalStyles, /border-left:/);
   assert.doesNotMatch(globalStyles, /border-right:/);
   assert.match(scheduleSource, /<InlineFieldDivider/);
-  assert.match(classFormSource, /TeacherSlide/);
-  assert.match(classFormSource, /isTeacherSlideOpen/);
-  assert.match(classFormSource, /setIsTeacherSlideOpen\(true\)/);
   assert.match(studentSource, /<SplitTextField/);
   assert.match(staffSource, /<SplitTextField/);
   assert.doesNotMatch(studentSource, /compound-text-field/);

@@ -1,6 +1,8 @@
+import { HeaderLoadingControls } from "@/components/layout/header-loading-status";
+
 export default function BankingLoading() {
   return (
-    <div
+    <><HeaderLoadingControls actionCount={2} showSearch={false} /><div
       aria-label="Đang tải ngân hàng"
       aria-busy="true"
       className="scrollbar-hidden h-full min-h-0 animate-pulse overflow-hidden"
@@ -32,6 +34,6 @@ export default function BankingLoading() {
           </div>
         </div>
       </div>
-    </div>
+    </div></>
   );
 }

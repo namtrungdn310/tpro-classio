@@ -14,6 +14,46 @@ const moneyInputSource = readFileSync(
   new URL("../src/components/ui/smart-money-input.tsx", import.meta.url),
   "utf8",
 );
+const studentPageSource = readFileSync(
+  new URL("../src/app/(dashboard)/students/page.tsx", import.meta.url),
+  "utf8",
+);
+const formTextControlSource = readFileSync(
+  new URL("../src/components/ui/form-text-control.ts", import.meta.url),
+  "utf8",
+);
+const segmentedControlSource = readFileSync(
+  new URL("../src/components/ui/segmented-control.tsx", import.meta.url),
+  "utf8",
+);
+const authFieldSource = readFileSync(
+  new URL("../src/components/ui/auth-field.tsx", import.meta.url),
+  "utf8",
+);
+const otpInputSource = readFileSync(
+  new URL("../src/components/ui/otp-input.tsx", import.meta.url),
+  "utf8",
+);
+const feeMessageEditorSource = readFileSync(
+  new URL("../src/components/fees/fee-message-code-editor.tsx", import.meta.url),
+  "utf8",
+);
+const buttonSource = readFileSync(
+  new URL("../src/components/ui/button.tsx", import.meta.url),
+  "utf8",
+);
+const staffFormSource = readFileSync(
+  new URL("../src/components/staff/staff-form-dialog.tsx", import.meta.url),
+  "utf8",
+);
+const feeRefundSource = readFileSync(
+  new URL("../src/components/fees/fee-refund-dialog.tsx", import.meta.url),
+  "utf8",
+);
+const loginTotpSource = readFileSync(
+  new URL("../src/app/login/totp/page.tsx", import.meta.url),
+  "utf8",
+);
 
 test("keyboard focus collapses the selection to the end without touching mouse focus", () => {
   assert.match(keyboardFocusSource, /export function collapseSelectionOnKeyboardFocus/);
@@ -25,11 +65,10 @@ test("numeric class form fields collapse selection on keyboard focus", () => {
   assert.match(classDialogSource, /onFocus=\{collapseSelectionOnKeyboardFocus\}/);
   assert.equal(
     (classDialogSource.match(/onFocus=\{collapseSelectionOnKeyboardFocus\}/g) ?? []).length,
-    3,
+    1,
   );
   assert.match(classDialogSource, /id="class-duration-weeks"/);
-  assert.match(classDialogSource, /id="class-package-count"/);
-  assert.match(classDialogSource, /id="class-total-months"/);
+  assert.doesNotMatch(classDialogSource, /id="class-package-count"|id="class-total-months"/);
 });
 
 test("smart money input also collapses selection on keyboard focus", () => {
@@ -40,48 +79,44 @@ test("smart money input also collapses selection on keyboard focus", () => {
   );
 });
 
-test("course total weeks multiplies duration by package count and hides on error", () => {
-  assert.match(classDialogSource, /getCourseShortcutTotalWeeks/);
-  assert.match(classDialogSource, /Tổng số tuần: \{totalCourseWeeks === null/);
-  assert.doesNotMatch(classDialogSource, /derivedCoursePackage/);
-  assert.match(classDialogSource, /id="class-total-weeks"/);
-  assert.match(classDialogSource, /id="class-billing-cycle-error"/);
-  assert.match(classDialogSource, /min-h-\[18px\]/);
-  assert.doesNotMatch(
-    classDialogSource,
-    /<FormField error=\{billingCycleError\} label="Thời lượng và tổng số gói"/,
-  );
+test("invalid controls keep the destructive focus treatment while editing", () => {
+  assert.match(formTextControlSource, /focus:!border-destructive/);
+  assert.match(formTextControlSource, /focus:!ring-destructive\/15/);
+  assert.match(studentPageSource, /focus-within:!border-destructive/);
+  assert.match(studentPageSource, /focus-within:!ring-destructive\/15/);
+  assert.match(segmentedControlSource, /focus-visible:!ring-destructive\/30/);
+  assert.match(feeRefundSource, /reversalError && formTextControlErrorClassName/);
+  assert.match(loginTotpSource, /error && authErrorInputClassName/);
 });
 
-test("the weeks input announces the helper or the error line", () => {
-  assert.match(
-    classDialogSource,
-    /aria-describedby=\{\s*billingCycleError\s*\?\s*"class-billing-cycle-error"\s*:\s*"class-total-weeks"\s*\}/,
-  );
-  assert.match(
-    classDialogSource,
-    /id="class-duration-weeks"[\s\S]{0,500}aria-describedby=\{\s*billingCycleError/,
-  );
+test("form controls use a thin focus ring consistently", () => {
+  assert.match(formTextControlSource, /focus:ring-1 focus:ring-primary\/15/);
+  assert.match(authFieldSource, /focus:ring-1 focus:ring-gray-200/);
+  assert.match(otpInputSource, /focus:ring-1 focus:ring-gray-200/);
+  assert.match(studentPageSource, /focus-within:ring-1/);
+  assert.match(staffFormSource, /focus-within:ring-1/);
+  assert.match(feeMessageEditorSource, /focus-within:ring-1/);
+  assert.match(buttonSource, /focus-visible:ring-2 focus-visible:ring-ring\/50/);
+  assert.doesNotMatch(buttonSource, /focus-visible:ring-3|aria-invalid:ring-3/);
+  assert.match(segmentedControlSource, /ring-1 ring-destructive\/15/);
+  assert.match(segmentedControlSource, /focus-visible:ring-1 focus-visible:ring-inset/);
+  assert.match(feeRefundSource, /formTextControlErrorClassName/);
+  assert.doesNotMatch(formTextControlSource, /focus:ring-2/);
+  assert.doesNotMatch(studentPageSource, /focus-within:ring-2/);
 });
 
-test("end date errors appear under the end date field", () => {
-  assert.doesNotMatch(
-    classDialogSource,
-    /controlId="class-total-months" error=\{endDateError\}/,
-  );
-  assert.match(
-    classDialogSource,
-    /controlId="class-end-date" error=\{endDateError\} label="Ngày kết thúc"/,
-  );
-  assert.equal(
-    (classDialogSource.match(/controlId="class-end-date" error=\{endDateError\}/g) ?? []).length,
-    2,
-  );
-  assert.match(
-    classDialogSource,
-    /aria-describedby=\{endDateError \? "class-end-date-error" : undefined\}/,
-  );
-  assert.doesNotMatch(classDialogSource, /Ngày kết thúc tối thiểu/);
+test("course form keeps only the recurring package duration", () => {
+  assert.match(classDialogSource, /label="Thời lượng mỗi gói"/);
+  assert.match(classDialogSource, /id="class-duration-weeks"/);
+  assert.doesNotMatch(classDialogSource, /class-total-weeks|class-package-count|getCourseShortcutTotalWeeks/);
+});
+
+test("the weeks input stays inside the shared error field", () => {
+  assert.match(classDialogSource, /<FormField controlId="class-duration-weeks" error=\{billingCycleError\}/);
+});
+
+test("the obsolete end-date error field is absent", () => {
+  assert.doesNotMatch(classDialogSource, /endDateError|class-end-date|Ngày kết thúc/);
 });
 
 test("hand-written notice boxes are replaced by shared components", () => {
@@ -103,12 +138,8 @@ test("hand-written notice boxes are replaced by shared components", () => {
   );
 });
 
-test("end date preview retry is a plain button that refetches and never submits", () => {
-  assert.match(
-    classDialogSource,
-    /type="button"[\s\S]{0,200}disabled=\{endDatePreviewQuery\.isFetching\}[\s\S]{0,200}onClick=\{\(\) => void endDatePreviewQuery\.refetch\(\)\}/,
-  );
-  assert.match(classDialogSource, /<LoadingLabel label="Đang thử lại" \/>/);
+test("class form removes the obsolete end-date preview flow", () => {
+  assert.doesNotMatch(classDialogSource, /endDatePreview|previewClassEndDate|end_date/);
 });
 
 test("staff submit error sits inside the scrollable body above the footer", () => {

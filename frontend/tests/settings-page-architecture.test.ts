@@ -41,7 +41,7 @@ const loginPageSource = readFileSync(new URL("../src/app/login/page.tsx", import
 test("settings page is split into focused responsive sections and reserves access management for owner", () => {
   assert.match(pageSource, /<AccountSettingsSection user=\{user\}/);
   assert.match(pageSource, /<SecuritySettingsSection user=\{user\}/);
-  assert.match(pageSource, /const canManageUsers = Boolean\(user\.is_owner\)/);
+  assert.match(pageSource, /const canManageUsers = Boolean\(user\?\.is_owner\)/);
   assert.match(pageSource, /canManageUsers \? \(/);
   assert.match(pageSource, /overflow-x-hidden/);
   assert.match(pageSource, /min-\[1360px\]:h-full/);
@@ -146,7 +146,7 @@ test("user access panel cannot bypass onboarding when an account is still pendin
   assert.match(accessSource, /pendingById/);
   assert.match(accessSource, /className="ml-auto flex items-center gap-2"/);
   assert.match(accessSource, /<DataSectionError/);
-  assert.match(accessSource, /refetchOnMount: true/);
+  assert.doesNotMatch(accessSource, /refetchOnMount: true/);
   assert.doesNotMatch(accessSource, /refetchOnWindowFocus: "always"/);
   assert.doesNotMatch(accessSource, /refetchInterval: 30_000/);
   assert.doesNotMatch(accessSource, /refetchIntervalInBackground: false/);

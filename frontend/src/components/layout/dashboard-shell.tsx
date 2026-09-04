@@ -11,6 +11,7 @@ import { Navbar } from "@/components/layout/navbar";
 import { BottomNav } from "@/components/layout/bottom-nav";
 import { DashboardSidebar } from "@/components/layout/dashboard-sidebar";
 import { LoadingLabel } from "@/components/ui/loading-label";
+import { useOptimisticNavigation } from "@/lib/hooks/useOptimisticNavigation";
 
 
 export function DashboardShell({ children }: { children: ReactNode }) {
@@ -21,6 +22,7 @@ function DashboardContent({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const pathname = usePathname();
   const router = useRouter();
+  useOptimisticNavigation(pathname);
   const { getMeSilently, isLoading, isLoggingOut, isSessionUnavailable, logout, user } = useAuth();
   const lockScrollToPanel =
     pathname === "/" ||

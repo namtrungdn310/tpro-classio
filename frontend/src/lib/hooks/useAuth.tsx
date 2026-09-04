@@ -58,10 +58,12 @@ export function AuthProvider({
   const [isSessionUnavailable, setIsSessionUnavailable] = useState(false);
   const lastWakeRefreshAtRef = useRef(0);
   const logoutInFlightRef = useRef(false);
+  const currentPrincipalRef = useRef<UserMe | null>(initialUser);
 
   const resetAuthState = useCallback(
     (broadcast = false) => {
       queryClient.clear();
+      currentPrincipalRef.current = null;
       setUser(null);
       setIsLoading(false);
       setIsSessionUnavailable(false);
@@ -75,6 +77,18 @@ export function AuthProvider({
   const loadUser = useCallback(async () => {
     try {
       const currentUser = await getMe();
+      const previousUser = currentPrincipalRef.current;
+      if (
+        previousUser &&
+        (previousUser.id !== currentUser.id ||
+          previousUser.workspace_id !== currentUser.workspace_id)
+      ) {
+        // Cached business data is tenant-owned. A workspace hand-off can keep
+        // the same authenticated user, so user ID alone is not a safe cache
+        // namespace. Clear atomically before exposing the new principal.
+        queryClient.clear();
+      }
+      currentPrincipalRef.current = currentUser;
       setUser(currentUser);
       setIsSessionUnavailable(false);
     } catch (error) {
@@ -107,6 +121,7 @@ export function AuthProvider({
 
     if (initialUser) {
       setUser(initialUser);
+      currentPrincipalRef.current = initialUser;
       setIsLoading(false);
       void loadUser();
       return;

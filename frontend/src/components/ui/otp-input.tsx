@@ -237,9 +237,9 @@ export const OtpInput = forwardRef<HTMLInputElement, OtpInputProps>(function Otp
           }}
           onPaste={(event) => handlePaste(index, event)}
           className={cn(
-            "otp-digit-text aspect-square w-full min-w-0 rounded-lg border border-gray-300 bg-white text-center text-gray-950 outline-none transition-[border-color,box-shadow,background-color] duration-150 enabled:hover:border-gray-400 focus:border-gray-500 focus:ring-2 focus:ring-gray-200 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-400",
+            "otp-digit-text aspect-square w-full min-w-0 rounded-lg border border-gray-300 bg-white text-center text-gray-950 outline-none transition-[border-color,box-shadow,background-color] duration-150 enabled:hover:border-gray-400 focus:border-gray-500 focus:ring-1 focus:ring-gray-200 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-400",
             layout === "compact" && "max-w-11",
-            invalid && "border-destructive focus:border-destructive focus:ring-destructive/15",
+            invalid && "border-destructive focus:!border-destructive focus:!ring-destructive/15",
           )}
         />
       ))}

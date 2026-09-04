@@ -6,7 +6,11 @@ import { useRouter } from "next/navigation";
 import { AuthBrand } from "@/components/layout/auth-brand";
 import { OtpInput } from "@/components/ui/otp-input";
 import { LoadingLabel } from "@/components/ui/loading-label";
-import { authInputClassName, authSubmitClassName } from "@/components/ui/auth-field";
+import {
+  authErrorInputClassName,
+  authInputClassName,
+  authSubmitClassName,
+} from "@/components/ui/auth-field";
 import { verifyLoginTotp, verifyLoginRecoveryCode } from "@/lib/api/auth";
 import { getApiErrorMessage } from "@/lib/api/errors";
 import { useAuth } from "@/lib/hooks/useAuth";
@@ -148,7 +152,11 @@ export default function LoginTotpPage() {
                   disabled={isSubmitting}
                   aria-invalid={Boolean(error)}
                   aria-describedby={error ? "login-recovery-error" : undefined}
-                  className={cn(authInputClassName, "h-10")}
+                  className={cn(
+                    authInputClassName,
+                    "h-10",
+                    error && authErrorInputClassName,
+                  )}
                 />
               </div>
 

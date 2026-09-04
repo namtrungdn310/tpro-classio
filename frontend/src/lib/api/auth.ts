@@ -21,6 +21,7 @@ export type AuthContinuationResponse = z.infer<typeof authContinuationSchema>;
 const userMeSchema = z
   .object({
     id: z.string().uuid(),
+    workspace_id: z.string().uuid(),
     email: z.string().email(),
     role: z.enum(["admin", "teacher", "dev"]),
     username: z.string().nullable(),
