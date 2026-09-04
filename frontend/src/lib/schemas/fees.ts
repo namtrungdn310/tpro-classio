@@ -74,6 +74,10 @@ export const feeRecordResponseSchema = z
     coverage_start: isoDateSchema.nullable().optional(),
     coverage_end: isoDateSchema.nullable().optional(),
     origin: z.string().max(80).nullable().optional(),
+    requires_review: z.boolean().default(false),
+    billing_review_id: z.string().uuid().nullable().default(null),
+    is_final_cycle: z.boolean().default(false),
+    final_cycle_reason: z.string().nullable().default(null),
     base_amount: amountSchema,
     discount_amount: amountSchema,
     final_amount: amountSchema,
@@ -212,6 +216,44 @@ export const feeRecordResponseSchema = z
       );
     }
   });
+
+export const billingReviewSchema = z.object({
+  id: z.string().uuid(),
+  enrollment_id: z.string().uuid(),
+  student_id: z.string().uuid(),
+  student_name: z.string().min(1),
+  student_code: z.string().nullable(),
+  class_id: z.string().uuid(),
+  class_name: z.string().min(1),
+  change_kind: z.enum(["ENROLLMENT_DATE_CHANGE", "PACKAGE_DURATION_CHANGE"]),
+  class_billing_cycle_revision_id: z.string().uuid().nullable(),
+  previous_date: isoDateSchema.nullable(),
+  next_date: isoDateSchema,
+  previous_weeks: z.number().int().min(1).nullable(),
+  next_weeks: z.number().int().min(1).nullable(),
+  next_due_date: isoDateSchema,
+  state: z.enum(["PENDING", "CONFIRMED", "SUPERSEDED"]),
+  reason: z.string().min(1),
+  created_at: isoDateTimeSchema,
+  fees: z.array(
+    z.object({
+      id: z.string().uuid(),
+      due_date: isoDateSchema.nullable(),
+      coverage_start: isoDateSchema.nullable(),
+      coverage_end: isoDateSchema.nullable(),
+      amount: amountSchema,
+      status: z.string(),
+      cancellable: z.boolean(),
+      blocked_reason: z.string().nullable(),
+      is_final_cycle: z.boolean(),
+    }),
+  ),
+});
+
+export const billingReviewListResponseSchema = z.object({
+  reviews: z.array(billingReviewSchema),
+  pending_count: z.number().int().nonnegative(),
+});
 
 export const feeRecordListResponseSchema = z
   .object({

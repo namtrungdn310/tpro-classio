@@ -285,6 +285,12 @@ export function FeesTable({
               >
                 <SelectableFeeValue value={group.student_name} />
                 {group.student_status === "archived" ? <StudentStoppedBadge /> : null}
+                {group.records.some((record) => record.requires_review) ? (
+                  <span className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-primary">
+                    <span aria-hidden="true">!</span>
+                    Vừa đổi ngày bắt đầu · cần kiểm tra
+                  </span>
+                ) : null}
               </div>
               <div
                 role="cell"
@@ -926,7 +932,7 @@ function FeeWorkspaceRail({
         const direction = event.key === "ArrowUp" ? -1 : 1;
         buttons[(currentIndex + direction + buttons.length) % buttons.length]?.focus();
       }}
-      className="flex w-[184px] shrink-0 flex-col gap-1 rounded-xl border border-gray-200 bg-white p-2 shadow-xl shadow-gray-900/15"
+      className="flex w-max max-w-[calc(100vw-2rem)] shrink-0 flex-col gap-1 rounded-xl border border-gray-200 bg-white p-1.5 shadow-xl shadow-gray-900/15"
     >
       {items.map((item) => (
         <FeeRailTabButton
@@ -988,7 +994,7 @@ function FeeRailTabButton({
       tabIndex={active ? 0 : -1}
       onClick={onSelect}
       className={cn(
-        "font-ui relative flex h-11 min-h-11 w-full shrink-0 cursor-pointer items-center gap-2.5 rounded-lg px-2.5 text-left text-[14px] font-semibold leading-5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40",
+        "font-ui relative flex h-9 min-h-9 w-full shrink-0 cursor-pointer items-center justify-start overflow-hidden rounded-lg pl-4 pr-3.5 py-1.5 text-left text-[14px] font-semibold leading-5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40",
         active
           ? "bg-primary-soft text-primary"
           : "text-gray-600 hover:bg-primary-soft/70 hover:text-primary",
@@ -999,13 +1005,12 @@ function FeeRailTabButton({
         <span
           aria-hidden="true"
           className={cn(
-            "absolute inset-y-2 left-0.5 w-0.5 rounded-full",
+            "absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full",
             "bg-primary",
           )}
         />
       ) : null}
-      {item.icon}
-      <span className="min-w-0 flex-1 whitespace-nowrap">{item.label}</span>
+      <span className="whitespace-nowrap">{item.label}</span>
     </button>
   );
 }
@@ -1029,15 +1034,14 @@ function FeeMobileRailTabButton({
       tabIndex={active ? 0 : -1}
       onClick={onSelect}
       className={cn(
-        "font-ui relative inline-flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2.5 text-[13px] font-semibold leading-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40",
+        "font-ui relative inline-flex h-8 shrink-0 cursor-pointer items-center rounded-md px-2.5 text-[13px] font-semibold leading-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40",
         active
           ? "bg-primary text-primary-foreground"
           : "text-gray-600 hover:bg-primary-soft/70 hover:text-primary",
         item.disabled && "cursor-not-allowed opacity-45",
       )}
     >
-      {item.icon}
-      {item.label}
+      <span className="whitespace-nowrap">{item.label}</span>
     </button>
   );
 }

@@ -20,6 +20,7 @@ import { EarlyPaymentPanel } from "@/components/fees/early-payment-panel";
 import { FeesPageSkeleton } from "@/components/fees/fees-skeleton";
 import { FeesTable } from "@/components/fees/fees-table";
 import { HeaderControlsPortal } from "@/components/layout/header-controls-portal";
+import { HeaderLoadingStatus } from "@/components/layout/header-loading-status";
 import { HeaderFilterControls } from "@/components/layout/header-filter-controls";
 import { ConfirmationDialog } from "@/components/ui/confirmation-dialog";
 import { Button } from "@/components/ui/button";
@@ -37,6 +38,7 @@ import {
   getFeeMessageDraft,
   getFeePaymentCapabilities,
   getPaymentRequests,
+  getBillingReviews,
   notifyFeeRecords,
   payFeeRecords,
   refundFeeRecords,
@@ -46,8 +48,10 @@ import {
   syncFeeRecords,
   unnotifyFeeRecords,
   unpayFeeRecords,
+  resolveBillingReview,
   updateFeeMessageTemplates,
 } from "@/lib/api/fees";
+import { BillingReviewNotice } from "@/components/fees/billing-review-notice";
 import { useAuth } from "@/lib/hooks/useAuth";
 import { isManagementUser } from "@/lib/auth/permissions";
 import { usePersistentState } from "@/lib/hooks/usePersistentState";
@@ -158,7 +162,7 @@ export default function FeesPage() {
     queryKey: ["banking-overview"],
     queryFn: () => getBankingOverview(),
     enabled: Boolean(user) && isAdmin,
-    staleTime: 15_000,
+    staleTime: 60_000,
   });
   const activeBankAccounts = useMemo(
     () => (bankingQuery.data?.accounts ?? []).filter((account) => account.is_active),
@@ -183,7 +187,7 @@ export default function FeesPage() {
     queryKey: ["payment-requests"],
     queryFn: () => getPaymentRequests(),
     enabled: Boolean(user) && isAdmin,
-    staleTime: 10_000,
+    staleTime: 30_000,
   });
 
   const messageTemplatesQuery = useQuery({
@@ -196,6 +200,43 @@ export default function FeesPage() {
       queryClient.getQueryState(["fee-message-templates"])?.dataUpdatedAt,
   });
 
+  const billingReviewsQuery = useQuery({
+    queryKey: ["fees", "billing-reviews", "pending"],
+    queryFn: getBillingReviews,
+    enabled: Boolean(user) && isAdmin,
+    staleTime: 60_000,
+  });
+
+  const resolveBillingReviewMutation = useMutation({
+    mutationFn: async ({
+      reviewId,
+      decision,
+      feeRecordIds,
+      reason,
+    }: {
+      reviewId: string;
+      decision: "CONFIRM" | "WAIVE_CHARGE";
+      feeRecordIds?: string[];
+      reason?: string;
+    }) =>
+      resolveBillingReview(reviewId, {
+        decision,
+        fee_record_ids: feeRecordIds,
+        reason,
+      }),
+    onSuccess: (_result, variables) => {
+      void queryClient.invalidateQueries({ queryKey: ["fees"] });
+      void queryClient.invalidateQueries({ queryKey: ["reports"] });
+      notify.success(
+        variables.decision === "CONFIRM"
+          ? "Đã xác nhận lịch thu mới. Khoản học phí có thể được báo và thu."
+          : "Đã hủy khoản thu. Hệ thống sẽ không tự tạo lại khoản này.",
+      );
+    },
+    onError: (error) =>
+      notify.error(getApiErrorMessage(error, "Không thể xử lý thay đổi học phí.")),
+  });
+
   const [periodYear, periodMonth] = period.split("-");
   const isInvalidPeriod = !/^\d{4}-(0[1-9]|1[0-2])$/.test(period);
 
@@ -203,9 +244,7 @@ export default function FeesPage() {
     queryKey: ["fees", { period }],
     queryFn: () => getFeeRecords({ period }),
     enabled: Boolean(user) && !isInvalidPeriod,
-    staleTime: 10_000,
-    refetchInterval: 30_000,
-    refetchIntervalInBackground: false,
+    staleTime: 2 * 60_000,
     initialData: () => queryClient.getQueryData(["fees", { period }]),
     initialDataUpdatedAt: () =>
       queryClient.getQueryState(["fees", { period }])?.dataUpdatedAt,
@@ -215,16 +254,14 @@ export default function FeesPage() {
     queryKey: ["fees", "outstanding"],
     queryFn: getOutstandingFeeRecords,
     enabled: Boolean(user),
-    staleTime: 10_000,
-    refetchInterval: 30_000,
-    refetchIntervalInBackground: false,
+    staleTime: 2 * 60_000,
   });
 
   const upcomingFeesQuery = useQuery({
     queryKey: ["fees", "upcoming", { class_id: classId ?? null }],
     queryFn: () => getUpcomingFeeRecords(classId || undefined),
     enabled: Boolean(user),
-    staleTime: 10_000,
+    staleTime: 2 * 60_000,
   });
 
   const isOutstandingView = workspaceView === "outstanding";
@@ -611,18 +648,30 @@ export default function FeesPage() {
     null;
   const hasFeeData = activeFeeData !== undefined;
   const hasClassData = classesQuery.data !== undefined;
-  const hasMessageTemplateData = messageTemplatesQuery.data !== undefined;
+  const isTabCountInitialLoading = Boolean(
+    (outstandingFeesQuery.isPending && outstandingFeesQuery.data === undefined) ||
+      (upcomingFeesQuery.isPending && upcomingFeesQuery.data === undefined),
+  );
+  const isEarlyPaymentInitialLoading = Boolean(
+    workspaceView === "early" &&
+      isAdmin &&
+      ((paymentCapabilitiesQuery.isPending &&
+        paymentCapabilitiesQuery.data === undefined) ||
+        (paymentRequestsQuery.isPending &&
+          paymentRequestsQuery.data === undefined) ||
+        (bankingQuery.isPending && bankingQuery.data === undefined)),
+  );
   const isInitialLoading =
-    isLedgerView &&
     Boolean(user) &&
     !hasInvalidActivePeriod &&
     (
-      (!hasFeeData &&
-        (activeFeesPending ||
-          activeFeesFetching ||
-          (!isOutstandingView && syncMutation.isPending))) ||
-      (!hasClassData && classesQuery.isPending) ||
-      (isAdmin && !hasMessageTemplateData && messageTemplatesQuery.isPending)
+      isEarlyPaymentInitialLoading ||
+      (isLedgerView &&
+        ((!hasFeeData &&
+          (activeFeesPending ||
+            activeFeesFetching ||
+            (!isOutstandingView && syncMutation.isPending))) ||
+          (!hasClassData && classesQuery.isPending)))
     );
   const hasBlockingFeeError =
     isLedgerView &&
@@ -782,6 +831,9 @@ export default function FeesPage() {
           {filterControls}
           {messageTemplateButton}
           {exportButton}
+          <HeaderLoadingStatus
+            isLoading={Boolean(isLedgerView && (isInitialLoading || activeFeesFetching || classesQuery.isFetching))}
+          />
         </div>
       </HeaderControlsPortal>
 
@@ -808,6 +860,7 @@ export default function FeesPage() {
           ).size
         }
         upcomingCount={upcomingFeesQuery.data?.records.length ?? 0}
+        isLoading={isTabCountInitialLoading}
       />
 
       <div
@@ -858,6 +911,28 @@ export default function FeesPage() {
           <FeesPageSkeleton isAdmin={isAdmin} />
         ) : (
           <>
+            {isLedgerView && isAdmin ? (
+              <BillingReviewNotice
+                reviews={billingReviewsQuery.data?.reviews ?? []}
+                isLoading={billingReviewsQuery.isPending}
+                isResolving={resolveBillingReviewMutation.isPending}
+                onConfirm={(review) =>
+                  resolveBillingReviewMutation.mutate({
+                    reviewId: review.id,
+                    decision: "CONFIRM",
+                  })
+                }
+                onWaive={(review, fee, reason) =>
+                  resolveBillingReviewMutation.mutate({
+                    reviewId: review.id,
+                    decision: "WAIVE_CHARGE",
+                    feeRecordIds: [fee.id],
+                    reason,
+                  })
+                }
+              />
+            ) : null}
+
             {isLedgerView && hasFeeData && !hasInvalidActivePeriod && !hasBlockingLoadError ? (
               <FeeReportPanel
                 activeClassId={classId}
@@ -922,7 +997,7 @@ export default function FeesPage() {
                     }}
                   >
                     {activeFeesFetching
-                      ? <LoadingLabel label="Đang cập nhật" />
+                      ? <LoadingLabel label="Đang tải" />
                       : "Cập nhật lại"}
                   </button>
                 </div>
@@ -1178,7 +1253,7 @@ export default function FeesPage() {
                       value={settlementAccountId}
                       onChange={(event) => setSettlementAccountId(event.target.value)}
                       disabled={isConfirmationMutationPending}
-                      className="form-input-text mt-1 h-9 w-full rounded-md border border-gray-200 bg-white px-2.5 text-sm text-gray-900 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-wait disabled:opacity-60"
+                      className="form-input-text mt-1 h-9 w-full rounded-md border border-gray-200 bg-white px-2.5 text-sm text-gray-900 outline-none transition focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:cursor-wait disabled:opacity-60"
                     >
                       <option value="">Chọn tài khoản đã nhận tiền</option>
                       {activeBankAccounts.map((account) => (
@@ -1221,7 +1296,7 @@ export default function FeesPage() {
                         aria-pressed={selected}
                         disabled={isConfirmationMutationPending}
                         onClick={() => setUnpayTargetState(option.value)}
-                        className={`form-input-text h-full min-w-0 rounded-[5px] px-3 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40 ${
+                        className={`form-input-text h-full min-w-0 rounded-[5px] px-3 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/40 ${
                           selected
                             ? "bg-primary text-primary-foreground"
                             : "text-gray-600 hover:bg-primary-soft hover:text-primary"
@@ -1334,11 +1409,13 @@ function FeeWorkspaceTabs({
   onChange,
   outstandingCount,
   upcomingCount,
+  isLoading,
 }: {
   activeView: FeeWorkspaceView;
   onChange: (view: FeeWorkspaceView) => void;
   outstandingCount: number;
   upcomingCount: number;
+  isLoading: boolean;
 }) {
   const tabs = [
     {
@@ -1397,7 +1474,9 @@ function FeeWorkspaceTabs({
             </span>
             {tab.count !== undefined ? (
               <span className={`inline-flex min-w-4 shrink-0 items-center justify-center text-xs font-semibold tabular-nums ${selected ? "text-primary" : "text-gray-500"}`}>
-                {tab.count}
+                {isLoading ? (
+                  <span className="h-3 w-4 animate-pulse rounded bg-gray-200" aria-hidden="true" />
+                ) : tab.count}
               </span>
             ) : null}
           </button>

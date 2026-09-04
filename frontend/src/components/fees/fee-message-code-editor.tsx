@@ -100,7 +100,6 @@ export const FeeMessageCodeEditor = forwardRef<FeeMessageCodeEditorHandle, Props
                   : {}),
                 ...(initialAria.ariaInvalid ? { "aria-invalid": "true" } : {}),
                 ...(initialAria.ariaLabel ? { "aria-label": initialAria.ariaLabel } : {}),
-                "data-unified-caret-opt-out": "true",
                 "data-selection-policy": "preserve",
               }),
               EditorView.updateListener.of((update) => {
@@ -110,7 +109,7 @@ export const FeeMessageCodeEditor = forwardRef<FeeMessageCodeEditorHandle, Props
               EditorView.theme({
                 "&": { height: "13rem", fontSize: "16px", backgroundColor: disabled ? "#f9fafb" : "white" },
                 ".cm-scroller": { overflow: "auto", fontFamily: "inherit", lineHeight: "1.5" },
-                ".cm-content": { padding: "10px 12px", caretColor: "#0b3996" },
+                ".cm-content": { padding: "10px 12px" },
                 ".cm-gutters": { backgroundColor: "#fbfcfe", color: "#98a2b3", borderRight: "1px solid #e5e7eb" },
                 ".cm-lineNumbers .cm-gutterElement": { minWidth: "2.5rem", padding: "0 10px 0 6px" },
                 ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "transparent" },
@@ -150,8 +149,10 @@ export const FeeMessageCodeEditor = forwardRef<FeeMessageCodeEditorHandle, Props
     return (
       <div
         className={cn(
-          "mt-2 h-52 w-full overflow-hidden rounded-lg border bg-white transition focus-within:border-primary/60 focus-within:ring-2 focus-within:ring-primary/15",
-          ariaInvalid ? "border-destructive ring-2 ring-destructive/15" : "border-gray-200",
+          "mt-2 h-52 w-full overflow-hidden rounded-lg border bg-white transition focus-within:ring-1",
+          ariaInvalid
+            ? "border-destructive focus-within:!border-destructive focus-within:!ring-destructive/15"
+            : "border-gray-200 focus-within:border-primary/60 focus-within:ring-primary/15",
         )}
       >
         <div ref={hostRef} className="h-full" />

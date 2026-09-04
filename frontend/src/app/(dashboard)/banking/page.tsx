@@ -13,6 +13,7 @@ import {
   useState,
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import BankingLoading from "./loading";
 import {
   RiBankCardLine,
   RiAddLine,
@@ -62,6 +63,7 @@ import { createSmartSearchMatcher } from "@/lib/utils/search";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/components/providers/toast-provider";
 import { HeaderControlsPortal } from "@/components/layout/header-controls-portal";
+import { HeaderLoadingStatus } from "@/components/layout/header-loading-status";
 import { Button } from "@/components/ui/button";
 import { ConfirmationDialog } from "@/components/ui/confirmation-dialog";
 import {
@@ -191,7 +193,7 @@ export default function BankingPage() {
     queryKey: ["banking-overview", "self"],
     queryFn: getBankingOverview,
     enabled: Boolean(user) && isManagementUser(user),
-    staleTime: 15_000,
+    staleTime: 60_000,
   });
   const pay2sBanksQuery = useQuery({
     queryKey: ["pay2s-supported-banks"],
@@ -380,6 +382,10 @@ export default function BankingPage() {
     [],
   );
   if (!user || !isManagementUser(user)) return null;
+  const isInitialLoading = [overviewQuery, pay2sBanksQuery].some(
+    (query) => query.isPending && query.data === undefined,
+  );
+  if (isInitialLoading) return <BankingLoading />;
 
   function submitProvider(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -490,6 +496,7 @@ export default function BankingPage() {
             <RiAddLine className="h-3.5 w-3.5" aria-hidden="true" />
             Thêm tài khoản
           </Button>
+          <HeaderLoadingStatus isLoading={overviewQuery.isFetching} />
         </div>
       </HeaderControlsPortal>
 

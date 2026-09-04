@@ -10,6 +10,8 @@ import {
   feeTransactionBatchResponseSchema,
   paymentRequestListResponseSchema,
   paymentRequestResponseSchema,
+  billingReviewListResponseSchema,
+  billingReviewSchema,
 } from "@/lib/schemas/fees";
 import { verifyFeeTransactionBatch } from "@/lib/fees/transaction-integrity";
 import type {
@@ -32,7 +34,31 @@ import type {
   PaymentRequestShareChannel,
   PaymentRequestListResponse,
   PaymentRequestStatus,
+  BillingReview,
+  BillingReviewListResponse,
 } from "@/lib/types";
+
+export async function getBillingReviews(): Promise<BillingReviewListResponse> {
+  const { data } = await apiClient.get<unknown>("/fees/billing-reviews", {
+    params: { state: "PENDING" },
+  });
+  return billingReviewListResponseSchema.parse(data);
+}
+
+export async function resolveBillingReview(
+  reviewId: string,
+  payload: {
+    decision: "CONFIRM" | "WAIVE_CHARGE";
+    fee_record_ids?: string[];
+    reason?: string;
+  },
+): Promise<BillingReview> {
+  const { data } = await apiClient.post<unknown>(
+    `/fees/billing-reviews/${reviewId}/resolve`,
+    { ...payload, request_id: crypto.randomUUID() },
+  );
+  return billingReviewSchema.parse(data);
+}
 
 type GetFeesParams = {
   period: string;

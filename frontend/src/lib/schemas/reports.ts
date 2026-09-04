@@ -8,6 +8,10 @@ export const feeOperationActionSchema = z.enum([
   "refund",
   "refund_reversal",
   "sync",
+  "sync_void",
+  "supersede",
+  "anchor_recalculation",
+  "billing_cycle_change",
   "template_update",
 ]);
 

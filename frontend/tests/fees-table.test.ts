@@ -258,7 +258,7 @@ test("payment reversal remains explicit in the contextual action workspace", () 
   assert.doesNotMatch(source, /\sdisabled=\{isUnpayDisabled\}/);
   assert.doesNotMatch(source, /linear-gradient/);
   assert.match(source, /FeeActionWorkspace/);
-  assert.match(source, /w-\[184px\]/);
+  assert.match(source, /w-max max-w-\[calc\(100vw-2rem\)\]/);
   assert.match(source, /whitespace-nowrap/);
   assert.match(source, /sm:max-w-\[640px\]/);
   assert.match(source, /sm:h-\[min\(680px,calc\(100dvh-2rem\)\)\]/);

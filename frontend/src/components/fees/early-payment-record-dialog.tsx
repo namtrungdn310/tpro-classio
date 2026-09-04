@@ -100,7 +100,7 @@ export function EarlyPaymentRecordDialog({
                   value={accountId}
                   disabled={isPending || accountOptions.length === 0}
                   onChange={(event) => setAccountId(event.target.value)}
-                  className="form-input-text h-10 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-gray-900 outline-none transition focus:border-primary/60 focus:ring-2 focus:ring-primary/15 disabled:cursor-not-allowed disabled:bg-gray-50"
+                  className="form-input-text h-10 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-gray-900 outline-none transition focus:border-primary/60 focus:ring-1 focus:ring-primary/15 disabled:cursor-not-allowed disabled:bg-gray-50"
                 >
                   {accountOptions.length === 0 ? (
                     <option value="">Chưa có tài khoản nhận tiền</option>

@@ -19,6 +19,10 @@ const ACTION_LABELS: Record<FeeOperationAction, string> = {
   refund: "Hoàn học phí",
   refund_reversal: "Hoàn tác hoàn phí",
   sync: "Đồng bộ học phí",
+  sync_void: "Hủy khoản đồng bộ",
+  supersede: "Thay thế lịch thu",
+  anchor_recalculation: "Tính lại lịch thu",
+  billing_cycle_change: "Đổi thời lượng gói",
   template_update: "Cập nhật mẫu nhắc phí",
 };
 

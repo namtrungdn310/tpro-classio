@@ -491,7 +491,7 @@ function FeeRefundDialogContent({
                       data-col={0}
                       className={cn(
                         formTextControlClassName,
-                        "mt-1 block h-16 min-h-16 w-full resize-none py-2 leading-5",
+                        "mt-1.5 block h-16 min-h-16 w-full resize-none py-2 leading-5",
                       )}
                     />
                   </label>
@@ -773,7 +773,11 @@ function RefundHistorySection({
                       aria-invalid={Boolean(reversalError)}
                       aria-describedby={reversalError ? reversalErrorId : undefined}
                       placeholder="Ví dụ: Nhập nhầm số tiền hoàn"
-                      className={cn(formTextControlClassName, "mt-1.5")}
+                      className={cn(
+                        formTextControlClassName,
+                        "mt-1.5",
+                        reversalError && formTextControlErrorClassName,
+                      )}
                     />
                   </label>
                   <p

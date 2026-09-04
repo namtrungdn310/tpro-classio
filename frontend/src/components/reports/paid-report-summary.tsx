@@ -15,7 +15,7 @@ export function PaidReportSummaryBand({ isRefreshing, summary }: PaidReportSumma
         <div className="min-w-0 border-b border-gray-100 pb-3 sm:col-span-2 xl:col-span-1 xl:border-b-0 xl:border-r xl:pb-0 xl:pr-5">
           <div className="flex min-h-5 items-center gap-2">
             <p className="text-[13px] font-medium text-gray-500">Thực thu</p>
-            {isRefreshing ? <span role="status" className="text-[13px] text-gray-500"><LoadingLabel label="Đang cập nhật" /></span> : null}
+            {isRefreshing ? <span role="status" className="text-[13px] text-gray-500"><LoadingLabel label="Đang tải" /></span> : null}
           </div>
           <p className="metric-money mt-0.5 text-2xl font-semibold leading-8 text-gray-950 sm:text-[26px]">
             {formatCurrency(summary.net_amount)}

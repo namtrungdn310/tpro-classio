@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   keepPreviousData,
@@ -10,6 +10,7 @@ import {
 } from "@tanstack/react-query";
 import { RiReceiptLine as ReceiptText } from "react-icons/ri";
 import { HeaderControlsPortal } from "@/components/layout/header-controls-portal";
+import { HeaderLoadingStatus } from "@/components/layout/header-loading-status";
 import { HeaderFilterControls } from "@/components/layout/header-filter-controls";
 import { useToast } from "@/components/providers/toast-provider";
 import { PaidReceiptDetail } from "@/components/reports/paid-receipt-detail";
@@ -94,7 +95,9 @@ export default function ReportPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const requestedView = searchParams.get("view");
-  const view: ReportView = requestedView === "operations" || requestedView === "reconciliation" ? requestedView : "receipts";
+  const routeView: ReportView = requestedView === "operations" || requestedView === "reconciliation" ? requestedView : "receipts";
+  const [view, setLocalView] = useState<ReportView>(routeView);
+  const [isNavigationPending, startNavigationTransition] = useTransition();
   const debouncedSearch = useDebouncedValue(search, 250);
   const [period, setPeriod] = useState("");
   const [range, setRange] = useState("");
@@ -104,14 +107,22 @@ export default function ReportPage() {
   const [refundState, setRefundState] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
+
+  useEffect(() => {
+    if (!isNavigationPending) setLocalView(routeView);
+  }, [isNavigationPending, routeView]);
+
   const setView = useCallback((nextView: ReportView) => {
     const params = new URLSearchParams(searchParams.toString());
     if (nextView === "receipts") params.delete("view");
     else params.set("view", nextView);
     setSelectedId(null);
+    setLocalView(nextView);
     const query = params.toString();
-    router.replace(query ? `/report?${query}` : "/report", { scroll: false });
-  }, [router, searchParams]);
+    startNavigationTransition(() => {
+      router.replace(query ? `/report?${query}` : "/report", { scroll: false });
+    });
+  }, [router, searchParams, startNavigationTransition]);
   const dates = useMemo(() => getDateRange(range), [range]);
 
   const filters = useMemo<FeePaidReceiptFilters>(
@@ -162,7 +173,7 @@ export default function ReportPage() {
     initialPageParam: "",
     getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
     enabled: Boolean(user) && view === "receipts",
-    staleTime: 30_000,
+    staleTime: 2 * 60_000,
     placeholderData: keepPreviousData,
   });
 
@@ -270,7 +281,16 @@ export default function ReportPage() {
     : view === "operations"
       ? Boolean(search || period || range || operationAction)
       : false;
-  const isInitialLoading = receiptsQuery.isPending && !receiptsQuery.data;
+  const isPeriodOptionsInitialLoading = Boolean(
+    view !== "reconciliation" &&
+      periodsQuery.isPending &&
+      periodsQuery.data === undefined,
+  );
+  const isInitialLoading = Boolean(
+    view === "receipts" &&
+      ((receiptsQuery.isPending && !receiptsQuery.data) ||
+        isPeriodOptionsInitialLoading),
+  );
   const isInitialError = receiptsQuery.isError && !receiptsQuery.data;
   const exportFilterLabel = useMemo(() => {
     const labels = [
@@ -326,6 +346,9 @@ export default function ReportPage() {
               isExporting={isExporting}
               onClick={() => void handleExport()}
             />
+            <HeaderLoadingStatus
+              isLoading={isNavigationPending || isPeriodOptionsInitialLoading || (receiptsQuery.isFetching && !receiptsQuery.isFetchingNextPage)}
+            />
           </div>
         </HeaderControlsPortal>
       ) : null}
@@ -341,7 +364,9 @@ export default function ReportPage() {
       </div>
 
       <section className="flex h-full min-h-[calc(100dvh-9.5rem)] flex-col overflow-hidden rounded-xl border border-gray-200 bg-white md:min-h-0">
-        {view === "receipts" ? (
+        {isPeriodOptionsInitialLoading ? (
+          <ReportPageSkeleton />
+        ) : view === "receipts" ? (
           isInitialLoading ? <ReportPageSkeleton /> : isInitialError ? (
             <DataSectionError
               className="min-h-0 flex-1 rounded-none border-0"
