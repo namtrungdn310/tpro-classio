@@ -283,6 +283,10 @@ export function formatManualDateInput(raw: string) {
     const m = parts[1]?.replace(/\D/g, "").slice(0, 2) ?? "";
     const y = parts[2]?.replace(/\D/g, "").slice(0, 4) ?? "";
 
+    // Deleting every digit from a formatted value must also remove the
+    // separators; otherwise the controlled field gets stuck at "//".
+    if (!d && !m && !y) return "";
+
     if (parts.length === 1) return d;
     if (parts.length === 2) return `${d}/${m}`;
     return `${d}/${m}/${y}`;

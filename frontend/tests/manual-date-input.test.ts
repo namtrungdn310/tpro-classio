@@ -31,6 +31,10 @@ test("manual dates slash-aware formatting preserves day, month and year during i
   assert.equal(formatManualDateInput("04/08/2027"), "04/08/2027");
 });
 
+test("manual dates remove separators after the final digit is deleted", () => {
+  assert.equal(formatManualDateInput("//"), "");
+});
+
 test("manual dates emit ISO only for real calendar dates", () => {
   assert.equal(displayToIsoDate("01/09/2026"), "2026-09-01");
   assert.equal(displayToIsoDate("31/02/2026"), null);
