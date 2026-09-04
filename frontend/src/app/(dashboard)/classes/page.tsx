@@ -1,6 +1,6 @@
 "use client";
 
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RiAddLine as Plus, RiGraduationCapLine as GraduationCap, RiSearchLine as SearchX } from "react-icons/ri";
 import { ClassFormDialog } from "@/components/classes/class-form-dialog";
@@ -80,6 +80,7 @@ export default function ClassesPage() {
   const [selectedDay, setSelectedDay] = useState("");
   const [courseDuration, setCourseDuration] = useState("");
   const [isCreateFormOpen, setIsCreateFormOpen] = useState(false);
+  const createSubmissionLockedRef = useRef(false);
   const [isExporting, setIsExporting] = useState(false);
   const [workspace, setWorkspace] = useState<ClassWorkspaceState | null>(null);
   const [pendingStartDateChange, setPendingStartDateChange] = useState<{
@@ -131,6 +132,9 @@ export default function ClassesPage() {
       setScope("operational");
     },
     onError: (error) => notify.error(getApiErrorMessage(error, "Không thể thêm lớp học.")),
+    onSettled: () => {
+      createSubmissionLockedRef.current = false;
+    },
   });
   const updateMutation = useMutation({
     mutationFn: async ({ id, values, current }: { id: string; values: ClassUpdate; current: ClassResponse }) => {
@@ -200,7 +204,13 @@ export default function ClassesPage() {
     onError: (error) => notify.error(getApiErrorMessage(error, "Không thể tạo lớp kế tiếp.")),
   });
   function openCreateForm() {
+    createSubmissionLockedRef.current = false;
     setIsCreateFormOpen(true);
+  }
+  function createClassOnce(payload: ClassCreate) {
+    if (createSubmissionLockedRef.current) return;
+    createSubmissionLockedRef.current = true;
+    createMutation.mutate(payload);
   }
   function openClassWorkspace(class_: ClassResponse) {
     const canEdit = isAdmin && isOperationalScope && class_.can_edit === true;
@@ -288,7 +298,7 @@ export default function ClassesPage() {
       {!isInitialLoading && !hasBlockingError && classes.length > 0 && filteredClasses.length === 0 ? <DataSectionEmpty className="md:h-full" icon={SearchX} title="Không tìm thấy lớp phù hợp" description="Thử từ khóa khác hoặc xóa các bộ lọc đang áp dụng." actionLabel={hasFilters ? "Xóa tìm kiếm và bộ lọc" : undefined} onAction={hasFilters ? clearFilters : undefined} /> : null}
       {!isInitialLoading && !hasBlockingError && filteredClasses.length > 0 ? <ClassesTable classes={filteredClasses} scope={scope} selectedDay={selectedDay} onRowClick={openClassWorkspace} onPostponedClick={openClassHistory} /> : null}
     </div>
-    {isCreateFormOpen && isAdmin ? <ClassFormDialog class_={null} teachers={staffOptionsQuery.data ?? []} isTeachersLoading={staffOptionsQuery.isPending && staffOptionsQuery.data === undefined} isTeachersError={staffOptionsQuery.isError} isSaving={createMutation.isPending} onClose={() => setIsCreateFormOpen(false)} onRetryTeachers={() => void staffOptionsQuery.refetch()} onSubmit={(payload) => createMutation.mutate(payload as ClassCreate)} /> : null}
+    {isCreateFormOpen && isAdmin ? <ClassFormDialog class_={null} teachers={staffOptionsQuery.data ?? []} isTeachersLoading={staffOptionsQuery.isPending && staffOptionsQuery.data === undefined} isTeachersError={staffOptionsQuery.isError} isSaving={createMutation.isPending} onClose={() => setIsCreateFormOpen(false)} onRetryTeachers={() => void staffOptionsQuery.refetch()} onSubmit={(payload) => createClassOnce(payload as ClassCreate)} /> : null}
     {workspace ? (
       <ClassWorkspaceDialog
         class_={workspace.class}
