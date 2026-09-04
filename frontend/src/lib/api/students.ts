@@ -3,6 +3,7 @@ import {
   enrollmentResponseSchema,
   studentIdentityConflictSchema,
   studentListPageResponseSchema,
+  studentMembershipPreviewResponseSchema,
   studentResponseSchema,
   studentScopeSummarySchema,
 } from "@/lib/schemas/student";
@@ -17,6 +18,8 @@ import type {
   StudentListPageResponse,
   StudentListState,
   StudentMembershipCommand,
+  StudentMembershipPreviewRequest,
+  StudentMembershipPreviewResponse,
   StudentScopeSummary,
   StudentStatus,
 } from "@/lib/types";
@@ -84,11 +87,29 @@ export function getStudentIdentityConflict(
   return parsed.success ? parsed.data : null;
 }
 
+export async function previewStudentMembership(
+  id: string,
+  data: StudentMembershipPreviewRequest,
+  options?: { signal?: AbortSignal }
+): Promise<StudentMembershipPreviewResponse> {
+  const response = await apiClient.post<unknown>(
+    `/students/${id}/membership-command/preview`,
+    data,
+    {
+      timeout: 30_000,
+      signal: options?.signal,
+    }
+  );
+  return studentMembershipPreviewResponseSchema.parse(response.data);
+}
+
 export async function applyStudentMembershipCommand(
   id: string,
   data: StudentMembershipCommand,
 ): Promise<StudentResponse> {
-  const response = await apiClient.post<unknown>(`/students/${id}/membership-command`, data);
+  const response = await apiClient.post<unknown>(`/students/${id}/membership-command`, data, {
+    timeout: 60_000,
+  });
   return studentResponseSchema.parse(response.data);
 }
 
@@ -103,8 +124,12 @@ export async function archiveStudent(
 export async function restoreStudent(
   id: string,
   reason: string,
+  expected_updated_at: string,
 ): Promise<StudentResponse> {
-  const response = await apiClient.post<unknown>(`/students/${id}/restore`, { reason });
+  const response = await apiClient.post<unknown>(`/students/${id}/restore`, {
+    reason,
+    expected_updated_at,
+  });
   return studentResponseSchema.parse(response.data);
 }
 

@@ -4,7 +4,6 @@ import { useDeferredValue, useMemo, useRef } from "react";
 import {
   RiArrowRightSLine as ChevronRight,
   RiGraduationCapLine as GraduationCap,
-  RiLoader4Line as LoaderCircle,
   RiRefreshLine as RefreshCw,
   RiSearchLine as SearchX,
   RiTeamLine as UsersRound,
@@ -12,6 +11,7 @@ import {
 import { HeaderControlsPortal } from "@/components/layout/header-controls-portal";
 import { HeaderFilterControls } from "@/components/layout/header-filter-controls";
 import { DataSectionEmpty, DataSectionError } from "@/components/ui/data-section-state";
+import { LoadingLabel } from "@/components/ui/loading-label";
 import type { ClassResponse, ClassType } from "@/lib/types";
 import { getClassGroupInfoForRecord } from "@/lib/classes/presentation";
 import { formatCurrency, getCourseWeeks } from "@/lib/utils/format";
@@ -133,9 +133,8 @@ export function ClassSelectionView({
           {filterControls}
           <ActiveClassStatus label={resultLabel} hasActiveClasses={classes.length > 0} />
           {isRefreshing ? (
-            <span className="caption-text hidden items-center gap-1.5 text-gray-500 2xl:inline-flex">
-              <LoaderCircle className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
-              <span role="status">Đang cập nhật</span>
+            <span className="caption-text inline-flex shrink-0 items-center gap-1.5 text-gray-500">
+              <LoadingLabel label="Đang tải" />
             </span>
           ) : null}
         </div>
@@ -145,6 +144,11 @@ export function ClassSelectionView({
         <div className="flex min-w-0 items-center gap-2">
           {filterControls}
           <ActiveClassStatus label={resultLabel} hasActiveClasses={classes.length > 0} compact />
+          {isRefreshing ? (
+            <span className="caption-text inline-flex shrink-0 items-center text-gray-500">
+              <LoadingLabel label="Đang tải" />
+            </span>
+          ) : null}
         </div>
         <p className="caption-text px-0.5 text-gray-500">Chọn một lớp để xem danh sách.</p>
       </div>
@@ -161,8 +165,12 @@ export function ClassSelectionView({
             onClick={onRetry}
             className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-xs font-semibold hover:bg-amber-100 disabled:opacity-60"
           >
-            <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
-            Thử lại
+            {isRefreshing ? <LoadingLabel label="Đang thử lại" /> : (
+              <>
+                <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+                Thử lại
+              </>
+            )}
           </button>
         </div>
       ) : null}
@@ -270,27 +278,27 @@ function ClassSelectionCard({
         borderColor: group.color.border,
       }}
     >
-      <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
-        <div className="min-w-0">
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-start justify-between gap-3">
           <h2 className="font-ui line-clamp-2 text-[16px] font-semibold leading-5 text-gray-950">
             {class_.primary_label}
           </h2>
-          {class_.secondary_label && (class_.grade_level || class_.academic_year_start) ? (
-            <p className="mt-0.5 truncate text-xs font-medium text-gray-500">
-              {class_.secondary_label}
-            </p>
-          ) : null}
-          <p className="mt-1 truncate text-xs text-gray-600">
-            {teacherNames.length > 0 ? teacherNames.join(", ") : "Chưa phân công giáo viên"}
-          </p>
+          <span
+            className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold"
+            style={{ color: group.color.text }}
+          >
+            <UsersRound className="h-3.5 w-3.5" aria-hidden="true" />
+            {class_.student_count}
+          </span>
         </div>
-        <span
-          className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold"
-          style={{ color: group.color.text }}
-        >
-          <UsersRound className="h-3.5 w-3.5" aria-hidden="true" />
-          {class_.student_count}
-        </span>
+        {class_.secondary_label && (class_.grade_level || class_.academic_year_start) ? (
+          <p className="mt-0.5 whitespace-nowrap text-xs font-medium leading-4 tracking-[-0.01em] text-gray-500">
+            {class_.secondary_label}
+          </p>
+        ) : null}
+        <p className="mt-1 truncate text-xs text-gray-600">
+          {teacherNames.length > 0 ? teacherNames.join(", ") : "Chưa phân công giáo viên"}
+        </p>
       </div>
 
       <div className="mt-2.5 flex w-full items-center justify-between gap-3 border-t border-black/5 pt-2.5">

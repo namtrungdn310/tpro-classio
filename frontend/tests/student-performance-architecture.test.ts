@@ -10,6 +10,10 @@ const apiSource = readFileSync(
   new URL("../src/lib/api/students.ts", import.meta.url),
   "utf8",
 );
+const proxySource = readFileSync(
+  new URL("../src/app/api/proxy/[...path]/route.ts", import.meta.url),
+  "utf8",
+);
 const serviceSource = readFileSync(
   new URL("../../backend/app/services/student_service.py", import.meta.url),
   "utf8",
@@ -23,7 +27,13 @@ test("student requests are cancelable and class intent warms the consumed infini
   assert.doesNotMatch(pageSource, /prefetchQuery\(\{[\s\S]{0,180}queryKey: \["students"/);
 });
 test("student interactions transition immediately without re-sorting every loaded page", () => {
-  assert.match(pageSource, /startTransition\(\(\) => router\.replace/);
+  assert.match(pageSource, /startNavigationTransition\(\(\) => router\.replace/);
+  assert.match(pageSource, /const \[isNavigationPending, startNavigationTransition\] = useTransition\(\)/);
+  assert.match(pageSource, /const \[view, setView\] = useState<StudentView>\(routeView\)/);
+  assert.match(pageSource, /const \[classId, setClassId\] = useState\(routeClassId\)/);
+  assert.match(pageSource, /setView\(nextView\);[\s\S]{0,120}startNavigationTransition/);
+  assert.match(pageSource, /setClassId\(nextClassId\);[\s\S]{0,80}startNavigationTransition/);
+  assert.doesNotMatch(pageSource, /useOptimistic/);
   assert.doesNotMatch(pageSource, /compareStudentsByCreationOrder/);
   assert.match(pageSource, /queryClient\.setQueryData\(studentQueryKeys\.detail/);
 });
@@ -42,4 +52,29 @@ test("student counters use one database execution instead of four sequential sca
   assert.equal((summarySource.match(/await db\.execute/g) ?? []).length, 1);
   assert.doesNotMatch(summarySource, /for state, key/);
   assert.doesNotMatch(summarySource, /await db\.scalar/);
+});
+
+test("class rosters use server-side student-code ordering with matching keyset pagination", () => {
+  assert.match(
+    serviceSource,
+    /order_by\(Student\.student_code\.asc\(\)\.nulls_last\(\), Student\.id\.asc\(\)\)/,
+  );
+  assert.match(serviceSource, /Student\.student_code > cursor_row\.student_code/);
+  assert.match(serviceSource, /Student\.student_code == cursor_row\.student_code/);
+  assert.match(serviceSource, /Student\.student_code\.is_\(None\)/);
+});
+
+test("student membership saves avoid recursive class loading and have a targeted request budget", () => {
+  assert.match(serviceSource, /def _student_response_load_options\(\)/);
+  assert.match(
+    serviceSource,
+    /selectinload\(Enrollment\.class_\)\.raiseload\("\*"\)/,
+  );
+  assert.match(serviceSource, /selectinload\(Enrollment\.slot_selections\)/);
+  assert.match(
+    apiSource,
+    /`\/students\/\$\{id\}\/membership-command`, data, \{\s*timeout: 60_000/,
+  );
+  assert.match(proxySource, /LONG_STUDENT_MUTATION_TIMEOUT_MS = 60_000/);
+  assert.match(proxySource, /students\\\/\[0-9a-f-\]\+\\\/membership-command/);
 });

@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { affectedEnrollmentImpactSchema } from "./class";
+
 const dateSchema = z.iso.date();
 const nullableDateSchema = dateSchema.nullable();
 const moneySchema = z.number().int().min(0).max(999_999_999_999);
@@ -21,14 +23,23 @@ export const enrollmentResponseSchema = z.object({
   custom_fee: moneySchema.nullable(),
   status: z.enum(["active", "dropped", "completed", "cancelled"]),
   enrollment_date: nullableDateSchema,
+  ended_at: z.iso.datetime({ offset: true }).nullable().default(null),
+  end_reason: z.string().nullable().default(null),
   class_name: z.string().min(1).max(120),
   class_category: z.enum(["GENERAL", "SPECIALIZED", "IELTS", "CUSTOM"]).nullable().default(null),
   class_grade_mode: z.enum(["GRADE", "NONE"]).nullable().default(null),
   class_grade_level: z.number().int().min(1).max(12).nullable().default(null),
   class_start_date: nullableDateSchema.default(null),
   class_end_date: nullableDateSchema.default(null),
+  previous_class_id: z.string().uuid().nullable().default(null),
   effective_fee: moneySchema,
   selected_slot_ids: z.array(z.string().uuid()).default([]),
+  selected_slots: z.array(z.object({
+    id: z.string().uuid(),
+    weekday: z.string(),
+    local_start: z.string(),
+    local_end: z.string(),
+  })).default([]),
 });
 
 const studentEnrollmentInfoSchema = z.object({
@@ -132,4 +143,45 @@ export const studentIdentityConflictSchema = z.object({
   message: z.string().min(1),
   target_class_id: z.string().uuid().nullable().optional(),
   candidates: z.array(studentIdentityCandidateSchema).min(1).max(5),
+});
+
+export const studentMembershipTargetImpactSchema = z.object({
+  class_id: z.string().uuid(),
+  class_name: z.string(),
+  requested_start: nullableDateSchema,
+  resolved_start: nullableDateSchema,
+  effective_fee: z.number().int().nonnegative(),
+  billing_type: z.enum(["MONTHLY", "COURSE"]),
+  billing_cycle_weeks: z.number().int().positive().nullable(),
+  first_due_date: nullableDateSchema,
+  coverage_start: nullableDateSchema,
+  coverage_end: nullableDateSchema,
+  skipped_cycle_count: z.number().int().nonnegative(),
+  review_required: z.boolean(),
+});
+
+export const studentMembershipSourceImpactSchema = z.object({
+  enrollment_id: z.string().uuid(),
+  class_id: z.string().uuid(),
+  class_name: z.string(),
+  ends_on: nullableDateSchema,
+  mutable_fee_count: z.number().int().nonnegative(),
+  protected_fee_count: z.number().int().nonnegative(),
+});
+
+export const studentMembershipPreviewWarningSchema = z.object({
+  code: z.string(),
+  message: z.string(),
+  class_id: z.string().uuid().nullable().optional(),
+});
+
+export const studentMembershipPreviewResponseSchema = z.object({
+  can_apply: z.boolean().default(true),
+  preview_fingerprint: z.string().regex(/^[0-9a-f]{64}$/),
+  expires_at: z.string().datetime({ offset: true }),
+  student_updated_at: z.string().datetime({ offset: true }),
+  targets: z.array(studentMembershipTargetImpactSchema),
+  source: studentMembershipSourceImpactSchema.nullable(),
+  warnings: z.array(studentMembershipPreviewWarningSchema),
+  enrollment_updates: z.array(affectedEnrollmentImpactSchema).default([]),
 });

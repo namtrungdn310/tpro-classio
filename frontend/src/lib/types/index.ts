@@ -1,15 +1,16 @@
-﻿export type ClassType = "MONTHLY" | "COURSE";
+export type ClassType = "MONTHLY" | "COURSE";
 export type ClassIdentityScheme = "LEGACY" | "ACADEMIC_YEAR" | "INTAKE";
 export type ClassCategory = "GENERAL" | "SPECIALIZED" | "IELTS" | "CUSTOM";
 export type ClassGradeMode = "GRADE" | "NONE";
 export type ClassEducationLevel = "PRIMARY" | "MIDDLE" | "HIGH";
 export type ClassEffectiveStatus =
-  "LEGACY" | "SCHEDULED" | "ACTIVE" | "COMPLETED" | "CANCELLED";
+  "LEGACY" | "SCHEDULED" | "ACTIVE" | "STOPPED" | "CANCELLED";
 export type ClassScope =
   | "operational"
   | "active"
   | "enrollable"
   | "scheduled"
+  | "stopped"
   | "completed"
   | "cancelled";
 
@@ -67,7 +68,7 @@ export type ClassScheduleAvailabilityConflict = {
 export type ClassScheduleAvailabilityRequest = {
   class_id?: string | null;
   start_date: string;
-  end_date: string;
+  end_date?: string | null;
   scope?: "selected_staff" | "all_classes";
   teacher_ids: string[];
   assistant_ids: string[];
@@ -106,12 +107,19 @@ export type ClassResponse = {
   secondary_label: string | null;
   effective_status: ClassEffectiveStatus;
   can_edit_end_date: boolean;
+  can_edit_start_date?: boolean;
+  can_stop?: boolean;
   can_edit?: boolean;
+  can_edit_billing_mode?: boolean;
+  can_edit_package_duration?: boolean;
   can_cancel?: boolean;
   can_view_history?: boolean;
   next_fee_due_date?: string | null;
   next_fee_due_state?: "OVERDUE" | "UPCOMING" | "NONE";
   cancelled_at?: string | null;
+  stopped_on?: string | null;
+  stopped_at?: string | null;
+  stopped_reason?: string | null;
   unresolved_makeup_count?: number;
   active_suspension?: {
     id: string;
@@ -120,6 +128,49 @@ export type ClassResponse = {
     reason_code: string;
   } | null;
   previous_class_id?: string | null;
+  staff_assignments?: ClassStaffAssignmentResponse[];
+  staffing_status?: ClassStaffingStatus;
+  unassigned_slot_ids?: string[];
+};
+
+export type ClassStaffingStatus = "UNASSIGNED" | "PARTIAL" | "READY";
+
+export type ClassStaffAssignmentResponse = {
+  staff_id: string;
+  full_name: string;
+  role: "TEACHER" | "ASSISTANT";
+  slot_ids: string[];
+};
+
+export type StaffAvailabilityConflictResponse = {
+  class_id: string;
+  class_name: string;
+  day: ClassScheduleSlot["day"];
+  start: string;
+  end: string;
+  source: "REGULAR" | "MAKEUP";
+};
+
+export type StaffAvailabilityCandidateResponse = {
+  staff_id: string;
+  role: "TEACHER" | "ASSISTANT";
+  available: boolean;
+  conflicts: StaffAvailabilityConflictResponse[];
+};
+
+export type StaffAvailabilityPreviewRequest = {
+  class_id?: string | null;
+  expected_version?: number | null;
+  start_date: string;
+  end_date?: string | null;
+  schedule: ClassSchedule;
+  candidate_staff_ids: string[];
+};
+
+export type StaffAvailabilityPreviewResponse = {
+  can_apply: boolean;
+  preview_fingerprint: string;
+  candidates: StaffAvailabilityCandidateResponse[];
 };
 
 export type ClassOccurrence = {
@@ -311,6 +362,10 @@ export type ClassHistoryEvent = {
   event_type: string;
   previous_end_date: string | null;
   next_end_date: string | null;
+  previous_start_date?: string | null;
+  next_start_date?: string | null;
+  previous_billing_cycle_weeks?: number | null;
+  next_billing_cycle_weeks?: number | null;
   reason: string | null;
   occurred_at: string;
 };
@@ -354,6 +409,9 @@ export type ClassHistory = {
   effective_status: ClassEffectiveStatus;
   start_date: string | null;
   end_date: string | null;
+  stopped_on: string | null;
+  stopped_at: string | null;
+  stopped_reason: string | null;
   schedule: ClassSchedule;
   schedule_slots: ClassHistoryScheduleSlot[];
   teachers: ClassHistoryTeacherEvent[];
@@ -366,6 +424,7 @@ export type ClassScopeSummary = {
   operational: number;
   active: number;
   scheduled: number;
+  stopped?: number;
   completed: number;
   cancelled: number;
 };
@@ -377,7 +436,7 @@ export type ClassCreate = {
   billing_cycle_months: number;
   billing_cycle_weeks?: number | null;
   start_date: string;
-  end_date: string;
+  end_date?: string | null;
   identity_scheme: Exclude<ClassIdentityScheme, "LEGACY">;
   class_category: ClassCategory;
   grade_mode: ClassGradeMode;
@@ -407,7 +466,7 @@ export type ClassContinuationPreview = {
   source_class_id: string;
   source_version: number;
   suggested_start_date: string;
-  suggested_end_date: string;
+  suggested_end_date: string | null;
   template: Omit<ClassCreate, "start_date" | "end_date" | "class_category" | "grade_mode"> & {
     source_class_id: string;
     class_category: ClassCategory | null;
@@ -438,6 +497,7 @@ export type ClassContinuationCreateResponse = {
 
 export type ClassUpdate = Partial<Omit<ClassCreate, "identity_scheme">> & {
   identity_scheme?: ClassIdentityScheme;
+  start_date_change_reason?: string;
   end_date_change_reason?: string;
   expected_version?: number;
   expected_fingerprint?: string;
@@ -459,6 +519,122 @@ export type ClassEndDatePreview = {
   affected_student_count: number;
   mutable_fee_record_count: number;
   protected_fee_record_count: number;
+  version: number;
+  preview_fingerprint: string;
+  preview_expires_at: string;
+};
+
+export type BillingCycleOption = {
+  cycle_no: number;
+  coverage_start: string;
+  coverage_end: string;
+  due_date: string;
+  amount?: number;
+  label?: string;
+};
+
+export type BillingDecisionOption = {
+  decision_code: string;
+  label: string;
+  description: string;
+  recommended: boolean;
+  coverage_start: string;
+  coverage_end: string;
+  due_date: string;
+  amount?: number;
+  first_anchor_cycle_no: number;
+  skipped_cycle_count: number;
+  superseded_fee_count: number;
+  protected_fee_count: number;
+  kept_fee_count?: number;
+  revoked_payment_request_count?: number;
+  review_required: boolean;
+  allowed?: boolean;
+  disabled_reason?: string | null;
+  warning_text?: string | null;
+  available_cycles: BillingCycleOption[];
+};
+
+export type AffectedEnrollmentImpact = {
+  enrollment_id: string;
+  student_id: string;
+  student_name: string;
+  class_id: string;
+  class_name: string;
+  old_enrollment_date: string | null;
+  new_enrollment_date: string;
+  must_change: boolean;
+  decisions: BillingDecisionOption[];
+  recommended_decision: string;
+  protected_fee_count: number;
+  mutable_fee_count: number;
+};
+
+export type ClassStartDatePreview = {
+  previous_start_date: string;
+  next_start_date: string;
+  affected_enrollment_count: number;
+  protected_fee_record_count: number;
+  blocking_history_count: number;
+  moves_earlier: boolean;
+  creates_retroactive_fees: false;
+  version: number;
+  preview_fingerprint: string;
+  preview_expires_at: string;
+  can_apply: boolean;
+  blocking_reason?: string | null;
+  earliest_historical_activity_date?: string | null;
+  affected_enrollments: AffectedEnrollmentImpact[];
+};
+
+export type ClassBillingCycleStudentImpact = {
+  enrollment_id: string;
+  student_id: string;
+  student_name: string;
+  student_code: string | null;
+  transition_on: string;
+  previous_next_due_date: string;
+  next_due_date: string;
+  protected_fee_count: number;
+  superseded_fee_count: number;
+};
+
+export type ClassBillingCyclePreview = {
+  class_id: string;
+  previous_weeks: number;
+  next_weeks: number;
+  affected_enrollment_count: number;
+  retained_current_cycle_count: number;
+  superseded_fee_count: number;
+  protected_fee_count: number;
+  open_payment_request_count: number;
+  pending_review_count: number;
+  affected_periods: string[];
+  students: ClassBillingCycleStudentImpact[];
+  version: number;
+  preview_fingerprint: string;
+  preview_expires_at: string;
+};
+
+export type ClassBillingCycleUpdateResponse = {
+  revision_id: string;
+  previous_weeks: number;
+  next_weeks: number;
+  affected_enrollment_count: number;
+  superseded_fee_count: number;
+  protected_fee_count: number;
+  revoked_payment_request_count: number;
+  pending_review_count: number;
+  affected_periods: string[];
+  class_: ClassResponse;
+};
+
+export type ClassStopPreview = {
+  stopped_on: string;
+  active_enrollment_count: number;
+  future_mutable_fee_record_count: number;
+  retained_fee_record_count: number;
+  unresolved_makeup_count: number;
   version: number;
   preview_fingerprint: string;
   preview_expires_at: string;
@@ -540,24 +716,85 @@ export type StudentScopeSummary = {
   stopped: number;
 };
 
-export type StudentMembershipCommand = {
-  request_id: string;
+export type StudentMembershipTarget = {
+  class_id: string;
+  custom_fee?: number | null;
+  enrollment_date?: string | null;
+  selected_slot_ids?: string[] | null;
+};
+
+export type StudentMembershipTargetImpact = {
+  class_id: string;
+  class_name: string;
+  requested_start?: string | null;
+  resolved_start?: string | null;
+  effective_fee: number;
+  billing_type: "MONTHLY" | "COURSE";
+  billing_cycle_weeks?: number | null;
+  first_due_date?: string | null;
+  coverage_start?: string | null;
+  coverage_end?: string | null;
+  skipped_cycle_count: number;
+  review_required: boolean;
+};
+
+export type StudentMembershipSourceImpact = {
+  enrollment_id: string;
+  class_id: string;
+  class_name: string;
+  ends_on?: string | null;
+  mutable_fee_count: number;
+  protected_fee_count: number;
+};
+
+export type StudentMembershipPreviewWarning = {
+  code: string;
+  message: string;
+  class_id?: string | null;
+};
+
+export type StudentEnrollmentPatchItem = {
+  enrollment_id: string;
+  custom_fee?: number | null;
+  enrollment_date?: string | null;
+  selected_slot_ids?: string[] | null;
+  billing_change_reason?: string | null;
+  expected_billing_version?: number | null;
+  decision_code?: string | null;
+  selected_historical_cycles?: number[] | null;
+};
+
+export type StudentMembershipPreviewRequest = {
   expected_updated_at: string;
-  profile: StudentUpdate;
-  enrollment_updates: Array<{
-    enrollment_id: string;
-    custom_fee?: number | null;
-    enrollment_date?: string | null;
-    selected_slot_ids?: string[] | null;
-  }>;
-  targets: Array<{
-    class_id: string;
-    custom_fee?: number | null;
-    enrollment_date?: string | null;
-    selected_slot_ids?: string[] | null;
-  }>;
+  targets: StudentMembershipTarget[];
+  enrollment_updates?: StudentEnrollmentPatchItem[];
   mode: "supplement" | "transfer";
   source_enrollment_id?: string | null;
+  contract_version?: 1 | 2 | 3;
+};
+
+export type StudentMembershipPreviewResponse = {
+  can_apply: boolean;
+  preview_fingerprint: string;
+  expires_at: string;
+  student_updated_at: string;
+  targets: StudentMembershipTargetImpact[];
+  source: StudentMembershipSourceImpact | null;
+  warnings: StudentMembershipPreviewWarning[];
+  enrollment_updates: AffectedEnrollmentImpact[];
+};
+
+export type StudentMembershipCommand = {
+  request_id: string;
+  contract_version?: 1 | 2 | 3;
+  expected_preview_fingerprint?: string | null;
+  expected_updated_at: string;
+  profile: StudentUpdate;
+  enrollment_updates: StudentEnrollmentPatchItem[];
+  targets: StudentMembershipTarget[];
+  mode: "supplement" | "transfer";
+  source_enrollment_id?: string | null;
+  billing_change_reason?: string | null;
 };
 
 export type StudentCreate = {
@@ -640,14 +877,23 @@ export type EnrollmentResponse = {
   custom_fee: number | null;
   status: "active" | "dropped" | "completed" | "cancelled";
   enrollment_date: string | null;
+  ended_at: string | null;
+  end_reason: string | null;
   class_name: string;
   class_category: ClassCategory | null;
   class_grade_mode: ClassGradeMode | null;
   class_grade_level: number | null;
   class_start_date: string | null;
   class_end_date: string | null;
+  previous_class_id: string | null;
   effective_fee: number;
   selected_slot_ids: string[];
+  selected_slots: Array<{
+    id: string;
+    weekday: string;
+    local_start: string;
+    local_end: string;
+  }>;
 };
 
 export type EnrollmentUpdate = {
@@ -671,6 +917,8 @@ type DashboardOperationsSummary = {
   weekly_session_count: number;
   active_teacher_count: number;
   active_assistant_count: number;
+  active_staff_count: number;
+  unstaffed_class_count: number;
 };
 
 export type DashboardFeeSummary = {
@@ -761,6 +1009,10 @@ export type FeeRecordResponse = {
   coverage_start?: string | null;
   coverage_end?: string | null;
   origin?: string | null;
+  requires_review?: boolean;
+  billing_review_id?: string | null;
+  is_final_cycle?: boolean;
+  final_cycle_reason?: string | null;
   base_amount: number;
   discount_amount: number;
   final_amount: number;
@@ -775,6 +1027,44 @@ export type FeeRecordResponse = {
   notification_channel: string | null;
   notification_message: string | null;
   notification_state: FeeNotificationState;
+};
+
+export type BillingReviewFee = {
+  id: string;
+  due_date: string | null;
+  coverage_start: string | null;
+  coverage_end: string | null;
+  amount: number;
+  status: string;
+  cancellable: boolean;
+  blocked_reason: string | null;
+  is_final_cycle: boolean;
+};
+
+export type BillingReview = {
+  id: string;
+  enrollment_id: string;
+  student_id: string;
+  student_name: string;
+  student_code: string | null;
+  class_id: string;
+  class_name: string;
+  change_kind: "ENROLLMENT_DATE_CHANGE" | "PACKAGE_DURATION_CHANGE" | "CLASS_START_DATE_CHANGE";
+  class_billing_cycle_revision_id: string | null;
+  previous_date: string | null;
+  next_date: string;
+  previous_weeks: number | null;
+  next_weeks: number | null;
+  next_due_date: string;
+  state: "PENDING" | "CONFIRMED" | "SUPERSEDED";
+  reason: string;
+  created_at: string;
+  fees: BillingReviewFee[];
+};
+
+export type BillingReviewListResponse = {
+  reviews: BillingReview[];
+  pending_count: number;
 };
 
 export type PaymentRequestItemResponse = {
@@ -1098,6 +1388,10 @@ export type FeeOperationAction =
   | "refund"
   | "refund_reversal"
   | "sync"
+  | "sync_void"
+  | "supersede"
+  | "anchor_recalculation"
+  | "billing_cycle_change"
   | "template_update";
 
 export type FeeOperationItem = {
@@ -1287,12 +1581,13 @@ export type StaffAssignedClass = {
   id: string;
   name: string;
   is_active: boolean;
+  role?: StaffType | null;
 };
 
 export type StaffResponse = {
   id: string;
   full_name: string;
-  staff_type: StaffType;
+  staff_type?: StaffType | null;
   zalo_name: string | null;
   phone: string | null;
   email: string | null;
@@ -1308,13 +1603,13 @@ export type StaffResponse = {
 export type TeacherOptionResponse = {
   id: string;
   full_name: string;
-  staff_type: StaffType;
+  staff_type?: StaffType | null;
   email: string | null;
 };
 
 export type StaffCreate = {
   full_name: string;
-  staff_type: StaffType;
+  staff_type?: StaffType | null;
   zalo_name?: string | null;
   phone?: string | null;
   email?: string | null;
