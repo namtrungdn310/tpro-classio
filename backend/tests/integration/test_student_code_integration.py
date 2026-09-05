@@ -143,11 +143,19 @@ async def test_100_parallel_creates_yield_100_distinct_valid_codes() -> None:
     async with AsyncSessionLocal() as db:
         class_id = await _make_staff_and_class(db)
     salt = str(uuid4().int % 1000000)
+    # Exercise more concurrency than the production pool while keeping the
+    # client-side fan-out bounded. Opening all 100 TCP connections at once
+    # measures the host/Docker accept queue rather than the DB-authoritative
+    # code allocator and is flaky on otherwise healthy CI runners.
+    concurrency = asyncio.Semaphore(20)
 
     async def create_one(index: int) -> str:
-        async with AsyncSessionLocal() as session:
-            response = await create_student(session, _payload(class_id, index, salt))
-            return response.student_code or ""
+        async with concurrency:
+            async with AsyncSessionLocal() as session:
+                response = await create_student(
+                    session, _payload(class_id, index, salt)
+                )
+                return response.student_code or ""
 
     codes = await asyncio.gather(*(create_one(i) for i in range(100)))
     valid_codes = {validate_code(code) for code in codes}
