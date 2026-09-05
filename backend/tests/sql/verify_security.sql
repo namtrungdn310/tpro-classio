@@ -1654,7 +1654,8 @@ begin
   -- and TEACHER/ASSISTANT link separation probes.
   -- ---------------------------------------------------------------------
 
-  -- 051 canonical invariant: no stored slot may be missing/empty teacher_ids.
+  -- 051 canonical shape, relaxed by migration 122: an unassigned class may
+  -- keep an empty teacher list, but both role fields must remain JSON arrays.
   if exists (
     select 1
       from public.classes c,
@@ -1668,10 +1669,12 @@ begin
      where c.schedule is not null
        and (
          not (slot ? 'teacher_ids')
-         or jsonb_array_length(coalesce(slot -> 'teacher_ids', '[]'::jsonb)) = 0
+         or jsonb_typeof(slot -> 'teacher_ids') <> 'array'
+         or not (slot ? 'assistant_ids')
+         or jsonb_typeof(slot -> 'assistant_ids') <> 'array'
        )
   ) then
-    raise exception 'migration 051 did not canonicalize teacher_ids for every slot';
+    raise exception 'class schedule staff fields are not canonical JSON arrays';
   end if;
 
   -- 051 backup table must exist, stay RLS-enabled (FORCE) and be unreadable/
