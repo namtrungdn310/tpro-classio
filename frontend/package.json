@@ -39,7 +39,7 @@
     "@emnapi/runtime": "^1.11.3",
     "@playwright/test": "^1.62.1",
     "@types/jsdom": "^28.0.3",
-    "@types/node": "^22.0.0",
+    "@types/node": "^26.4.1",
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "esbuild": "^0.28.1",
