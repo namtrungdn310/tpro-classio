@@ -1729,7 +1729,9 @@ begin
   end if;
 
   -- Canonical assignment: explicit teacher/assistant ids của mọi slot phải là
-  -- subset đúng role của junction. Chỉ fail khi DB có dữ liệu (fixture).
+  -- subset đúng contextual role của junction. Migration 122 makes
+  -- staff_members.staff_type legacy/nullable, so role truth lives on the
+  -- class_teachers relationship. Chỉ fail khi DB có dữ liệu (fixture).
   if exists (
     select 1 from public.classes c where c.schedule is not null
   ) then
@@ -1744,10 +1746,9 @@ begin
          and not exists (
            select 1
              from public.class_teachers ct
-             join public.staff_members sm on sm.id = ct.teacher_id
             where ct.class_id = c.id
               and ct.teacher_id = tid::uuid
-              and sm.staff_type = 'TEACHER'
+              and ct.role = 'TEACHER'
          )
     ) then
       raise exception 'canonical teacher assignment is not a TEACHER junction subset';
@@ -1763,10 +1764,9 @@ begin
          and not exists (
            select 1
              from public.class_teachers ct
-             join public.staff_members sm on sm.id = ct.teacher_id
             where ct.class_id = c.id
               and ct.teacher_id = aid::uuid
-              and sm.staff_type = 'ASSISTANT'
+              and ct.role = 'ASSISTANT'
          )
     ) then
       raise exception 'canonical assistant assignment is not an ASSISTANT junction subset';
