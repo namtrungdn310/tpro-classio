@@ -40,14 +40,17 @@ test("editing marks the rail with the unsaved-changes dot", async ({ page }) => 
   await expect(page.locator('[role="tab"][aria-label="Sửa lớp"] .bg-amber-400')).toHaveCount(1);
 });
 
-test("cancel mode requires a separate confirmation before calling the API", async ({ page }) => {
+test("cancel mode requires a reason before calling the API", async ({ page }) => {
   await cancelTab(page).click();
   await expect(cancelTab(page)).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("heading", { name: "Hủy lớp" })).toBeVisible();
   await expect(page.getByText("học viên hiện tại")).toBeVisible();
 
   expect((await state(page)).cancelCount).toBe(0);
-  await page.getByRole("button", { name: "Hủy lớp", exact: true }).click();
+  const cancelAction = page.getByRole("button", { name: "Ngừng hoạt động", exact: true });
+  await expect(cancelAction).toBeDisabled();
+  await page.getByRole("textbox", { name: "Lý do", exact: true }).fill("Kết thúc hoạt động lớp");
+  await cancelAction.click();
   expect((await state(page)).cancelCount).toBe(1);
 });
 

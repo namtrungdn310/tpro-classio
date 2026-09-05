@@ -19,7 +19,12 @@ test("class dates are manual and an open-ended class has no end-date control", a
   await expect(startDate).toHaveAttribute("maxlength", "10");
   await expect(page.locator("#class-end-date")).toHaveCount(0);
 
-  await startDate.fill("01092026");
+  // Wait for the form's mount/reset cycle before simulating fast input. This
+  // mirrors the point at which the dialog becomes interactive for a user.
+  await expect(startDate).toHaveValue(/^\d{2}\/\d{2}\/\d{4}$/);
+
+  await startDate.press("Control+A");
+  await startDate.pressSequentially("01092026");
   await expect(startDate).toHaveValue("01/09/2026");
 
   await startDate.press("End");

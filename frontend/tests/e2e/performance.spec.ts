@@ -1,5 +1,5 @@
 import { performance } from "node:perf_hooks";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 /**
  * R8 Phase 8 — frontend performance gate (production path).
@@ -132,7 +132,8 @@ function installMocks(page: Page): Metrics {
     }
     if (path === "/classes" && method === "POST") {
       metrics.clicks += 1;
-      await new Promise((r) => setTimeout(r, NET_DELAY));
+      // Keep the mutation pending long enough to inspect its in-flight UI.
+      await new Promise((r) => setTimeout(r, 1_500));
       await json(classResponse());
       return;
     }
@@ -147,8 +148,18 @@ function installMocks(page: Page): Metrics {
   return metrics;
 }
 
+async function completeRequiredClassDraft(page: Page, dialog: Locator) {
+  await dialog.locator("#class-name").fill("Lớp Perf E2E");
+  await dialog.locator("#class-fee").fill("750000");
+  await dialog.getByRole("button", { name: /Lịch học/i }).click();
+  const first = page.locator("[data-day-index='0'][data-time-index='6']");
+  const second = page.locator("[data-day-index='0'][data-time-index='7']");
+  await first.click();
+  await second.click();
+  await page.getByRole("button", { name: /Áp dụng lịch|Xác nhận/i }).click();
+}
+
 test.beforeEach(async ({ page }) => {
-  await installMocks(page);
   await page.context().addCookies([
     { name: "tpro_access_token", value: fakeToken(), url: "http://localhost:3100/classes" },
   ]);
@@ -218,8 +229,7 @@ test("T-PERF-004: repeated mutation clicks never fire duplicate requests", async
   await page.getByRole("button", { name: /Thêm lớp/i }).first().click();
   const dialog = page.getByRole("dialog").first();
   await dialog.waitFor();
-  await dialog.locator("#class-name").fill("Lớp Perf E2E");
-  await dialog.locator("#class-fee").fill("750000");
+  await completeRequiredClassDraft(page, dialog);
   // Rapid double-click on the primary submit.
   const save = dialog.getByRole("button", { name: /Tạo lớp|Lưu/i }).first();
   await save.click({ clickCount: 2 });
@@ -239,13 +249,16 @@ test("T-PERF-005: button hugs its label and stays vertically stable when pending
   await page.getByRole("button", { name: /Thêm lớp/i }).first().click();
   const dialog = page.getByRole("dialog").first();
   await dialog.waitFor();
+  await completeRequiredClassDraft(page, dialog);
   const save = dialog.getByRole("button", { name: /Tạo lớp|Lưu/i }).first();
-  const before = await save.boundingBox();
-  await save.click();
+  const saveElement = await save.elementHandle();
+  if (!saveElement) throw new Error("save button is missing");
+  const before = await saveElement.boundingBox();
+  await saveElement.click();
   // Measure again — the button must not jump vertically or move to another
   // row, but its width is allowed to hug the longer pending label ("Đang lưu").
   await page.waitForTimeout(80);
-  const during = await save.boundingBox();
+  const during = await saveElement.boundingBox();
   if (before && during) {
     const dy = Math.abs(during.y - before.y);
     const dh = Math.abs(during.height - before.height);

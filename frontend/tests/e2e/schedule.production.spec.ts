@@ -129,7 +129,7 @@ const installApiMocks = (page: Parameters<Parameters<typeof test>[1]>[0]["page"]
       return;
     }
 
-    if (path === "/staff/teacher-options") {
+    if (path === "/staff/options") {
       await json([TEACHER_T1, TEACHER_T2, ASSISTANT_A1]);
       return;
     }
@@ -164,6 +164,23 @@ const installApiMocks = (page: Parameters<Parameters<typeof test>[1]>[0]["page"]
       return;
     }
 
+    if (path === "/classes/staff-availability" && method === "POST") {
+      const payload = route.request().postDataJSON() as {
+        candidate_staff_ids?: string[];
+      };
+      await json({
+        can_apply: true,
+        preview_fingerprint: "a".repeat(64),
+        candidates: (payload.candidate_staff_ids ?? []).map((staffId) => ({
+          staff_id: staffId,
+          role: "TEACHER",
+          available: true,
+          conflicts: [],
+        })),
+      });
+      return;
+    }
+
     if (path === "/classes" && method === "POST") {
       const payload = route.request().postDataJSON();
       saveRequests.push(payload);
@@ -195,13 +212,8 @@ const openSchedulePicker = async (page: Parameters<Parameters<typeof test>[1]>[0
   await formDialog.locator("#class-start-date").fill(
     `${String(now.day).padStart(2, "0")}/${String(now.month).padStart(2, "0")}/${now.year}`,
   );
-  await page.getByRole("button", { name: /Giáo viên \/ Trợ giảng/i }).click();
-  const teacherSlide = page.getByRole("dialog").nth(1);
-  await teacherSlide.waitFor();
-  await teacherSlide.getByRole("button", { name: "Cô Hạnh" }).click();
-  // Staff-pool selection commits through the existing confirmation action.
-  await teacherSlide.getByRole("button", { name: "Xác nhận" }).click();
-  await teacherSlide.waitFor({ state: "detached" });
+  // The contextual-staffing flow is schedule-first. Staff is assigned to each
+  // concrete session only after the schedule has been applied.
   await page.getByRole("button", { name: /Lịch học/i }).click();
   await page.locator("[data-schedule-grid='true']").waitFor();
   await page.waitForTimeout(600);
@@ -247,6 +259,7 @@ test("T-E2E-PROD-002: two adjacent clicks create and save one valid 60-minute se
   await expect(first).toHaveAttribute("aria-pressed", "true");
   await expect(second).toHaveAttribute("aria-pressed", "true");
   await page.getByRole("button", { name: /Áp dụng lịch|Xác nhận/i }).click();
+  await page.locator("#slot-teacher-0").selectOption(TEACHER_T1.id);
   await page.getByRole("button", { name: /Tạo lớp|Lưu/i }).first().click();
   await page.waitForTimeout(500);
 
@@ -274,7 +287,8 @@ test("T-E2E-PROD-003: availability 500 shows alert, disables confirm; no save is
   await page.goto("http://localhost:3100/classes");
   await openSchedulePicker(page);
   await expect(page.getByRole("alert").first()).toBeVisible();
-  await expect(page.getByRole("button", { name: /Thử lại/i })).toBeVisible();
+  const scheduleDialog = page.getByRole("dialog", { name: "Thiết lập lịch học tuần" });
+  await expect(scheduleDialog.getByRole("button", { name: /Thử lại/i })).toBeVisible();
   await expect(page.getByRole("button", { name: /Áp dụng lịch|Xác nhận/i })).toBeDisabled();
   await dragTwoCells(page);
   await page.waitForTimeout(300);
@@ -286,10 +300,12 @@ test("T-E2E-PROD-004: retry after error succeeds; painting and confirm send the 
   await page.goto("http://localhost:3100/classes");
   await openSchedulePicker(page);
   await expect(page.getByRole("alert").first()).toBeVisible();
-  await page.getByRole("button", { name: /Thử lại/i }).click();
-  await expect(page.getByRole("button", { name: /Thử lại/i })).toHaveCount(0);
+  const scheduleDialog = page.getByRole("dialog", { name: "Thiết lập lịch học tuần" });
+  await scheduleDialog.getByRole("button", { name: /Thử lại/i }).click();
+  await expect(scheduleDialog.getByRole("button", { name: /Thử lại/i })).toHaveCount(0);
   await dragTwoCells(page);
   await page.getByRole("button", { name: /Áp dụng lịch|Xác nhận/i }).click();
+  await page.locator("#slot-teacher-0").selectOption(TEACHER_T1.id);
   await page.getByRole("button", { name: /Tạo lớp|Lưu/i }).first().click();
   await page.waitForTimeout(500);
   const payload = saveRequests[0] as {
@@ -325,7 +341,7 @@ test("T-E2E-PROD-006: reopening the schedule picker within staleTime reuses cach
   expect(availabilityRequests).toBe(first);
 });
 
-test("T-E2E-PROD-008: another class block is locked before per-session assignment", async ({ page }) => {
+test("T-E2E-PROD-008: another class block stays selectable before staff assignment", async ({ page }) => {
   availabilityConflicts = [
     {
       class_id: "77777777-7777-4777-8777-777777777777",
@@ -335,27 +351,26 @@ test("T-E2E-PROD-008: another class block is locked before per-session assignmen
       day: "Thứ 2",
       start: "10:00",
       end: "11:00",
-      // Cô Hạnh is the active teacher scope in the picker, so this slot must
-      // be marked busy for the selected assignment to be locked.
+      // Occupancy is class-wide in the schedule-first picker, independent of
+      // the staff assignment that happens after selecting the session.
       busy_teacher_ids: [TEACHER_T1.id],
       busy_assistant_ids: [ASSISTANT_A1.id],
     },
   ];
   await page.goto("http://localhost:3100/classes");
   await openSchedulePicker(page);
-  // The right panel stays a compact list; the teacher scope tab above the
-  // grid is the single context selector for the chosen teacher.
-  await expect(page.getByRole("heading", { name: /Buổi học/ })).toBeVisible();
-  await expect(page.getByRole("tab")).toHaveCount(1);
-  const busyCell = page.locator("[data-day-index='0'][data-time-index='6']");
-  await expect(busyCell).toHaveAttribute("data-schedule-state", "busy");
-  await expect(busyCell).toHaveAttribute("aria-disabled", "true");
-  await expect(busyCell).toBeDisabled();
-  const busyBox = await busyCell.boundingBox();
-  if (!busyBox) throw new Error("busy schedule cell is not measurable");
-  await page.mouse.click(busyBox.x + busyBox.width / 2, busyBox.y + busyBox.height / 2);
-  await dragTwoCells(page);
-  await expect(page.locator("button[aria-pressed='true'][data-day-index='0']")).toHaveCount(0);
+  // The right panel stays a compact list without the legacy staff-scope tabs.
+  await expect(page.getByRole("heading", { name: "Danh sách chi tiết" })).toBeVisible();
+  await expect(page.getByLabel(/Lớp Khác, Thứ 2 10:00 đến 11:00/)).toBeVisible();
+  const first = page.locator("[data-day-index='0'][data-time-index='6']");
+  const second = page.locator("[data-day-index='0'][data-time-index='7']");
+  await expect(first).toHaveAttribute("data-schedule-state", "free");
+  await expect(first).toHaveAttribute("aria-disabled", "false");
+  await expect(first).toBeEnabled();
+  await first.click();
+  await second.click();
+  await expect(first).toHaveAttribute("aria-pressed", "true");
+  await expect(second).toHaveAttribute("aria-pressed", "true");
   expect(saveRequests).toHaveLength(0);
 });
 
@@ -400,7 +415,7 @@ test("T-E2E-PROD-009: the final real cell keeps the same visible fill after an 0
     "true",
   );
   await expect(
-    page.locator("[data-schedule-session-key='Thứ 3|08:00|16:00']"),
+    page.getByText("Thứ 3 (08:00-16:00)", { exact: true }),
   ).toBeVisible();
 
   const colors = await page.evaluate(() => {
@@ -445,14 +460,14 @@ test("T-E2E-PROD-010: the filled endpoint supports click shrinking and bidirecti
   await page.mouse.move(endBox.x + endBox.width / 2, endBox.y + 0.5, { steps: 24 });
   await page.mouse.up();
   await expect(
-    page.locator("[data-schedule-session-key='Thứ 3|08:00|16:00']"),
+    page.getByText("Thứ 3 (08:00-16:00)", { exact: true }),
   ).toBeVisible();
 
   // The filled 16:00 endpoint behaves like the visible end edge: one click
   // shrinks by 30 minutes instead of extending the data to 16:30.
   await endCell.click();
   await expect(
-    page.locator("[data-schedule-session-key='Thứ 3|08:00|15:30']"),
+    page.getByText("Thứ 3 (08:00-15:30)", { exact: true }),
   ).toBeVisible();
   await expect(
     page.locator("[data-day-index='1'][data-time-index='17']"),
@@ -480,7 +495,7 @@ test("T-E2E-PROD-010: the filled endpoint supports click shrinking and bidirecti
   );
   await page.mouse.up();
   await expect(
-    page.locator("[data-schedule-session-key='Thứ 3|08:00|16:00']"),
+    page.getByText("Thứ 3 (08:00-16:00)", { exact: true }),
   ).toBeVisible();
 
   const newEndBox = await endCell.boundingBox();
@@ -504,7 +519,7 @@ test("T-E2E-PROD-010: the filled endpoint supports click shrinking and bidirecti
   await page.mouse.up();
 
   await expect(
-    page.locator("[data-schedule-session-key='Thứ 3|08:00|15:30']"),
+    page.getByText("Thứ 3 (08:00-15:30)", { exact: true }),
   ).toBeVisible();
   await expect(previousBoundaryCell).toHaveAttribute(
     "data-schedule-endpoint",
