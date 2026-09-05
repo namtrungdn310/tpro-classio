@@ -1655,7 +1655,8 @@ begin
   -- ---------------------------------------------------------------------
 
   -- 051 canonical shape, relaxed by migration 122: an unassigned class may
-  -- keep an empty teacher list, but both role fields must remain JSON arrays.
+  -- keep an empty teacher list. The legacy assistant_ids field is optional,
+  -- but it must remain a JSON array whenever it is present.
   if exists (
     select 1
       from public.classes c,
@@ -1670,8 +1671,10 @@ begin
        and (
          not (slot ? 'teacher_ids')
          or jsonb_typeof(slot -> 'teacher_ids') <> 'array'
-         or not (slot ? 'assistant_ids')
-         or jsonb_typeof(slot -> 'assistant_ids') <> 'array'
+         or (
+           slot ? 'assistant_ids'
+           and jsonb_typeof(slot -> 'assistant_ids') <> 'array'
+         )
        )
   ) then
     raise exception 'class schedule staff fields are not canonical JSON arrays';
