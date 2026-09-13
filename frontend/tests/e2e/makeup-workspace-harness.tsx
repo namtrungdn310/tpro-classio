@@ -6,12 +6,23 @@ import { classQueryKeys } from "@/lib/classes/query-keys";
 import { AuthProvider } from "@/lib/hooks/useAuth";
 import type { ClassResponse } from "@/lib/types";
 
+function getVnToday(): Date {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const year = Number(parts.find((p) => p.type === "year")!.value);
+  const month = Number(parts.find((p) => p.type === "month")!.value);
+  const day = Number(parts.find((p) => p.type === "day")!.value);
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
 function daysFromNow(days: number): string {
-  const now = new Date();
-  now.setDate(now.getDate() + days);
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
-    now.getDate(),
-  ).padStart(2, "0")}`;
+  const d = getVnToday();
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
 }
 
 const mockClass: ClassResponse = {

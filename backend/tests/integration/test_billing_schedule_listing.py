@@ -153,73 +153,58 @@ async def test_report_history_is_paginated_scoped_and_uses_operation_year(monkey
     monkeypatch.setattr(settings, "independent_billing_dates_enabled", True)
     async with AsyncSessionLocal() as db:
         enrollment, _, _ = await _make_independent_membership(db)
-        try:
-            before = await _financial_snapshot(db, enrollment.id)
-            for n in range(25):
-                db.add(
-                    StartDateChangeCommandRecord(
-                        request_id=str(uuid4()),
-                        subject_type="STUDENT",
-                        operation_kind="BILLING_SCHEDULE_CHANGE",
-                        student_id=enrollment.student_id,
-                        class_id=enrollment.class_id,
-                        old_date=date(2020, 1, 1),
-                        new_date=date(2020, 2, 1),
-                        reason="Report audit fixture",
-                        payload_hash="a" * 64,
-                        preview_fingerprint="b" * 64,
-                        state="COMPLETED",
-                        completed_at=datetime(2025, 12, 31, 17, n, tzinfo=timezone.utc),
-                        created_at=datetime(2025, 12, 31, 17, n, tzinfo=timezone.utc),
-                        execution_plan={
-                            "response": {
-                                "plan": {
-                                    "enrollment_id": str(enrollment.id),
-                                    "keep_ids": [],
-                                    "supersede_ids": [],
-                                    "charges": [],
-                                    "waived_intervals": [],
-                                }
-                            },
-                            "created_fee_ids": [],
+        before = await _financial_snapshot(db, enrollment.id)
+        for n in range(25):
+            db.add(
+                StartDateChangeCommandRecord(
+                    request_id=str(uuid4()),
+                    subject_type="STUDENT",
+                    operation_kind="BILLING_SCHEDULE_CHANGE",
+                    student_id=enrollment.student_id,
+                    class_id=enrollment.class_id,
+                    old_date=date(2020, 1, 1),
+                    new_date=date(2020, 2, 1),
+                    reason="Report audit fixture",
+                    payload_hash="a" * 64,
+                    preview_fingerprint="b" * 64,
+                    state="COMPLETED",
+                    completed_at=datetime(2025, 12, 31, 17, n, tzinfo=timezone.utc),
+                    created_at=datetime(2025, 12, 31, 17, n, tzinfo=timezone.utc),
+                    execution_plan={
+                        "response": {
+                            "plan": {
+                                "enrollment_id": str(enrollment.id),
+                                "keep_ids": [],
+                                "supersede_ids": [],
+                                "charges": [],
+                                "waived_intervals": [],
+                            }
                         },
-                    )
+                        "created_fee_ids": [],
+                    },
                 )
-            await db.commit()
-            first = await read_schedule_history(db, enrollment.id, year=2026)
-            second = await read_schedule_history(db, enrollment.id, year=2026, page=2)
-            assert (
-                first["total"] == 25 and first["has_next"] and len(first["items"]) == 20
             )
-            assert len(second["items"]) == 5 and not second["has_next"]
-            assert not (
-                {r["id"] for r in first["items"]} & {r["id"] for r in second["items"]}
-            )
-            assert (await read_schedule_history(db, enrollment.id, year=2025))[
-                "total"
-            ] == 0
-            assert (await read_schedule_history(db, enrollment.id, year=0))[
-                "total"
-            ] == 25
-            assert await _financial_snapshot(db, enrollment.id) == before
-            assert "history" not in await read_schedule_summary(db, enrollment.id)
-            assert len((await read_report_enrollments(db))["items"]) <= 20
-            assert (await read_report_enrollments(db, q="no-such-" + str(uuid4())))[
-                "total"
-            ] == 0
-            token = set_workspace_id(str(uuid4()))
-            try:
-                assert (await read_report_enrollments(db))["total"] == 0
-                with pytest.raises(HTTPException) as caught:
-                    await read_schedule_history(db, enrollment.id)
-                assert caught.value.status_code == 404
-            finally:
-                reset_workspace_id(token)
+        await db.commit()
+        first = await read_schedule_history(db, enrollment.id, year=2026)
+        second = await read_schedule_history(db, enrollment.id, year=2026, page=2)
+        assert first["total"] == 25 and first["has_next"] and len(first["items"]) == 20
+        assert len(second["items"]) == 5 and not second["has_next"]
+        assert not (
+            {r["id"] for r in first["items"]} & {r["id"] for r in second["items"]}
+        )
+        assert (await read_schedule_history(db, enrollment.id, year=2025))["total"] == 0
+        assert (await read_schedule_history(db, enrollment.id, year=0))["total"] == 25
+        assert await _financial_snapshot(db, enrollment.id) == before
+        assert "history" not in await read_schedule_summary(db, enrollment.id)
+        assert len((await read_report_enrollments(db))["items"]) <= 20
+        assert (await read_report_enrollments(db, q="no-such-" + str(uuid4())))[
+            "total"
+        ] == 0
+        token = set_workspace_id(str(uuid4()))
+        try:
+            assert (await read_report_enrollments(db))["total"] == 0
+            with pytest.raises(HTTPException) as caught:
+                await read_schedule_history(db, enrollment.id)
+            assert caught.value.status_code == 404
         finally:
-            await db.execute(
-                text(
-                    "delete from public.start_date_change_commands where student_id = :sid"
-                ),
-                {"sid": enrollment.student_id},
-            )
-            await db.commit()
+            reset_workspace_id(token)

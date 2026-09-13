@@ -22,12 +22,23 @@ const fakeToken = () => {
   return `header.${Buffer.from(JSON.stringify(payload)).toString("base64url")}.signature`;
 };
 
+function getVnToday(): Date {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const year = Number(parts.find((p) => p.type === "year")!.value);
+  const month = Number(parts.find((p) => p.type === "month")!.value);
+  const day = Number(parts.find((p) => p.type === "day")!.value);
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
 function daysFromNow(days: number): string {
-  const now = new Date();
-  now.setDate(now.getDate() + days);
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
-    now.getDate(),
-  ).padStart(2, "0")}`;
+  const d = getVnToday();
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
 }
 
 function isoAtLocal(date: string, hour: number): string {
@@ -235,11 +246,8 @@ const openMakeupMode = async (page: Page) => {
 };
 
 const chooseEndDate = async (page: Page) => {
-  const target = new Date();
-  target.setDate(target.getDate() + 14);
-  await page.locator("#makeup-range-to").fill(
-    `${String(target.getDate()).padStart(2, "0")}/${String(target.getMonth() + 1).padStart(2, "0")}/${target.getFullYear()}`,
-  );
+  const [year, month, day] = daysFromNow(14).split("-");
+  await page.locator("#makeup-range-to").fill(`${day}/${month}/${year}`);
 };
 
 test.beforeEach(async ({ page }) => {
