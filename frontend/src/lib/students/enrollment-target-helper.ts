@@ -88,7 +88,8 @@ export function filterEffectiveSlotsForDate<
 export function computeDraftKey(
   mode: string,
   sourceEnrollmentId: string | null,
-  targets: EnrollmentTargetConfig[]
+  targets: EnrollmentTargetConfig[],
+  collectSourceFinalCycle = true,
 ): string {
   const sortedTargets = [...targets]
     .sort((a, b) => a.class_id.localeCompare(b.class_id))
@@ -99,7 +100,8 @@ export function computeDraftKey(
       selected_slot_ids: [...(t.selected_slot_ids || [])].sort(),
     }));
 
-  return `${mode}::${sourceEnrollmentId || "none"}::${JSON.stringify(sortedTargets)}`;
+  const finalCycleChoice = mode === "transfer" ? String(collectSourceFinalCycle) : "n/a";
+  return `${mode}::${sourceEnrollmentId || "none"}::${finalCycleChoice}::${JSON.stringify(sortedTargets)}`;
 }
 
 /**

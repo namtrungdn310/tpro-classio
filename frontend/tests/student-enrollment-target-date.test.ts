@@ -108,6 +108,16 @@ test("computeDraftKey generates stable deterministic keys", () => {
   // Different mode yields different key
   const transferKey = computeDraftKey("transfer", "src-1", targets);
   assert.notEqual(key1, transferKey);
+  assert.notEqual(
+    transferKey,
+    computeDraftKey("transfer", "src-1", targets, false),
+    "changing the final-cycle policy invalidates the preview draft",
+  );
+  assert.equal(
+    key1,
+    computeDraftKey("supplement", null, targets, false),
+    "supplement ignores the transfer-only final-cycle policy",
+  );
 });
 
 test("isTargetDraftDirty correctly detects dirty state between draft and baseline", () => {
