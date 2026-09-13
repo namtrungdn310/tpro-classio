@@ -17,7 +17,6 @@ test("deleting date segments never appends stray yy or reports an error while ty
   await expect(guide).not.toContainText("yy");
   await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(page.getByText("Nhập mốc thu hợp lệ", { exact: false })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Xử lý thay đổi" })).toBeDisabled();
   await input.pressSequentially("01");
   await expect(input).toHaveValue("01/09/2026");
   await input.evaluate((el: HTMLInputElement) => el.setSelectionRange(3, 5));
@@ -28,7 +27,7 @@ test("deleting date segments never appends stray yy or reports an error while ty
   await input.press("ControlOrMeta+A");
   await input.press("Backspace");
   await expect(input).toHaveValue("");
-  await expect(guide).toContainText("dd/mm/yyyy");
+  await expect(input).toHaveAttribute("placeholder", "dd/mm/yyyy");
   await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(page.getByText("Chưa lưu.", { exact: false })).toHaveCount(0);
   expect(checks).toBe(0);

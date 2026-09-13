@@ -1,8 +1,20 @@
 import { StrictMode, useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { AuthProvider } from "@/lib/hooks/useAuth";
 import { ClassWorkspaceDialog } from "@/components/classes/class-workspace-dialog";
 import type { ClassResponse } from "@/lib/types";
+
+const mockUser = {
+  id: "90000000-0000-4000-8000-000000000001",
+  workspace_id: "90000000-0000-4000-8000-000000000002",
+  email: "teacher@example.test",
+  role: "admin" as const,
+  username: "admin_test",
+  full_name: "TPRO Admin",
+  avatar_url: null,
+  is_owner: true,
+};
 
 const mockClass: ClassResponse = {
   id: "11111111-1111-1111-1111-111111111111",
@@ -75,22 +87,27 @@ function Harness() {
   return (
     <StrictMode>
       <QueryClientProvider client={queryClient}>
-        <ClassWorkspaceDialog
-          class_={mockClass}
-          initialMode="edit"
-          showModeRail
-          canEdit
-          canContinue
-          isSaving={false}
-          isDeleting={false}
-          isTeachersError={false}
-          isTeachersLoading={false}
-          teachers={[]}
-          onClose={() => setOpen(false)}
-          onRetryTeachers={() => undefined}
-          onSubmit={() => undefined}
-          onCancelClass={() => setCancelCount((count) => count + 1)}
-        />
+        <AuthProvider initialUser={mockUser}>
+          <ClassWorkspaceDialog
+            class_={mockClass}
+            initialMode="edit"
+            showModeRail
+            canEdit
+            canContinue
+            isSaving={false}
+            isContinuing={false}
+            isDeleting={false}
+            isTeachersError={false}
+            isTeachersLoading={false}
+            teachers={[]}
+            onClose={() => setOpen(false)}
+            onRetryTeachers={() => undefined}
+            onSubmit={() => undefined}
+            onCreateContinuation={() => undefined}
+            onPackageDurationChanged={() => undefined}
+            onCancelClass={() => setCancelCount((count) => count + 1)}
+          />
+        </AuthProvider>
       </QueryClientProvider>
     </StrictMode>
   );

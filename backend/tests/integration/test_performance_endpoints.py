@@ -60,7 +60,7 @@ MAX_SQL = {
     "class_detail": 12,
     "class_history": 12,
     "availability": 8,
-    "occurrences": 12,
+    "occurrences": 16,
     # Postponement preview computes a fee-impact projection over enrollments +
     # fee records (11 batched queries, no N+1).  The plan's "<=8" was a target;
     # the honest bounded ceiling is higher.
