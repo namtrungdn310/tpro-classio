@@ -1,0 +1,15 @@
+# Create the named tunnel and route these hostnames in Cloudflare DNS.
+# The token-based compose overlay does not need this file; this reference is
+# kept as an auditable routing contract for operators using a credentials file.
+tunnel: replace-with-tunnel-uuid
+credentials-file: /etc/cloudflared/credentials.json
+
+ingress:
+  - hostname: app.example.com
+    service: http://frontend:3000
+  - hostname: hooks.example.com
+    path: ^/webhooks/pay2s(?:/ipn)?$
+    service: http://backend:8000
+  - hostname: ops.example.com
+    service: http://frontend:3000
+  - service: http_status:404

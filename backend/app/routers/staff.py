@@ -4,9 +4,24 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_user, require_admin, require_owner
+from app.core.dependencies import Principal, require_management
+from app.schemas.attendance import (
+    AttendanceCheckInResponse,
+    AttendanceReversalCreate,
+    AttendanceReversalResponse,
+    ManualAttendanceCreate,
+    ManualAttendanceTarget,
+)
 from app.schemas.staff import (
+    StaffAttendanceHistoryResponse,
     StaffCreate,
+    StaffCompensationRateCreate,
+    StaffCompensationRateResponse,
+    StaffPayrollSettlementCreate,
+    StaffPayrollSettlementReversalCreate,
+    StaffPayrollSettlementReversalResponse,
+    StaffPayrollSettlementResponse,
+    StaffPayrollSummaryResponse,
     StaffResponse,
     StaffType,
     StaffUpdate,
@@ -17,19 +32,153 @@ from app.services.staff_service import (
     archive_staff_member,
     create_staff_member,
     get_active_teacher_options,
+    get_staff_attendance_history,
     get_staff_members,
     get_staff_response,
     update_staff_member,
+)
+from app.services.attendance_service import (
+    list_manual_attendance_targets,
+    manual_check_in,
+    reverse_attendance,
+)
+from app.services.payroll_service import (
+    create_staff_compensation_rate,
+    get_staff_payroll_summary,
+    reverse_staff_payroll_settlement,
+    settle_staff_payroll,
 )
 
 router = APIRouter(tags=["staff"])
 
 
+@router.get("/{id}/payroll", response_model=StaffPayrollSummaryResponse)
+async def get_staff_payroll_route(
+    id: UUID,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> StaffPayrollSummaryResponse:
+    return await get_staff_payroll_summary(db, id)
+
+
+@router.get(
+    "/{id}/attendance-history",
+    response_model=StaffAttendanceHistoryResponse,
+)
+async def get_staff_attendance_history_route(
+    id: UUID,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> StaffAttendanceHistoryResponse:
+    return await get_staff_attendance_history(db, id)
+
+
+@router.get(
+    "/{id}/attendance/manual-targets",
+    response_model=list[ManualAttendanceTarget],
+)
+async def list_staff_manual_attendance_targets_route(
+    id: UUID,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> list[ManualAttendanceTarget]:
+    return await list_manual_attendance_targets(db, id)
+
+
+@router.post(
+    "/{id}/attendance/manual",
+    response_model=AttendanceCheckInResponse,
+)
+async def manual_check_in_route(
+    id: UUID,
+    payload: ManualAttendanceCreate,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> AttendanceCheckInResponse:
+    return await manual_check_in(
+        db,
+        id,
+        payload,
+        actor_user_id=principal.user_id,
+    )
+
+
+@router.post(
+    "/{id}/attendance/{attendance_id}/reversal",
+    response_model=AttendanceReversalResponse,
+)
+async def reverse_attendance_route(
+    id: UUID,
+    attendance_id: UUID,
+    payload: AttendanceReversalCreate,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> AttendanceReversalResponse:
+    return await reverse_attendance(
+        db,
+        id,
+        attendance_id,
+        payload,
+        actor_user_id=principal.user_id,
+    )
+
+
+@router.post("/{id}/compensation-rates", response_model=StaffCompensationRateResponse)
+async def create_staff_compensation_rate_route(
+    id: UUID,
+    payload: StaffCompensationRateCreate,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> StaffCompensationRateResponse:
+    return await create_staff_compensation_rate(
+        db, id, payload, actor_user_id=principal.user_id
+    )
+
+
+@router.post("/{id}/payroll/settlements", response_model=StaffPayrollSettlementResponse)
+async def settle_staff_payroll_route(
+    id: UUID,
+    payload: StaffPayrollSettlementCreate,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> StaffPayrollSettlementResponse:
+    return await settle_staff_payroll(db, id, payload, actor_user_id=principal.user_id)
+
+
+@router.post(
+    "/{id}/payroll/settlements/{settlement_id}/reversal",
+    response_model=StaffPayrollSettlementReversalResponse,
+)
+async def reverse_staff_payroll_settlement_route(
+    id: UUID,
+    settlement_id: UUID,
+    payload: StaffPayrollSettlementReversalCreate,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> StaffPayrollSettlementReversalResponse:
+    return await reverse_staff_payroll_settlement(
+        db,
+        id,
+        settlement_id,
+        payload,
+        actor_user_id=principal.user_id,
+    )
+
+
 @router.get("/teacher-options", response_model=list[TeacherOptionResponse])
 async def list_active_teacher_options(
     db: AsyncSession = Depends(get_db),
-    _current_user: dict[str, str | bool | None] = Depends(require_admin),
+    principal: Principal = Depends(require_management),
 ) -> list[TeacherOptionResponse]:
+    return await get_active_teacher_options(db)
+
+
+@router.get("/options", response_model=list[TeacherOptionResponse])
+async def list_active_staff_options(
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> list[TeacherOptionResponse]:
+    """Role-neutral alias used by the schedule-first class workflow."""
     return await get_active_teacher_options(db)
 
 
@@ -38,16 +187,13 @@ async def list_staff_members(
     staff_type: StaffType | None = Query(default=None),
     is_active: bool | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
-    current_user: dict[str, str | bool | None] = Depends(get_current_user),
+    principal: Principal = Depends(require_management),
 ) -> list[StaffResponse]:
-    include_sensitive = bool(current_user.get("is_owner")) or (
-        current_user.get("role") == "admin"
-    )
     return await get_staff_members(
         db,
         staff_type=staff_type,
         is_active=is_active,
-        include_sensitive=include_sensitive,
+        include_sensitive=True,
     )
 
 
@@ -55,7 +201,7 @@ async def list_staff_members(
 async def create_staff_member_route(
     payload: StaffCreate,
     db: AsyncSession = Depends(get_db),
-    _current_user: dict[str, str | bool | None] = Depends(require_owner),
+    principal: Principal = Depends(require_management),
 ) -> StaffResponse:
     try:
         staff = await create_staff_member(db, payload)
@@ -65,7 +211,7 @@ async def create_staff_member_route(
         ) from exc
     except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
         ) from exc
 
     created = await get_staff_response(
@@ -86,7 +232,7 @@ async def update_staff_member_route(
     id: UUID,
     payload: StaffUpdate,
     db: AsyncSession = Depends(get_db),
-    _current_user: dict[str, str | bool | None] = Depends(require_owner),
+    principal: Principal = Depends(require_management),
 ) -> StaffResponse:
     try:
         staff = await update_staff_member(db, id, payload)
@@ -96,7 +242,7 @@ async def update_staff_member_route(
         ) from exc
     except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
         ) from exc
 
     if staff is None:
@@ -118,7 +264,7 @@ async def update_staff_member_route(
 async def delete_staff_member_route(
     id: UUID,
     db: AsyncSession = Depends(get_db),
-    _current_user: dict[str, str | bool | None] = Depends(require_owner),
+    principal: Principal = Depends(require_management),
 ) -> dict[str, str]:
     try:
         staff = await archive_staff_member(db, id)

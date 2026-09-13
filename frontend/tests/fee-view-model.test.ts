@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildStudentFeeGroups,
+  formatFeeGroupSubject,
   getGroupCopyMessage,
   renderGroupFeeMessage,
 } from "../src/lib/fees/view-model";
-import { DEFAULT_FEE_MESSAGE_TEMPLATES } from "../src/lib/fees/message-templates";
+import { TEST_FEE_MESSAGE_TEMPLATES as DEFAULT_FEE_MESSAGE_TEMPLATES } from "./fixtures/fee-message-templates";
 import type { FeeRecordResponse } from "../src/lib/types";
 
 function feeRecord(overrides: Partial<FeeRecordResponse> = {}): FeeRecordResponse {
@@ -57,6 +58,22 @@ function buildDefaultGroupFeeMessage(
       : DEFAULT_FEE_MESSAGE_TEMPLATES.payment_reminder_template,
   );
 }
+
+test("formats the fee action subject with the student and every class", () => {
+  const group = buildStudentFeeGroups([
+    feeRecord(),
+    feeRecord({
+      id: "fee-ielts",
+      class_id: "class-ielts",
+      class_name: "IELTS Chuyên sâu",
+    }),
+  ])[0];
+
+  assert.equal(
+    formatFeeGroupSubject(group),
+    "em Nguyễn An, các lớp 6C1, IELTS Chuyên sâu",
+  );
+});
 
 test("groups distinct dates explicitly and keeps the earliest date as the summary", () => {
   const groups = buildStudentFeeGroups([
@@ -158,7 +175,7 @@ test("builds a paid confirmation from paid amounts and actual paid dates", () =>
       "7C1: 800.000đ",
       "Ngày đến hạn: 15/07/2026.",
       "Tổng học phí đã nhận: 1.500.000đ.",
-      "Cảm ơn phụ huynh.",
+      "TPRO English cảm ơn phụ huynh.",
     ].join("\n"),
   );
 });
@@ -263,7 +280,7 @@ test("copies every distinct immutable snapshot instead of rewriting history", ()
   ])[0];
 
   assert.equal(
-    getGroupCopyMessage(group, false),
+    getGroupCopyMessage(group, false, DEFAULT_FEE_MESSAGE_TEMPLATES),
     "Thông báo lớp 6C1.\n\nThông báo lớp 7C1.",
   );
 });

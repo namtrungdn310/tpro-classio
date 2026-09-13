@@ -246,7 +246,7 @@ export default function RegisterPage() {
           <AuthField id="register-email" label="Email" error={emailError}>
             <input
               id="register-email"
-              type="email"
+              type="text"
               inputMode="email"
               autoComplete={savedInfoAutocomplete.otpEmail}
               enterKeyHint="next"
@@ -358,7 +358,7 @@ export default function RegisterPage() {
           </AuthField>
 
           {visibleServerError ? (
-            <p role="alert" className="form-message-text text-red-600">
+            <p role="alert" className="form-message-text text-destructive">
               {visibleServerError}
             </p>
           ) : null}

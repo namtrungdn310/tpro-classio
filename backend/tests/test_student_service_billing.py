@@ -43,13 +43,23 @@ async def test_create_student_reconciles_initial_enrollment_fee() -> None:
             new=AsyncMock(return_value=response),
         ),
         patch(
-            "app.services.student_service.lock_fee_period",
+            "app.services.student_service.lock_student_identity",
             new=AsyncMock(),
         ),
         patch(
-            "app.services.student_service.reconcile_fee_record_for_period",
-            new=AsyncMock(),
-        ) as reconcile,
+            "app.services.student_service.find_student_identity_candidates",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.student_service.enroll_locked_student",
+            new=AsyncMock(
+                return_value=SimpleNamespace(
+                    id=str(uuid4()),
+                    class_=class_,
+                    enrollment_date=date(2026, 6, 5),
+                )
+            ),
+        ) as enroll_locked,
         patch("app.services.student_service._clear_dependent_caches"),
     ):
         created = await create_student(
@@ -66,7 +76,7 @@ async def test_create_student_reconciles_initial_enrollment_fee() -> None:
         )
 
     assert created is response
-    enrollment = reconcile.await_args.args[1]
-    assert enrollment.class_ is class_
-    assert enrollment.enrollment_date == date(2026, 6, 5)
+    enrollment = enroll_locked.await_args.kwargs
+    assert enrollment["class_"] is class_
+    assert enrollment["enrollment_date"] == date(2026, 6, 5)
     db.commit.assert_awaited_once()

@@ -1,6 +1,17 @@
 import axios from "axios";
 import { ensureDeviceId } from "@/lib/auth/device";
 import { buildSessionReplacedLoginUrl, isSessionReplacedError } from "@/lib/api/errors";
+import {
+  completeRequestTracking,
+  startRequestTracking,
+  type RequestMeta,
+} from "@/lib/performance/request-tracking";
+
+declare module "axios" {
+  export interface InternalAxiosRequestConfig {
+    _tproMetric?: RequestMeta;
+  }
+}
 
 // Các API route liên quan đến xác thực không nên trigger global 401 redirect
 function isBrowserAuthRoute(url: string): boolean {
@@ -40,14 +51,54 @@ apiClient.interceptors.request.use((config) => {
       config.headers = config.headers ?? {};
       config.headers["X-TPRO-Device-Id"] = deviceId;
     }
+
+    const meta = startRequestTracking(
+      (config.method ?? "get").toUpperCase(),
+      config.url ?? "",
+    );
+    config.headers = config.headers ?? {};
+    config.headers["X-Request-ID"] = meta.id;
+    config._tproMetric = meta;
   }
 
   return config;
 });
 
+function responseBytesOf(response: unknown): number | null {
+  if (typeof response === "string") {
+    return new Blob([response]).size;
+  }
+  if (response === null || response === undefined) {
+    return null;
+  }
+  try {
+    return JSON.stringify(response).length;
+  } catch {
+    return null;
+  }
+}
+
 apiClient.interceptors.response.use(
-  (response) => response,
-  async (error) => {
+  (response) => {
+    if (typeof window !== "undefined" && response.config._tproMetric) {
+      completeRequestTracking(
+        response.config._tproMetric,
+        response.status,
+        responseBytesOf(response.data),
+      );
+    }
+    return response;
+  },
+  (error) => {
+    if (typeof window !== "undefined" && error.config?._tproMetric) {
+      completeRequestTracking(
+        error.config._tproMetric,
+        error.response?.status ?? null,
+        error.response ? responseBytesOf(error.response.data) : null,
+        error.code ? String(error.code) : undefined,
+      );
+    }
+
     if (
       typeof window !== "undefined" &&
       isSessionReplacedError(error) &&

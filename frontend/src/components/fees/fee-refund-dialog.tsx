@@ -1,15 +1,22 @@
 "use client";
 
 import { useEffect, useId, useMemo, useState } from "react";
-import { createPortal } from "react-dom";
 import {
-  CheckCircle2,
-  Clipboard,
-  History,
-  LoaderCircle,
-} from "lucide-react";
+  RiCheckboxCircleLine as CheckCircle2,
+  RiClipboardLine as Clipboard,
+  RiHistoryLine as History,
+  RiLoader4Line as LoaderCircle,
+} from "react-icons/ri";
 import { RefundIcon } from "@/components/ui/refund-icon";
 import { Button } from "@/components/ui/button";
+import { FormDialogBody, FormDialogFooter, FormDialogShell } from "@/components/ui/form-dialog-shell";
+import { FormField } from "@/components/ui/form-field";
+import { FormSection } from "@/components/ui/form-section";
+import { SegmentedControl } from "@/components/ui/segmented-control";
+import {
+  formTextControlClassName,
+  formTextControlErrorClassName,
+} from "@/components/ui/form-text-control";
 import { LoadingLabel } from "@/components/ui/loading-label";
 import { SmartMoneyInput } from "@/components/ui/smart-money-input";
 import {
@@ -22,9 +29,10 @@ import {
   getOrCreateRefundRequestId,
 } from "@/lib/fees/refund-idempotency";
 import { useFormFieldFeedback } from "@/lib/forms/use-form-field-feedback";
+import { moveFocusByFormArrow } from "@/lib/forms/field-navigation";
 import type { StudentFeeGroup } from "@/lib/fees/view-model";
-import { useModalDialog } from "@/lib/hooks/useModalDialog";
 import type {
+  BankAccount,
   FeePaymentMethod,
   FeeRefundReceipt,
   FeeRefundRequest,
@@ -32,10 +40,12 @@ import type {
   FeeTransactionListResponse,
   FeeTransactionResponse,
 } from "@/lib/types";
+import { cn } from "@/lib/utils";
 import { formatCurrency, formatDate } from "@/lib/utils/format";
 import { savedInfoAutocomplete } from "@/lib/forms/saved-info-policy";
 
 type FeeRefundDialogProps = {
+  bankAccounts: BankAccount[];
   group: StudentFeeGroup | null;
   idempotencyScope: string;
   isPending: boolean;
@@ -50,6 +60,13 @@ type FeeRefundDialogProps = {
   open: boolean;
   receipt: FeeRefundReceipt | null;
   transactionHistories: FeeTransactionListResponse[];
+};
+
+export type FeeRefundPanelProps = Omit<
+  FeeRefundDialogProps,
+  "group" | "open"
+> & {
+  group: StudentFeeGroup;
 };
 
 const REFUND_METHODS: ReadonlyArray<{
@@ -86,7 +103,24 @@ export function FeeRefundDialog(props: FeeRefundDialogProps) {
   );
 }
 
+/**
+ * The same complete refund workflow without a second modal shell. It is used
+ * inside the fee workspace so the operator does not lose context or move
+ * through stacked dialogs.
+ */
+export function FeeRefundPanel(props: FeeRefundPanelProps) {
+  return (
+    <FeeRefundDialogContent
+      key={props.idempotencyScope}
+      {...props}
+      embedded
+      open
+    />
+  );
+}
+
 function FeeRefundDialogContent({
+  bankAccounts,
   group,
   idempotencyScope,
   isPending,
@@ -100,10 +134,10 @@ function FeeRefundDialogContent({
   onSubmit,
   receipt,
   transactionHistories,
-}: FeeRefundDialogProps & { group: StudentFeeGroup }) {
-  const titleId = useId();
-  const descriptionId = useId();
+  embedded = false,
+}: FeeRefundDialogProps & { group: StudentFeeGroup; embedded?: boolean }) {
   const amountErrorIdPrefix = useId();
+  const settlementAccountErrorId = useId();
   const refundableRecords = useMemo(() => getRefundableFeeRecords(group), [group]);
   const feedbackFields = useMemo<readonly RefundFeedbackField[]>(
     () => refundableRecords.map((record) => amountFeedbackField(record.id)),
@@ -114,6 +148,9 @@ function FeeRefundDialogContent({
   const [reason, setReason] = useState("");
   const [refundMethod, setRefundMethod] =
     useState<FeePaymentMethod>("bank_transfer");
+  const [settlementAccountId, setSettlementAccountId] = useState(
+    () => bankAccounts.find((account) => account.is_default)?.id ?? bankAccounts[0]?.id ?? "",
+  );
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [reversalTarget, setReversalTarget] = useState<string | null>(null);
   const [reversalReason, setReversalReason] = useState("");
@@ -132,16 +169,29 @@ function FeeRefundDialogContent({
     shouldShowError: shouldShowReversalError,
   } = useFormFieldFeedback(REVERSAL_FEEDBACK_FIELDS);
   const isBusy = isPending || isReversalPending;
-  const { backdropPointerDownRef, dialogRef, requestClose } = useModalDialog({
-    isBusy,
-    onClose,
-  });
+  const requestClose = () => {
+    if (!isBusy) {
+      onClose();
+    }
+  };
 
   useEffect(() => {
     if (receipt) {
       clearPendingRefundRequest(idempotencyScope, receipt.request_id);
     }
   }, [idempotencyScope, receipt]);
+
+  useEffect(() => {
+    if (refundMethod !== "bank_transfer") return;
+    const selectedAccountIsActive = bankAccounts.some(
+      (account) => account.id === settlementAccountId,
+    );
+    if (!selectedAccountIsActive) {
+      setSettlementAccountId(
+        bankAccounts.find((account) => account.is_default)?.id ?? bankAccounts[0]?.id ?? "",
+      );
+    }
+  }, [bankAccounts, refundMethod, settlementAccountId]);
 
   const allocations = buildRefundAllocations(refundableRecords, amounts);
   const totalAmount = allocations.reduce((sum, item) => sum + item.amount, 0);
@@ -157,6 +207,10 @@ function FeeRefundDialogContent({
     return errors;
   }, [amountDrafts, amounts, refundableRecords]);
   const normalizedReason = normalizeReason(reason);
+  const settlementAccountError =
+    refundMethod === "bank_transfer" && !settlementAccountId
+      ? "Hãy chọn tài khoản ngân hàng dùng để chuyển khoản hoàn phí."
+      : null;
   const normalizedReversalReason = normalizeReason(reversalReason);
   const reversalValidationError =
     normalizedReversalReason.length < 3
@@ -175,14 +229,25 @@ function FeeRefundDialogContent({
     if (Object.keys(amountValidationErrors).length > 0) {
       return;
     }
+    if (settlementAccountError) {
+      return;
+    }
 
-    const fingerprint = JSON.stringify({ allocations, normalizedReason, refundMethod });
+    const fingerprint = JSON.stringify({
+      allocations,
+      normalizedReason,
+      refundMethod,
+      settlementAccountId:
+        refundMethod === "bank_transfer" ? settlementAccountId : null,
+    });
     const requestId = getOrCreateRefundRequestId(idempotencyScope, fingerprint);
     onSubmit({
       request_id: requestId,
       items: allocations,
       reason: normalizedReason,
       refund_method: refundMethod,
+      settlement_account_id:
+        refundMethod === "bank_transfer" ? settlementAccountId : undefined,
     });
   }
 
@@ -232,45 +297,12 @@ function FeeRefundDialogContent({
     }
   }
 
-  return createPortal(
-    <div
-      className="fixed inset-0 z-[75] flex items-stretch justify-center bg-black/30 p-0 sm:items-center sm:p-4"
-      onPointerDown={(event) => {
-        backdropPointerDownRef.current = event.target === event.currentTarget;
-      }}
-      onPointerUp={(event) => {
-        if (backdropPointerDownRef.current && event.target === event.currentTarget) {
-          requestClose();
-        }
-        backdropPointerDownRef.current = false;
-      }}
-      onPointerCancel={() => {
-        backdropPointerDownRef.current = false;
-      }}
-    >
-      <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        aria-describedby={descriptionId}
-        aria-busy={isBusy || undefined}
-        tabIndex={-1}
-        className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-white shadow-xl sm:h-auto sm:max-h-[calc(100dvh-2rem)] sm:max-w-[536px] sm:rounded-xl"
-      >
-        <header className="shrink-0 border-b border-gray-200 px-5 py-4">
-          <h2 id={titleId} className="section-title-text select-none text-gray-950">
-            Hoàn phí học viên
-          </h2>
-          <p id={descriptionId} className="mt-1 text-sm font-normal text-gray-500">
-            {group.student_name} · Phân bổ chính xác số tiền cần hoàn theo từng lớp.
-          </p>
-        </header>
-
-        {receipt ? (
-          <RefundSuccess receipt={receipt} />
-        ) : (
-          <div className="scrollbar-hidden min-h-0 flex-1 overflow-y-auto px-5 py-4">
+  const content = (
+    <>
+      {receipt ? (
+        <RefundSuccess receipt={receipt} />
+      ) : (
+        <FormDialogBody>
             <RefundHistorySection
               error={hasHistoryError}
               history={history}
@@ -307,8 +339,9 @@ function FeeRefundDialogContent({
               </p>
             ) : (
               <>
+                <FormSection label="Chi tiết khoản hoàn" order={1}>
                 <div className="space-y-2.5">
-                  {refundableRecords.map((record) => {
+                  {refundableRecords.map((record, index) => {
                     const amountField = amountFeedbackField(record.id);
                     const amountError = shouldShowError(amountField, isSubmitted)
                       ? amountValidationErrors[record.id]
@@ -317,23 +350,23 @@ function FeeRefundDialogContent({
                     return (
                       <div
                         key={record.id}
-                        className="rounded-lg border border-gray-200 bg-gray-50/50 p-3"
+                        className="rounded-lg border border-gray-200 bg-gray-50/50 p-4"
                       >
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div className="min-w-0">
-                            <p className="select-none text-[15px] font-semibold text-gray-900">
+                            <p className="select-none text-base font-semibold leading-6 text-gray-900">
                               {record.class_name}
                             </p>
-                            <p className="mt-0.5 select-none text-xs font-normal text-gray-500">
+                            <p className="mt-1 select-none text-sm font-normal leading-5 text-gray-500">
                               Đã nhận {formatCurrency(record.paid_amount ?? 0)} · Đã hoàn{" "}
                               {formatCurrency(record.refunded_amount)}
                             </p>
                           </div>
-                          <p className="select-none text-xs font-medium text-emerald-700">
+                          <p className="select-none text-sm font-semibold leading-5 text-emerald-700">
                             Còn có thể hoàn {formatCurrency(record.refundable_amount)}
                           </p>
                         </div>
-                        <div className="mt-2.5 flex items-center gap-2">
+                        <div className="mt-3 flex items-center gap-2">
                           <SmartMoneyInput
                             value={amounts[record.id] ?? null}
                             disabled={isBusy}
@@ -346,11 +379,13 @@ function FeeRefundDialogContent({
                             }
                             placeholder="Số tiền hoàn"
                             ariaInvalid={Boolean(amountError)}
-                            className={`form-input-text h-8 min-w-0 flex-1 rounded-md border bg-white px-3 outline-none focus:ring-2 sm:max-w-[248px] ${
-                              amountError
-                                ? "border-red-400 focus:border-red-500 focus:ring-red-100"
-                                : "border-gray-200 focus:border-gray-400 focus:ring-gray-100"
-                            }`}
+                            dataRow={index}
+                            dataCol={0}
+                            className={cn(
+                              formTextControlClassName,
+                              "min-w-0 flex-1 sm:max-w-[248px]",
+                              amountError && formTextControlErrorClassName,
+                            )}
                           />
                           <Button
                             type="button"
@@ -373,7 +408,7 @@ function FeeRefundDialogContent({
                           <p
                             id={amountErrorId}
                             role="alert"
-                            className="mt-1.5 text-sm font-medium text-red-600"
+                            className="mt-1.5 text-sm font-medium text-destructive"
                           >
                             {amountError}
                           </p>
@@ -382,116 +417,170 @@ function FeeRefundDialogContent({
                     );
                   })}
                 </div>
+                </FormSection>
 
-                <div className="mt-4 grid grid-cols-1 items-end gap-3 sm:grid-cols-[248px_minmax(0,1fr)]">
-                  <fieldset className="min-w-0" disabled={isBusy}>
-                    <legend className="form-label-text select-none text-gray-800">
-                      Hình thức hoàn
-                    </legend>
-                    <div className="mt-1.5 grid h-8 grid-cols-2 overflow-hidden rounded-md border border-gray-200 bg-white p-0.5">
-                      {REFUND_METHODS.map((method) => (
-                        <label
-                          key={method.value}
-                          className={`form-input-text flex h-full select-none cursor-pointer items-center justify-center whitespace-nowrap rounded-[5px] px-1 transition-colors has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-1 has-[:focus-visible]:outline-gray-950 ${
-                            refundMethod === method.value
-                              ? "bg-gray-950 text-white"
-                              : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
-                          }`}
-                        >
-                          <input
-                            type="radio"
-                            name="refund-method"
-                            value={method.value}
-                            checked={refundMethod === method.value}
-                            onChange={() => setRefundMethod(method.value)}
-                            className="sr-only"
-                          />
-                          {method.label}
-                        </label>
-                      ))}
-                    </div>
-                  </fieldset>
+                <FormSection label="Thông tin hoàn phí" order={2}>
+                <div className="mt-4 grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
+                  <FormField label="Hình thức hoàn" labelId="refund-method-label">
+                    <SegmentedControl
+                      ariaLabelledBy="refund-method-label"
+                      disabled={isBusy}
+                      options={[...REFUND_METHODS]}
+                      selected={refundMethod}
+                      onSelect={(value) => setRefundMethod(value as FeePaymentMethod)}
+                    />
+                  </FormField>
 
-                  <label className="block min-w-0">
+                  {refundMethod === "bank_transfer" ? (
+                    <FormField
+                      controlId="refund-settlement-account"
+                      error={isSubmitted ? settlementAccountError ?? undefined : undefined}
+                      errorId={settlementAccountErrorId}
+                      hint={
+                        isSubmitted && settlementAccountError ? undefined : bankAccounts.length === 0 ? (
+                          <span className="text-amber-700">
+                            Chưa có tài khoản. Hãy thêm tại trang Ngân hàng trước khi hoàn phí.
+                          </span>
+                        ) : (
+                          "Chọn tài khoản thực tế dùng để chuyển tiền hoàn."
+                        )
+                      }
+                      label="Tài khoản dùng để hoàn"
+                    >
+                      <select
+                        id="refund-settlement-account"
+                        value={settlementAccountId}
+                        disabled={isBusy}
+                        aria-invalid={Boolean(isSubmitted && settlementAccountError)}
+                        aria-describedby={
+                          isSubmitted && settlementAccountError
+                            ? settlementAccountErrorId
+                            : undefined
+                        }
+                        onChange={(event) => setSettlementAccountId(event.currentTarget.value)}
+                        className={cn(
+                          formTextControlClassName,
+                          isSubmitted && settlementAccountError && formTextControlErrorClassName,
+                        )}
+                      >
+                        <option value="">Chọn tài khoản ngân hàng</option>
+                        {bankAccounts.map((account) => (
+                          <option key={account.id} value={account.id}>
+                            {account.bank_name} · {account.label} · ****
+                            {account.account_number.slice(-4)}
+                          </option>
+                        ))}
+                      </select>
+                    </FormField>
+                  ) : null}
+
+                  <label className="block min-w-0 sm:col-span-2">
                     <span className="form-label-text select-none text-gray-800">
                       Lý do hoàn phí
                     </span>
-                    <input
-                      type="text"
+                    <textarea
                       autoComplete={savedInfoAutocomplete.disabled}
                       value={reason}
                       maxLength={500}
+                      rows={2}
                       disabled={isBusy}
                       onChange={(event) => {
                         setReason(event.currentTarget.value);
                       }}
-                      className="form-input-text mt-1.5 h-8 w-full rounded-md border border-gray-200 px-3 outline-none focus:border-gray-400 focus:ring-2 focus:ring-gray-100"
+                      data-row={refundableRecords.length}
+                      data-col={0}
+                      className={cn(
+                        formTextControlClassName,
+                        "mt-1.5 block h-16 min-h-16 w-full resize-none py-2 leading-5",
+                      )}
                     />
                   </label>
                 </div>
+                </FormSection>
               </>
             )}
-          </div>
+          </FormDialogBody>
         )}
 
-        <footer className="flex shrink-0 justify-end gap-2 border-t border-gray-200 bg-gray-50/70 px-5 py-3">
-          {receipt ? (
-            <>
+        <FormDialogFooter
+          right={
+            receipt ? (
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-8 gap-1.5 px-3 text-sm"
+                  onClick={onCopyReceipt}
+                >
+                  <Clipboard className="h-4 w-4" aria-hidden="true" />
+                  Tin nhắn Zalo
+                </Button>
+                <Button type="button" className="h-8 px-3 text-sm" onClick={onClose}>
+                  Đóng
+                </Button>
+              </>
+            ) : refundableRecords.length === 0 ? (
               <Button
                 type="button"
-                variant="outline"
-                className="h-9 gap-1.5 px-3 text-sm"
-                onClick={onCopyReceipt}
-              >
-                <Clipboard className="h-4 w-4" aria-hidden="true" />
-                Sao chép xác nhận
-              </Button>
-              <Button type="button" className="h-9 px-4 text-sm" onClick={onClose}>
-                Đóng
-              </Button>
-            </>
-          ) : refundableRecords.length === 0 ? (
-            <Button
-              type="button"
-              className="h-9 px-4 text-sm"
-              disabled={isBusy}
-              onClick={requestClose}
-            >
-              Đóng
-            </Button>
-          ) : (
-            <>
-              <Button
-                type="button"
-                variant="outline"
                 className="h-8 px-3 text-sm"
                 disabled={isBusy}
                 onClick={requestClose}
               >
-                Huỷ
+                Đóng
               </Button>
-              <Button
-                type="button"
-                className="h-8 bg-sky-600 px-4 text-sm text-white hover:bg-sky-700"
-                disabled={isBusy}
-                onClick={submitRefund}
-                data-dialog-autofocus
-              >
-                {isPending ? (
-                  <LoadingLabel label="Đang hoàn phí" />
-                ) : (
-                  <>
-                    <RefundIcon className="mr-1.5" />
-                    Xác nhận hoàn {formatCurrency(totalAmount)}
-                  </>
-                )}
-              </Button>
-            </>
-          )}
-        </footer>
+            ) : (
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-8 px-3 text-sm"
+                  disabled={isBusy}
+                  onClick={requestClose}
+                >
+                  Huỷ
+                </Button>
+                <Button
+                  type="button"
+                  className="h-8 bg-primary px-3 text-sm text-primary-foreground hover:bg-primary/90"
+                  disabled={isBusy}
+                  onClick={submitRefund}
+                  data-dialog-autofocus
+                >
+                  {isPending ? (
+                    <LoadingLabel label="Đang hoàn phí" />
+                  ) : (
+                    <>
+                      <RefundIcon className="mr-1.5 h-4 w-4" aria-hidden="true" />
+                      Xác nhận hoàn {formatCurrency(totalAmount)}
+                    </>
+                  )}
+                </Button>
+              </>
+            )
+          }
+        />
+    </>
+  );
+
+  if (embedded) {
+    return (
+      <div className="contents" onKeyDown={moveFocusByFormArrow}>
+        {content}
       </div>
-    </div>,
-    document.body,
+    );
+  }
+
+  return (
+    <FormDialogShell
+      title="Hoàn phí học viên"
+      subtitle={`${group.student_name} · Phân bổ chính xác số tiền cần hoàn theo từng lớp.`}
+      width="md"
+      isBusy={isBusy}
+      onClose={requestClose}
+      frameProps={{ onKeyDown: moveFocusByFormArrow }}
+    >
+      {content}
+    </FormDialogShell>
   );
 }
 
@@ -600,11 +689,11 @@ function RefundHistorySection({
         </h3>
       </div>
       {isLoading && history.length === 0 ? (
-        <p className="px-3 py-3 text-sm text-gray-500">Đang tải lịch sử...</p>
+        <p className="px-3 py-3 text-sm text-gray-500"><LoadingLabel label="Đang tải lịch sử" /></p>
       ) : null}
       {error ? (
         <div className="flex items-center justify-between gap-3 px-3 py-2">
-          <p role="alert" className="text-sm font-medium text-red-600">
+          <p role="alert" className="text-sm font-medium text-destructive">
             Chưa tải được đầy đủ lịch sử giao dịch.
           </p>
           <Button
@@ -635,6 +724,11 @@ function RefundHistorySection({
                       : "Chuyển khoản"}
                     {transaction.created_by_name
                       ? ` · ${transaction.created_by_name}`
+                      : ""}
+                    {transaction.settlement_bank_name
+                      ? ` · ${transaction.settlement_bank_name} · ****${
+                          transaction.settlement_account_number?.slice(-4) ?? ""
+                        }`
                       : ""}
                   </p>
                   {transaction.note ? (
@@ -679,13 +773,17 @@ function RefundHistorySection({
                       aria-invalid={Boolean(reversalError)}
                       aria-describedby={reversalError ? reversalErrorId : undefined}
                       placeholder="Ví dụ: Nhập nhầm số tiền hoàn"
-                      className="form-input-text mt-1.5 h-9 w-full rounded-md border border-gray-200 bg-white px-3 outline-none focus:border-gray-400 focus:ring-2 focus:ring-gray-100"
+                      className={cn(
+                        formTextControlClassName,
+                        "mt-1.5",
+                        reversalError && formTextControlErrorClassName,
+                      )}
                     />
                   </label>
                   <p
                     id={reversalErrorId}
                     role={reversalError ? "alert" : undefined}
-                    className="mt-1.5 min-h-5 text-sm font-medium text-red-600"
+                    className="mt-1.5 min-h-5 text-sm font-medium text-destructive"
                   >
                     {reversalError ?? ""}
                   </p>
@@ -701,7 +799,7 @@ function RefundHistorySection({
                     </Button>
                     <Button
                       type="button"
-                      className="h-8 bg-gray-900 px-3 text-xs text-white hover:bg-gray-800"
+                      className="h-8 bg-primary px-3 text-xs text-primary-foreground hover:bg-primary/90"
                       disabled={isBusy}
                       onClick={() => onConfirmReversal(transaction)}
                     >

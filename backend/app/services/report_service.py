@@ -53,6 +53,7 @@ def _item_response(item: FeeOperationItem) -> FeeOperationItemResponse:
         fee_record_id=UUID(item.fee_record_id) if item.fee_record_id else None,
         enrollment_id=UUID(item.enrollment_id) if item.enrollment_id else None,
         student_id=UUID(item.student_id) if item.student_id else None,
+        student_code=item.student_code_snapshot,
         student_name=item.student_name_snapshot,
         class_id=UUID(item.class_id) if item.class_id else None,
         class_name=item.class_name_snapshot,
@@ -145,6 +146,9 @@ def _apply_filters(
                     FeeOperationItem.operation_id == FeeOperation.id,
                     or_(
                         FeeOperationItem.student_name_snapshot.icontains(
+                            term, autoescape=True
+                        ),
+                        FeeOperationItem.student_code_snapshot.icontains(
                             term, autoescape=True
                         ),
                         FeeOperationItem.class_name_snapshot.icontains(

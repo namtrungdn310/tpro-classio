@@ -5,18 +5,23 @@ import pytest
 from fastapi import HTTPException
 from fastapi.routing import APIRoute
 
-from app.core.dependencies import get_current_user
+from app.core.dependencies import require_management
 from app.routers.reports import router
 from app.services.report_service import _decode_cursor, _encode_cursor
 
 
-def test_report_routes_are_read_only_and_available_to_authenticated_users() -> None:
+def test_report_routes_are_management_only_and_mutation_is_bounded_to_reconciliation() -> (
+    None
+):
     routes = [route for route in router.routes if isinstance(route, APIRoute)]
 
     assert routes
-    assert all(route.methods == {"GET"} for route in routes)
+    write_routes = [route for route in routes if route.methods != {"GET"}]
+    assert len(write_routes) == 1
+    assert write_routes[0].methods == {"POST"}
+    assert write_routes[0].path == "/fees/reconciliation/{queue_id}/resolve"
     assert all(
-        get_current_user
+        require_management
         in {dependency.call for dependency in route.dependant.dependencies}
         for route in routes
     )

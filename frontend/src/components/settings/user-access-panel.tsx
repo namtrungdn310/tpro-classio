@@ -3,7 +3,15 @@
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Ban, LoaderCircle, Mail, RefreshCw, RotateCcw, UsersRound } from "lucide-react";
+import {
+  RiForbid2Line as Ban,
+  RiLoader4Line as LoaderCircle,
+  RiMailLine as Mail,
+  RiRefreshLine as RefreshCw,
+  RiArrowGoBackLine as RotateCcw,
+  RiCloseLine as CloseLine,
+  RiTeamLine as UsersRound,
+} from "react-icons/ri";
 import { z } from "zod";
 import { useToast } from "@/components/providers/toast-provider";
 import { SettingsCard } from "@/components/settings/settings-card";
@@ -25,6 +33,7 @@ import {
   type UserAccount,
 } from "@/lib/api/auth";
 import { getApiErrorMessage } from "@/lib/api/errors";
+import { getActiveStaffOptions } from "@/lib/api/staff";
 import {
   fieldFeedbackAfterBlur,
   fieldFeedbackAfterInput,
@@ -33,13 +42,14 @@ import {
   shouldShowFieldError,
 } from "@/lib/auth/field-feedback";
 import { authQueryKeys } from "@/lib/auth/query-keys";
+import { staffQueryKeys } from "@/lib/staff/query-keys";
 import { useAuth } from "@/lib/hooks/useAuth";
 import { noSavedInfoFormProps } from "@/lib/forms/saved-info-policy";
 import { validationMessages } from "@/lib/forms/validation-messages";
 import { useModalDialog } from "@/lib/hooks/useModalDialog";
 import { cn } from "@/lib/utils";
 
-type UserRole = "admin" | "viewer";
+type UserRole = "admin" | "teacher";
 type PendingAction = "role" | "status";
 type ConfirmationTarget =
   | { account: UserAccount; kind: "role"; nextRole: UserRole }
@@ -65,6 +75,8 @@ export function UserAccessPanel() {
   // Invite dialog state
   const [showInviteDialog, setShowInviteDialog] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState<UserRole>("teacher");
+  const [inviteStaffId, setInviteStaffId] = useState("");
   const [inviteResult, setInviteResult] = useState<InvitationResponse | null>(null);
   const [isInviting, setIsInviting] = useState(false);
   const [inviteServerError, setInviteServerError] = useState("");
@@ -74,11 +86,17 @@ export function UserAccessPanel() {
     queryKey: authQueryKeys.users,
     queryFn: getUsers,
     staleTime: 2 * 60 * 1000,
-    refetchOnMount: "always",
-    refetchOnWindowFocus: "always",
-    refetchInterval: 30_000,
-    refetchIntervalInBackground: false,
   });
+  const inviteStaffOptionsQuery = useQuery({
+    queryKey: staffQueryKeys.staffOptions,
+    queryFn: getActiveStaffOptions,
+    enabled: showInviteDialog && inviteRole === "teacher" && !inviteResult,
+    staleTime: 2 * 60 * 1000,
+  });
+  const inviteStaffOptions = useMemo(
+    () => inviteStaffOptionsQuery.data ?? [],
+    [inviteStaffOptionsQuery.data],
+  );
 
   const users = useMemo(() => usersQuery.data ?? [], [usersQuery.data]);
   const sortedUsers = useMemo(() => sortAccounts(users), [users]);
@@ -135,9 +153,12 @@ export function UserAccessPanel() {
       notify.success(
         role === "admin"
           ? `Đã cấp quyền Admin cho ${getAccountName(account)}.`
-          : `Đã chuyển ${getAccountName(account)} về quyền Viewer.`,
+          : role === "teacher"
+            ? `Đã cấp quyền Giáo viên cho ${getAccountName(account)}.`
+            : `Đã chuyển ${getAccountName(account)} sang quyền Giáo viên.`,
       );
       void queryClient.invalidateQueries({ queryKey: authQueryKeys.users });
+      void queryClient.invalidateQueries({ queryKey: staffQueryKeys.root });
       return true;
     } catch (error) {
       notify.error(getApiErrorMessage(error, "Không thể thay đổi quyền người dùng."), {
@@ -161,6 +182,7 @@ export function UserAccessPanel() {
           : `Đã kích hoạt lại ${getAccountName(account)}.`,
       );
       void queryClient.invalidateQueries({ queryKey: authQueryKeys.users });
+      void queryClient.invalidateQueries({ queryKey: staffQueryKeys.root });
       return true;
     } catch (error) {
       notify.error(getApiErrorMessage(error, "Không thể thay đổi trạng thái tài khoản."), {
@@ -190,12 +212,23 @@ export function UserAccessPanel() {
     if (!parsedEmail.success) {
       return;
     }
+    if (inviteRole === "teacher" && !inviteStaffId) {
+      setInviteServerError("Vui lòng chọn hồ sơ giáo viên cần liên kết.");
+      return;
+    }
     const email = parsedEmail.data.toLowerCase();
     setIsInviting(true);
     setInviteServerError("");
     try {
-      const result = await createInvitation(email);
+      const result = await createInvitation(
+        email,
+        inviteRole,
+        inviteRole === "teacher" ? inviteStaffId : null,
+      );
       setInviteResult(result);
+      if (result.role === "teacher") {
+        void queryClient.invalidateQueries({ queryKey: staffQueryKeys.root });
+      }
     } catch (err) {
       setInviteServerError(
         getApiErrorMessage(err, "Không tạo được lời mời. Vui lòng thử lại."),
@@ -208,6 +241,8 @@ export function UserAccessPanel() {
   function handleCloseInviteDialog() {
     setShowInviteDialog(false);
     setInviteEmail("");
+    setInviteRole("teacher");
+    setInviteStaffId("");
     setInviteResult(null);
     setInviteServerError("");
     setInviteSubmitAttempted(false);
@@ -330,9 +365,8 @@ export function UserAccessPanel() {
       {/* Invite member dialog — owner only */}
       {showInviteDialog ? (
         <InviteDialogShell isBusy={isInviting} onClose={handleCloseInviteDialog}>
-            <h2 className="page-title-text mb-1 text-gray-950">Mời thành viên</h2>
             <p className="form-message-text mb-4 text-gray-500">
-              Nhập email để tạo đường dẫn mời dùng một lần.
+              Chọn đúng quyền và hồ sơ trước khi tạo đường dẫn mời dùng một lần.
             </p>
 
             {!inviteResult ? (
@@ -349,7 +383,8 @@ export function UserAccessPanel() {
                 </label>
                 <input
                   id="invite-email"
-                  type="email"
+                  type="text"
+                  inputMode="email"
                   value={inviteEmail}
                   onChange={(event) => {
                     const value = event.currentTarget.value;
@@ -360,7 +395,6 @@ export function UserAccessPanel() {
                     );
                   }}
                   onBlur={() => setInviteEmailFeedback(fieldFeedbackAfterBlur)}
-                  placeholder="nguoi-dung@example.com"
                   autoComplete="off"
                   disabled={isInviting}
                   aria-invalid={Boolean(inviteError)}
@@ -372,32 +406,109 @@ export function UserAccessPanel() {
                   )}
                 />
                 {inviteError ? (
-                  <p id="invite-email-error" role="alert" className="form-message-text mb-3 mt-1 text-red-600">
+                  <p id="invite-email-error" role="alert" className="form-message-text mb-3 mt-1 text-destructive">
                     {inviteError}
                   </p>
                 ) : null}
-                <div className="flex justify-end gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={isInviting}
-                    onClick={handleCloseInviteDialog}
-                    className="h-8 rounded-md px-3 text-sm"
-                  >
-                    Huỷ
-                  </Button>
-                  <Button
-                    type="submit"
-                    disabled={isInviting}
-                    className="h-8 rounded-md bg-gray-950 px-3 text-sm text-white hover:bg-black"
-                  >
-                    <LoadingLabel
-                      label="Đang tạo"
-                      isLoading={isInviting}
-                      idleLabel="Tạo lời mời"
-                    />
-                  </Button>
-                </div>
+                <fieldset className="mb-4">
+                  <legend className="form-label-text mb-1.5 text-gray-700">Vai trò</legend>
+                  <div className="grid h-8 grid-cols-2 overflow-hidden rounded-md border border-gray-200 bg-gray-100 p-0.5">
+                    {(["teacher", "admin"] as const).map((role) => (
+                      <button
+                        key={role}
+                        type="button"
+                        aria-pressed={inviteRole === role}
+                        disabled={isInviting}
+                        onClick={() => {
+                          setInviteRole(role);
+                          setInviteStaffId("");
+                          setInviteServerError("");
+                        }}
+                        className={cn(
+                          "select-none rounded-[5px] text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40",
+                          inviteRole === role
+                            ? "bg-primary text-primary-foreground shadow-sm"
+                            : "text-gray-600 hover:bg-primary-soft hover:text-primary",
+                          "disabled:cursor-not-allowed disabled:opacity-60",
+                        )}
+                      >
+                        {role === "teacher" ? "Nhân sự chấm công" : "Admin"}
+                      </button>
+                    ))}
+                  </div>
+                </fieldset>
+                {inviteRole === "teacher" ? (
+                  <div className="mb-4">
+                    <label htmlFor="invite-staff" className="form-label-text mb-1.5 block text-gray-700">
+                      Hồ sơ nhân sự
+                    </label>
+                    <div className="relative">
+                      <select
+                        id="invite-staff"
+                        value={inviteStaffId}
+                        disabled={isInviting || inviteStaffOptionsQuery.isPending}
+                        aria-busy={inviteStaffOptionsQuery.isPending || undefined}
+                        onChange={(event) => {
+                          const selectedId = event.currentTarget.value;
+                          setInviteStaffId(selectedId);
+                          setInviteServerError("");
+                          // Prefill the invited account email from the staff
+                          // profile (admin already entered it) to avoid retyping.
+                          const selected = inviteStaffOptions.find(
+                            (option) => option.id === selectedId,
+                          );
+                          if (selected?.email && !inviteEmail.trim()) {
+                            setInviteEmail(selected.email);
+                            setInviteEmailFeedback((current) =>
+                              fieldFeedbackAfterInput(current, selected.email),
+                            );
+                          }
+                        }}
+                        className={cn(formTextControlClassName, "appearance-auto pr-9")}
+                      >
+                        <option value="">Chọn nhân sự</option>
+                        {inviteStaffOptions.map((option) => (
+                          <option key={option.id} value={option.id}>
+                            {option.full_name}
+                            {option.email ? ` · ${option.email}` : ""}
+                          </option>
+                        ))}
+                      </select>
+                      {inviteStaffOptionsQuery.isPending ? (
+                        <LoaderCircle className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-gray-400 motion-reduce:animate-none" aria-hidden="true" />
+                      ) : null}
+                    </div>
+                    {inviteStaffOptionsQuery.isError ? (
+                      <p role="alert" className="form-message-text mt-1 text-destructive">
+                        Không tải được danh sách nhân sự. Vui lòng thử làm mới trang.
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+                <footer className="-mx-5 -mb-5 mt-4 border-t border-gray-200 bg-white px-5 py-3">
+                  <div className="flex justify-end gap-3">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={isInviting}
+                      onClick={handleCloseInviteDialog}
+                      className="h-8 rounded-md px-3 text-sm"
+                    >
+                      Huỷ
+                    </Button>
+                    <Button
+                      type="submit"
+                      disabled={isInviting}
+                      className="h-8 rounded-md bg-primary px-3 text-sm text-primary-foreground hover:bg-primary/90"
+                    >
+                      {isInviting ? (
+                        <LoadingLabel label="Đang tạo" />
+                      ) : (
+                        "Tạo lời mời"
+                      )}
+                    </Button>
+                  </div>
+                </footer>
               </form>
             ) : (
               <>
@@ -416,7 +527,7 @@ export function UserAccessPanel() {
                    value={inviteResult.invite_url}
                     className={cn(
                       formTextControlClassName,
-                      "min-w-0 flex-1 bg-gray-50 text-xs text-gray-700",
+                      "min-w-0 flex-1 bg-gray-50 text-gray-700",
                     )}
                   />
                   <button
@@ -430,7 +541,7 @@ export function UserAccessPanel() {
                 <button
                   type="button"
                   onClick={handleCloseInviteDialog}
-                  className="w-full rounded-lg bg-gray-900 py-2 text-sm font-medium text-white transition hover:bg-gray-800"
+                  className="w-full rounded-lg bg-primary py-2 text-sm font-medium text-primary-foreground transition hover:bg-primary/90"
                 >
                   Đóng
                 </button>
@@ -458,7 +569,7 @@ function InviteDialogShell({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-4"
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/30 px-4"
       onPointerDown={(event) => {
         backdropPointerDownRef.current = event.target === event.currentTarget;
       }}
@@ -479,9 +590,24 @@ function InviteDialogShell({
         aria-label="Mời thành viên"
         aria-busy={isBusy || undefined}
         tabIndex={-1}
-        className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl"
+        className="w-full max-w-sm overflow-hidden rounded-xl bg-white shadow-xl"
       >
-        {children}
+        <div className="flex items-center justify-between gap-3 border-b border-primary/15 bg-primary-soft/60 px-5 py-3.5">
+          <h2 className="section-title-text select-none text-primary">
+            Mời thành viên
+          </h2>
+          <button
+            type="button"
+            aria-label="Đóng"
+            title="Đóng"
+            disabled={isBusy}
+            onClick={requestClose}
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-gray-500 transition hover:bg-primary-soft hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <CloseLine className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
+        <div className="p-5">{children}</div>
       </div>
     </div>,
     document.body,
@@ -524,15 +650,15 @@ function UserAccessList({
       </div>
 
       <div role="table" aria-label="Danh sách quyền truy cập" className="hidden h-full min-h-0 lg:flex lg:flex-col">
-        <div role="rowgroup" className="shrink-0 border-b border-gray-200 bg-gray-50">
-          <div role="row" className={`grid ${USER_GRID} table-heading-text items-center text-gray-700`}>
+        <div role="rowgroup" className="shrink-0 border-b border-gray-200 bg-gray-100">
+          <div role="row" className={`grid ${USER_GRID} table-heading-text items-center text-gray-800`}>
             <ColumnHeader>Tài khoản</ColumnHeader>
             <ColumnHeader>Vai trò</ColumnHeader>
             <ColumnHeader>Trạng thái</ColumnHeader>
             <ColumnHeader align="center">Thao tác</ColumnHeader>
           </div>
         </div>
-        <div role="rowgroup" className="scrollbar-hidden min-h-0 flex-1 divide-y divide-gray-100 overflow-x-hidden overflow-y-auto overscroll-contain">
+        <div role="rowgroup" className="scrollbar-hidden min-h-0 flex-1 divide-y divide-gray-200 overflow-x-hidden overflow-y-auto overscroll-contain">
           {users.map((account) => (
             <UserAccessRow
               key={account.id}
@@ -550,7 +676,7 @@ function UserAccessList({
 
 function UserAccessRow(props: UserAccessItemProps) {
   return (
-    <div role="row" className={`grid ${USER_GRID} items-center transition-colors hover:bg-gray-50/80`}>
+    <div role="row" className={`grid ${USER_GRID} items-center transition-colors hover:bg-gray-100/60`}>
       <DataCell><AccountIdentity account={props.account} /></DataCell>
       <DataCell><AccountRoleControl {...props} /></DataCell>
       <DataCell><AccountStatusLabel status={getAccountStatus(props.account)} /></DataCell>
@@ -595,25 +721,25 @@ function AccountRoleControl({ account, onRoleChange, pendingAction }: UserAccess
     <div
       role="group"
       aria-label={`Vai trò của ${getAccountName(account)}`}
-      className="grid h-8 w-[138px] shrink-0 grid-cols-2 overflow-hidden rounded-md border border-gray-200 bg-gray-100 p-0.5"
+      className="grid h-8 w-[138px] shrink-0 select-none grid-cols-2 overflow-hidden rounded-md border border-gray-200 bg-gray-100 p-0.5"
     >
-      {(["viewer", "admin"] as const).map((role) => {
+      {(["teacher", "admin"] as const).map((role) => {
         const selected = normalizeRole(account) === role;
         return (
           <button
             key={role}
             type="button"
             aria-pressed={selected}
-            aria-label={`Đặt ${getAccountName(account)} thành ${role === "admin" ? "Admin" : "Viewer"}`}
+            aria-label={`Đặt ${getAccountName(account)} thành ${role === "admin" ? "Admin" : "Giáo viên"}`}
             disabled={Boolean(pendingAction) || selected}
             onClick={() => onRoleChange(account, role)}
-            className={`rounded-[5px] text-xs font-medium transition ${
+            className={`select-none rounded-[5px] text-xs font-medium transition ${
               selected
-                ? "bg-white text-gray-950 shadow-sm"
-                : "text-gray-600 hover:bg-gray-200 hover:text-gray-900"
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : "text-gray-600 hover:bg-primary-soft hover:text-primary"
             } disabled:cursor-default`}
           >
-            {role === "admin" ? "Admin" : "Viewer"}
+            {role === "admin" ? "Admin" : "Giáo viên"}
           </button>
         );
       })}
@@ -634,9 +760,9 @@ function AccountStatusAction({ account, onStatusChange, pendingAction }: UserAcc
       type="button"
       disabled={Boolean(pendingAction)}
       onClick={() => onStatusChange(account)}
-      className={`inline-flex h-8 min-w-[102px] items-center justify-center gap-1.5 rounded-md border bg-white px-2.5 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 disabled:cursor-wait disabled:opacity-60 ${
+      className={`inline-flex h-8 min-w-[102px] select-none items-center justify-center gap-1.5 rounded-md border bg-white px-2.5 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 disabled:cursor-wait disabled:opacity-60 ${
         status === "active"
-          ? "border-gray-200 text-gray-600 hover:border-red-200 hover:bg-red-50 hover:text-red-700 focus-visible:ring-red-100"
+          ? "border-gray-200 text-gray-600 hover:border-destructive/30 hover:bg-destructive-soft hover:text-destructive focus-visible:ring-destructive/20"
           : "border-emerald-200 text-emerald-700 hover:bg-emerald-50 focus-visible:ring-emerald-100"
       }`}
     >
@@ -688,7 +814,7 @@ function AccountStatusLabel({ status }: { status: AccountStatus }) {
 
 function getConfirmationTitle(target: ConfirmationTarget | null) {
   if (!target) return "Xác nhận thay đổi";
-  if (target.kind === "role") return target.nextRole === "admin" ? "Cấp quyền Admin" : "Chuyển về Viewer";
+  if (target.kind === "role") return target.nextRole === "admin" ? "Cấp quyền Admin" : "Chuyển sang Giáo viên";
   if (target.kind === "reactivate") return "Kích hoạt lại tài khoản";
   return "Vô hiệu hoá tài khoản";
 }
@@ -699,7 +825,7 @@ function getConfirmationDescription(target: ConfirmationTarget | null) {
   if (target.kind === "role") {
     return (
       <>
-        Đổi quyền của <strong className="font-semibold text-gray-800">{name}</strong> từ {getRoleLabel(target.account)} sang {target.nextRole === "admin" ? "Admin" : "Viewer"}. Các phiên đăng nhập hiện tại sẽ bị thu hồi.
+        Đổi quyền của <strong className="font-semibold text-gray-800">{name}</strong> từ {getRoleLabel(target.account)} sang {target.nextRole === "admin" ? "Admin" : "Giáo viên"}. Các phiên đăng nhập hiện tại sẽ bị thu hồi.
       </>
     );
   }
@@ -734,11 +860,16 @@ function sortAccounts(accounts: UserAccount[]) {
 }
 
 function normalizeRole(account: UserAccount): UserRole {
-  return account.role === "admin" ? "admin" : "viewer";
+  if (account.role === "admin") return "admin";
+  return "teacher";
 }
 
 function getRoleLabel(account: UserAccount) {
-  return account.is_owner ? "Dev" : normalizeRole(account) === "admin" ? "Admin" : "Viewer";
+  return account.is_owner
+    ? "Dev"
+    : normalizeRole(account) === "admin"
+      ? "Admin"
+      : "Giáo viên";
 }
 
 function getAccountStatus(account: UserAccount): AccountStatus {
@@ -779,7 +910,7 @@ function UserAccessSkeleton() {
       role="status"
       aria-live="polite"
       aria-label="Đang tải danh sách người dùng"
-      className="animate-pulse divide-y divide-gray-100 motion-reduce:animate-none"
+      className="animate-pulse divide-y divide-gray-200 motion-reduce:animate-none"
     >
       {Array.from({ length: 5 }).map((_, index) => (
         <div key={index} className={`hidden ${USER_GRID} lg:grid`}>

@@ -10,7 +10,13 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { CheckCircle2, CircleAlert, Info, TriangleAlert, X } from "lucide-react";
+import {
+  RiCheckboxCircleLine as CheckCircle2,
+  RiErrorWarningLine as CircleAlert,
+  RiInformationLine as Info,
+  RiErrorWarningLine as TriangleAlert,
+  RiCloseLine as X,
+} from "react-icons/ri";
 
 export type ToastVariant = "success" | "error" | "warning" | "info";
 

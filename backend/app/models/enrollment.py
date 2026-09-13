@@ -1,14 +1,15 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, ForeignKey, Numeric, func, text
+from sqlalchemy import Date, DateTime, ForeignKey, Integer, Numeric, Text, func, text
 from sqlalchemy.dialects.postgresql import ENUM, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+from app.core.workspace import WorkspaceScoped
 
 
-class Enrollment(Base):
+class Enrollment(WorkspaceScoped, Base):
     __tablename__ = "enrollments"
 
     id: Mapped[str] = mapped_column(
@@ -27,12 +28,34 @@ class Enrollment(Base):
         nullable=False,
     )
     enrollment_date: Mapped[date | None] = mapped_column(Date)
+    admission_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    # Exclusive business boundary. This is the end of one student's class
+    # membership, not a planned class end date.
+    ended_on: Mapped[date | None] = mapped_column(Date)
+    current_billing_revision_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("billing_anchor_revisions.id", ondelete="RESTRICT"),
+    )
+    billing_anchor_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
     custom_fee: Mapped[Decimal | None] = mapped_column(Numeric(12, 0))
     status: Mapped[str] = mapped_column(
-        ENUM("active", "dropped", name="enrollment_status", create_type=False),
+        ENUM(
+            "active",
+            "dropped",
+            "completed",
+            "cancelled",
+            name="enrollment_status",
+            create_type=False,
+        ),
         nullable=False,
         default="active",
     )
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    end_reason: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -46,4 +69,21 @@ class Enrollment(Base):
         back_populates="enrollment",
         cascade="all, delete-orphan",
         passive_deletes=True,
+    )
+    current_billing_revision = relationship(
+        "BillingAnchorRevision",
+        foreign_keys=[current_billing_revision_id],
+        post_update=True,
+    )
+    billing_anchor_revisions = relationship(
+        "BillingAnchorRevision",
+        foreign_keys="BillingAnchorRevision.enrollment_id",
+        back_populates="enrollment",
+    )
+    slot_selections = relationship(
+        "EnrollmentSlotSelection",
+        back_populates="enrollment",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        lazy="selectin",
     )

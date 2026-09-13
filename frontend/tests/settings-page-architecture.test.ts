@@ -41,7 +41,7 @@ const loginPageSource = readFileSync(new URL("../src/app/login/page.tsx", import
 test("settings page is split into focused responsive sections and reserves access management for owner", () => {
   assert.match(pageSource, /<AccountSettingsSection user=\{user\}/);
   assert.match(pageSource, /<SecuritySettingsSection user=\{user\}/);
-  assert.match(pageSource, /const canManageUsers = Boolean\(user\.is_owner\)/);
+  assert.match(pageSource, /const canManageUsers = Boolean\(user\?\.is_owner\)/);
   assert.match(pageSource, /canManageUsers \? \(/);
   assert.match(pageSource, /overflow-x-hidden/);
   assert.match(pageSource, /min-\[1360px\]:h-full/);
@@ -83,7 +83,8 @@ test("account settings use shared typography, accessible labels, loading feedbac
   );
   assert.match(accountSource, /disabled=\{!hasUsernameChanges\}/);
   assert.doesNotMatch(accountSource, /Thông tin nhận diện và phạm vi quyền/);
-  assert.match(roleSource, /viewer: "Viewer"/);
+  assert.match(roleSource, /teacher: "Giáo viên"/);
+  assert.doesNotMatch(roleSource, /viewer:/);
   assert.doesNotMatch(roleSource, /description:/);
 });
 
@@ -145,9 +146,10 @@ test("user access panel cannot bypass onboarding when an account is still pendin
   assert.match(accessSource, /pendingById/);
   assert.match(accessSource, /className="ml-auto flex items-center gap-2"/);
   assert.match(accessSource, /<DataSectionError/);
-  assert.match(accessSource, /refetchOnWindowFocus: "always"/);
-  assert.match(accessSource, /refetchInterval: 30_000/);
-  assert.match(accessSource, /refetchIntervalInBackground: false/);
+  assert.doesNotMatch(accessSource, /refetchOnMount: true/);
+  assert.doesNotMatch(accessSource, /refetchOnWindowFocus: "always"/);
+  assert.doesNotMatch(accessSource, /refetchInterval: 30_000/);
+  assert.doesNotMatch(accessSource, /refetchIntervalInBackground: false/);
   assert.match(accessSource, /<ColumnHeader align="center">Thao tác<\/ColumnHeader>/);
   assert.match(accessSource, /align === "center" \? "text-center" : "text-left"/);
   assert.doesNotMatch(accessSource, /Phê duyệt tài khoản và quản lý phạm vi truy cập/);
@@ -157,6 +159,7 @@ test("user access panel cannot bypass onboarding when an account is still pendin
 });
 
 test("invitation email validation follows the shared submit and correction lifecycle", () => {
+  assert.doesNotMatch(accessSource, /placeholder="nguoi-dung@example\.com"/);
   assert.match(accessSource, /fieldFeedbackAfterInput/);
   assert.match(accessSource, /fieldFeedbackAfterBlur/);
   assert.match(accessSource, /fieldFeedbackAfterSubmit/);

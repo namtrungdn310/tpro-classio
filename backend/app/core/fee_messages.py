@@ -10,7 +10,7 @@ DEFAULT_FEE_RECEIPT_TEMPLATE = """TPRO English xác nhận đã nhận học ph�
 {{chi_tiet_hoc_phi}}
 Ngày đến hạn: {{ngay_den_han}}.
 Tổng học phí đã nhận: {{tong_tien}}.
-Cảm ơn phụ huynh."""
+TPRO English cảm ơn phụ huynh."""
 
 FEE_MESSAGE_COMMON_TOKENS = frozenset(
     {
@@ -23,13 +23,18 @@ FEE_MESSAGE_COMMON_TOKENS = frozenset(
 )
 FEE_MESSAGE_TOKEN_PATTERN = re.compile(r"{{([a-z_]+)}}")
 MAX_FEE_MESSAGE_TEMPLATE_LENGTH = 1400
-LEGACY_OVERDUE_TOKEN = "{{nhac_qua_han}}"
-DUE_DATE_TOKEN = "{{ngay_den_han}}"
-CLASS_AMOUNT_TOKEN = "{{chi_tiet_hoc_phi}}"
+# Template placeholders, not credentials.  Bandit B105 heuristically treats
+# their names as passwords, so keep the suppression local and documented.
+LEGACY_OVERDUE_TOKEN = "{{nhac_qua_han}}"  # nosec B105
+DUE_DATE_TOKEN = "{{ngay_den_han}}"  # nosec B105
+CLASS_AMOUNT_TOKEN = "{{chi_tiet_hoc_phi}}"  # nosec B105
 
 
 def normalize_fee_message_template(value: str) -> str:
-    normalized = value.replace("\r\n", "\n").replace("\r", "\n").strip()
+    # Preserve the exact admin-authored layout. Only normalize platform line
+    # endings; hard breaks, including intentional blank/trailing lines, are
+    # part of the Zalo message contract.
+    normalized = value.replace("\r\n", "\n").replace("\r", "\n")
     if any(
         ord(character) < 32 and character not in {"\n", "\t"}
         for character in normalized
@@ -39,14 +44,9 @@ def normalize_fee_message_template(value: str) -> str:
 
 
 def normalize_fee_notification_message(value: str) -> str:
-    normalized = value.replace("\r\n", "\n").replace("\r", "\n").strip()
-    if not normalized:
+    normalized = normalize_fee_message_template(value)
+    if not normalized.strip():
         raise ValueError("Nội dung thông báo không được để trống")
-    if any(
-        ord(character) < 32 and character not in {"\n", "\t"}
-        for character in normalized
-    ):
-        raise ValueError("Nội dung thông báo chứa ký tự điều khiển không hợp lệ")
     return normalized
 
 
@@ -76,6 +76,8 @@ def validate_fee_message_template(
         normalize_fee_message_template(value),
         allow_legacy_overdue_token=allow_legacy_overdue_token,
     )
+    if not normalized.strip():
+        raise ValueError("Mẫu tin nhắn không được để trống")
     if not 20 <= len(normalized) <= MAX_FEE_MESSAGE_TEMPLATE_LENGTH:
         raise ValueError("Mẫu tin nhắn phải có từ 20 đến 1400 ký tự")
     tokens = set(FEE_MESSAGE_TOKEN_PATTERN.findall(normalized))

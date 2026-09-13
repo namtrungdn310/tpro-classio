@@ -1,8 +1,11 @@
 import asyncio
 import logging
 import time
+import uuid
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi import HTTPException
 from fastapi import Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -11,32 +14,328 @@ from starlette.responses import Response
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.core.config import settings
-from app.core.billing import get_billing_period_key
-from app.core.database import AsyncSessionLocal
+from app.core.database import (
+    AsyncSessionLocal,
+    release_advisory_lock,
+    try_advisory_lock,
+)
 from app.core.http import supabase_auth_client
+from app.core.performance import (
+    get_request_metrics,
+    log_request_metrics_summary,
+    track_request_metrics,
+)
+from app.routers.attendance import router as attendance_router
+from app.routers.banking import router as banking_router
+from app.routers.pay2s_webhook import router as pay2s_webhook_router
+from app.routers.ops import router as ops_router
 from app.routers.auth import router as auth_router
+from app.routers.class_makeup import exception_router as class_exception_router
+from app.routers.class_makeup import router as class_makeup_router
 from app.routers.classes import router as classes_router
+from app.routers.contact_suggestions import router as contact_suggestions_router
 from app.routers.dashboard import router as dashboard_router
 from app.routers.fees import router as fees_router
 from app.routers.reports import router as reports_router
 from app.routers.staff import router as staff_router
 from app.routers.students import enrollments_router, students_router
-from app.services.class_service import get_classes
+from app.routers.suspensions import router as suspensions_router
+from app.routers.enrollment_suspensions import router as enrollment_suspensions_router
 from app.services.auth_flow_service import purge_expired_auth_flows
-from app.services.dashboard_service import get_dashboard_overview
-from app.services.fee_service import get_fee_records
-from app.services.student_service import get_students
 from app.services.google_identity_service import sync_due_google_avatars
 
 logger = logging.getLogger("tpro_classio")
 avatar_sync_task: asyncio.Task[None] | None = None
 auth_flow_cleanup_task: asyncio.Task[None] | None = None
 
+# Readiness probe cache: a burst of container healthchecks shares one probe.
+_READINESS_CACHE_TTL_SECONDS = 30
+_READINESS_CACHE_AT: float = 0.0
+_READINESS_CACHE_OK: bool | None = None
+_READINESS_LOCK = asyncio.Lock()
+
+# A successful TCP/SELECT 1 probe is not enough after a forward-only domain
+# rollout: an old Supabase schema can accept connections while every new
+# business endpoint fails at runtime.  These relations are stable markers for
+# migrations 055, 059, 063, 067, 068, 071, 074, 076 and 077 respectively. Keeping the
+# list small makes the readiness query bounded while still failing closed when
+# the Round 6/7 schema has not been installed.
+_REQUIRED_SCHEMA_RELATIONS = (
+    "student_code_registry",
+    "class_schedule_slots",
+    "enrollment_service_credit_events",
+    "staff_attendance_entries",
+    "payment_requests",
+    "payment_request_items",
+    "workspace_payment_accounts",
+    "workspace_payment_providers",
+    "workspace_payment_webhooks",
+    "staff_payroll_settlements",
+    "staff_payroll_settlement_reversals",
+    "class_schedule_slot_teacher_events",
+    "billing_anchor_revisions",
+    "class_billing_cycle_revisions",
+    "student_membership_commands",
+    "student_membership_command_items",
+    "class_schedule_slot_staff_revisions",
+    "start_date_change_commands",
+    "start_date_change_command_items",
+)
+
+# Several forward migrations provide trigger-only invariants. Readiness must
+# verify those objects too, otherwise an old schema can report healthy while
+# direct writers bypass suspension or payroll/schedule invariants.
+_REQUIRED_SCHEMA_TRIGGERS = (
+    "class_schedule_adjustments:trg_class_schedule_adjustments_no_overlap",
+    "enrollments:trg_enrollments_no_open_suspension",
+    "class_schedule_slot_teacher_events:class_schedule_slot_teacher_events_append_only",
+    "staff_earning_ledger:staff_earning_rate_snapshot_integrity",
+    "student_membership_commands:student_membership_commands_update_guard",
+    "enrollments:enrollments_billing_revision_integrity",
+    "fee_records:fee_records_billing_revision_integrity",
+    "enrollment_slot_selections:enrollment_slot_selection_class_integrity",
+    "class_teachers:class_teachers_validate_staff",
+    "class_schedule_slot_staff:class_schedule_slot_staff_validate_assignment",
+    "class_schedule_slot_staff_revisions:class_schedule_slot_staff_revisions_validate",
+    "classes:class_admission_start_boundary",
+    "enrollments:enrollment_class_start_boundary",
+    "suspension_commands:zz_suspension_command_boundary",
+    "suspension_commands:suspension_commands_immutable",
+    "enrollment_service_credit_events:suspension_credit_command_boundary",
+    "service_credit_allocations:zz_service_credit_allocation_balance",
+    "enrollment_service_credit_events:zz_suspension_signed_event",
+    "service_credit_allocations:zz_suspension_request_protection",
+    "service_credit_allocations:suspension_allocation_windows",
+)
+
+_REQUIRED_SCHEMA_FUNCTIONS = (
+    "ops.platform_overview()",
+    "ops.disable_workspace_pay2s(uuid,uuid,text)",
+    "public.open_ended_class_lifecycle_version()",
+    "public.billing_anchor_revision_version()",
+    "public.class_package_duration_revision_version()",
+    "public.membership_effective_date_version()",
+    "public.contextual_class_staff_version()",
+)
+
+_REQUIRED_SCHEMA_COLUMNS = (
+    "classes:stopped_on",
+    "classes:stopped_at",
+    "classes:stopped_reason",
+    "payment_requests:sent_channel",
+    "payment_requests:send_count",
+    "payment_request_events:idempotency_key",
+    "payment_request_events:event_metadata",
+    "workspace_payment_providers:plan",
+    "enrollments:billing_anchor_version",
+    "enrollments:ended_on",
+    "fee_records:billing_revision_id",
+    "fee_records:review_required",
+    "billing_anchor_revisions:billing_cycle_weeks_snapshot",
+    "billing_anchor_revisions:change_kind",
+    "billing_anchor_revisions:scheduled_segments",
+    "billing_anchor_revisions:waived_intervals",
+    "class_teachers:role",
+    "staff_compensation_rates:assignment_role",
+    "enrollments:admission_version",
+    "start_date_change_commands:operation_kind",
+    "start_date_change_commands:execution_plan",
+    "fee_records:admission_date_snapshot",
+    "fee_records:billing_anchor_date_snapshot",
+    "fee_records:collection_due_offset_days",
+    "class_schedule_adjustments:adjustment_kind",
+    "class_schedule_adjustments:create_payload",
+    "class_schedule_adjustments:create_result",
+    "enrollment_suspensions:enrollment_id",
+    "enrollment_suspensions:version",
+    "suspension_commands:before_snapshot",
+    "enrollment_service_credit_events:suspension_command_id",
+    "service_credit_allocations:applies_from",
+)
+
+
+async def missing_required_schema_relations(session) -> list[str]:
+    result = await session.execute(
+        text(
+            "select required.name "
+            "from unnest(cast(:required_relations as text[])) as required(name) "
+            "where to_regclass('public.' || required.name) is null "
+            "order by required.name"
+        ),
+        {"required_relations": list(_REQUIRED_SCHEMA_RELATIONS)},
+    )
+    return list(result.scalars().all())
+
+
+async def missing_required_schema_features(session) -> list[str]:
+    """Return missing trigger-backed schema features for the current release."""
+    result = await session.execute(
+        text(
+            "select required.name "
+            "from unnest(cast(:required_triggers as text[])) as required(name) "
+            "where not exists ("
+            "  select 1 from pg_trigger tg "
+            "  join pg_class rel on rel.oid = tg.tgrelid "
+            "  join pg_namespace ns on ns.oid = rel.relnamespace "
+            "  where ns.nspname = 'public' "
+            "    and rel.relname = split_part(required.name, ':', 1) "
+            "    and tg.tgname = split_part(required.name, ':', 2) "
+            "    and not tg.tgisinternal"
+            ") order by required.name"
+        ),
+        {"required_triggers": list(_REQUIRED_SCHEMA_TRIGGERS)},
+    )
+    return list(result.scalars().all())
+
+
+async def missing_required_schema_functions(session) -> list[str]:
+    result = await session.execute(
+        text(
+            "select required.name "
+            "from unnest(cast(:required_functions as text[])) as required(name) "
+            "where to_regprocedure(required.name) is null "
+            "order by required.name"
+        ),
+        {"required_functions": list(_REQUIRED_SCHEMA_FUNCTIONS)},
+    )
+    return list(result.scalars().all())
+
+
+async def missing_required_schema_columns(session) -> list[str]:
+    result = await session.execute(
+        text(
+            "select required.name "
+            "from unnest(cast(:required_columns as text[])) as required(name) "
+            "where not exists ("
+            "  select 1 from information_schema.columns column_ "
+            "  where column_.table_schema = 'public' "
+            "    and column_.table_name = split_part(required.name, ':', 1) "
+            "    and column_.column_name = split_part(required.name, ':', 2)"
+            ") order by required.name"
+        ),
+        {"required_columns": list(_REQUIRED_SCHEMA_COLUMNS)},
+    )
+    return list(result.scalars().all())
+
+
+# Stable advisory-lock keys so multiple uvicorn workers never process the same
+# background batch twice.  Keep them distinct per worker type.
+_AUTH_FLOW_CLEANUP_LOCK_KEY = 9_081_012
+_AVATAR_SYNC_LOCK_KEY = 9_081_013
+
+
+async def _try_run_worker(
+    lock_key: int,
+    task,
+    *,
+    label: str,
+) -> None:
+    """Run ``task(session)`` once under a session-level advisory lock.
+
+    When another worker already holds the lock, this cycle is skipped instead
+    of duplicating the batch.  The lock is acquired and released on the same
+    session, so the task's commits never release it early.
+    """
+    async with AsyncSessionLocal() as session:
+        acquired = await try_advisory_lock(session, lock_key)
+        if not acquired:
+            return
+        try:
+            started_at = time.perf_counter()
+            result = await task(session)
+            duration_ms = (time.perf_counter() - started_at) * 1000
+            if result:
+                logger.info("%s: %s item(s) in %.1fms", label, result, duration_ms)
+            else:
+                logger.debug("%s: no items in %.1fms", label, duration_ms)
+        finally:
+            await release_advisory_lock(session, lock_key)
+
+
+async def run_auth_flow_cleanup_worker() -> None:
+    """Purge expired credential-bearing pre-auth rows on every deployment."""
+    while True:
+        try:
+            await _try_run_worker(
+                _AUTH_FLOW_CLEANUP_LOCK_KEY,
+                purge_expired_auth_flows,
+                label="Expired auth-flow cleanup",
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Expired auth-flow cleanup failed")
+        await asyncio.sleep(5 * 60)
+
+
+async def run_avatar_sync_worker() -> None:
+    """Idempotently sync due Google avatars without delaying requests."""
+    while True:
+        try:
+            await _try_run_worker(
+                _AVATAR_SYNC_LOCK_KEY,
+                sync_due_google_avatars,
+                label="Google avatar sync",
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Periodic Google avatar sync failed")
+        await asyncio.sleep(60 * 60)
+
+
+async def warm_database_connection() -> None:
+    """R6-D18: bounded readiness probe — SELECT 1 only (no full-read warmup)."""
+    started_at = time.perf_counter()
+    try:
+        async with AsyncSessionLocal() as session:
+            await session.execute(text("select 1"))
+        logger.info(
+            "Database connection warmup completed in %.1fms",
+            (time.perf_counter() - started_at) * 1000,
+        )
+    except Exception:
+        logger.exception("Database connection warmup failed")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global auth_flow_cleanup_task, avatar_sync_task
+    await warm_database_connection()
+    auth_flow_cleanup_task = asyncio.create_task(run_auth_flow_cleanup_worker())
+    if (
+        settings.google_client_id
+        and settings.google_client_secret
+        and settings.supabase_service_role_key
+        and settings.auth_encryption_key
+    ):
+        avatar_sync_task = asyncio.create_task(run_avatar_sync_worker())
+
+    yield
+
+    if auth_flow_cleanup_task is not None:
+        auth_flow_cleanup_task.cancel()
+        try:
+            await auth_flow_cleanup_task
+        except asyncio.CancelledError:
+            pass
+        auth_flow_cleanup_task = None
+    if avatar_sync_task is not None:
+        avatar_sync_task.cancel()
+        try:
+            await avatar_sync_task
+        except asyncio.CancelledError:
+            pass
+        avatar_sync_task = None
+    await supabase_auth_client.aclose()
+
+
 app = FastAPI(
     title="TPRO Classio API",
     docs_url="/docs" if settings.api_docs_enabled else None,
     redoc_url="/redoc" if settings.api_docs_enabled else None,
     openapi_url="/openapi.json" if settings.api_docs_enabled else None,
+    lifespan=lifespan,
 )
 app.add_middleware(
     TrustedHostMiddleware,
@@ -59,50 +358,77 @@ app.add_middleware(
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 app.include_router(auth_router, prefix="/auth")
+app.include_router(attendance_router, prefix="/attendance")
+app.include_router(banking_router, prefix="/banking")
+app.include_router(pay2s_webhook_router, prefix="/webhooks")
+app.include_router(ops_router, prefix="/ops")
 app.include_router(classes_router, prefix="/classes")
+app.include_router(class_makeup_router, prefix="/classes")
+app.include_router(class_exception_router, prefix="/class-session-exceptions")
+app.include_router(contact_suggestions_router, prefix="/contact-suggestions")
 app.include_router(dashboard_router, prefix="/dashboard")
 app.include_router(fees_router, prefix="/fees")
 app.include_router(reports_router, prefix="/reports")
 app.include_router(staff_router, prefix="/staff")
 app.include_router(students_router, prefix="/students")
 app.include_router(enrollments_router, prefix="/enrollments")
+app.include_router(suspensions_router, prefix="/classes")
+app.include_router(enrollment_suspensions_router, prefix="/enrollments")
 
 
 @app.middleware("http")
-async def log_slow_requests(request: Request, call_next) -> Response:
+async def instrument_requests(request: Request, call_next) -> Response:
     started_at = time.perf_counter()
-    try:
-        response = await call_next(request)
-    except Exception:
+    request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:16]
+    with track_request_metrics():
+        try:
+            response = await call_next(request)
+        except Exception:
+            duration_ms = (time.perf_counter() - started_at) * 1000
+            logger.exception(
+                "Request %s %s failed in %.1fms request_id=%s",
+                request.method,
+                request.url.path,
+                duration_ms,
+                request_id,
+            )
+            raise
+
         duration_ms = (time.perf_counter() - started_at) * 1000
-        logger.exception(
-            "Request %s %s failed in %.1fms",
-            request.method,
-            request.url.path,
-            duration_ms,
+        response.headers["X-Request-ID"] = request_id
+        response.headers["X-Process-Time-MS"] = f"{duration_ms:.1f}"
+        response.headers["Server-Timing"] = (
+            f"app;dur={duration_ms:.1f};desc=total,"
+            f"db;dur={get_request_metrics().db_total_ms:.1f}"
         )
-        raise
-
-    duration_ms = (time.perf_counter() - started_at) * 1000
-    response.headers["X-Process-Time-MS"] = f"{duration_ms:.1f}"
-    response.headers["Server-Timing"] = f"app;dur={duration_ms:.1f}"
-    response.headers["Cache-Control"] = "no-store"
-    response.headers["Pragma"] = "no-cache"
-    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
-    response.headers["Permissions-Policy"] = (
-        "camera=(), microphone=(), geolocation=(), browsing-topics=()"
-    )
-
-    if duration_ms >= 500:
-        logger.warning(
-            "Slow request %s %s completed in %.1fms with status %s",
-            request.method,
-            request.url.path,
-            duration_ms,
-            response.status_code,
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Permissions-Policy"] = (
+            "camera=(), microphone=(), geolocation=(), browsing-topics=()"
         )
+
+        body = getattr(response, "body", None)
+        if body is not None:
+            response_size = len(body)
+        else:
+            try:
+                response_size = int(response.headers.get("content-length", "0") or 0)
+            except ValueError:
+                response_size = 0
+
+        if request.url.path not in {"/health/live", "/health/ready"}:
+            log_request_metrics_summary(
+                method=request.method,
+                path=request.url.path,
+                status=response.status_code,
+                request_id=request_id,
+                duration_ms=duration_ms,
+                response_size=response_size,
+                metrics=get_request_metrics(),
+            )
 
     return response
 
@@ -118,113 +444,73 @@ async def liveness_check() -> dict[str, str]:
     return {"status": "live", "app": "TPRO Classio API"}
 
 
-@app.get("/health/ready")
-async def readiness_check() -> dict[str, str]:
-    """Readiness probe used by Docker/load balancers; verifies the DB is reachable."""
+async def _readiness_probe() -> list[str]:
+    """Run the full readiness probe and return missing schema markers."""
     async with AsyncSessionLocal() as session:
         await session.execute(text("select 1"))
+        missing = await missing_required_schema_relations(session)
+        missing.extend(await missing_required_schema_features(session))
+        missing.extend(await missing_required_schema_functions(session))
+        missing.extend(await missing_required_schema_columns(session))
+    return missing
+
+
+async def _readiness_result() -> bool:
+    """Cached, lock-protected readiness evaluation.
+
+    Concurrent healthcheck bursts share one probe; the result is cached for a
+    short TTL so the metadata schema check never runs on every request.
+    """
+    global _READINESS_CACHE_AT, _READINESS_CACHE_OK
+    cache_age = time.monotonic() - _READINESS_CACHE_AT
+    if cache_age < _READINESS_CACHE_TTL_SECONDS and _READINESS_CACHE_OK is not None:
+        return _READINESS_CACHE_OK
+
+    async with _READINESS_LOCK:
+        cache_age = time.monotonic() - _READINESS_CACHE_AT
+        if cache_age < _READINESS_CACHE_TTL_SECONDS and _READINESS_CACHE_OK is not None:
+            return _READINESS_CACHE_OK
+
+        probe_started_at = time.perf_counter()
+        try:
+            missing = await _readiness_probe()
+        except Exception:
+            _READINESS_CACHE_OK = False
+            _READINESS_CACHE_AT = time.monotonic()
+            logger.exception(
+                "Readiness probe failed after %.1fms",
+                (time.perf_counter() - probe_started_at) * 1000,
+            )
+            return False
+
+        probe_ms = (time.perf_counter() - probe_started_at) * 1000
+        _READINESS_CACHE_AT = time.monotonic()
+        if missing:
+            _READINESS_CACHE_OK = False
+            logger.error(
+                "Readiness blocked: database schema is missing %s required "
+                "relation(s) after %.1fms",
+                len(missing),
+                probe_ms,
+            )
+            return False
+        _READINESS_CACHE_OK = True
+        logger.info("Readiness probe completed in %.1fms", probe_ms)
+        return True
+
+
+@app.get("/health/ready")
+async def readiness_check() -> dict[str, str]:
+    """Verify both DB reachability and the minimum application schema contract.
+
+    The probe result is cached for a short TTL behind an async lock so a burst
+    of container healthchecks does not run many schema probes at once.  The
+    first probe still runs the full check and fails closed; a later fixed DB
+    is re-probed as soon as the cache expires.
+    """
+    if not await _readiness_result():
+        raise HTTPException(
+            status_code=503,
+            detail="Database schema is not ready for this application version",
+        )
     return {"status": "ready", "app": "TPRO Classio API"}
-
-
-@app.on_event("startup")
-async def warm_database_on_startup() -> None:
-    global auth_flow_cleanup_task, avatar_sync_task
-    await warm_database_connection()
-    auth_flow_cleanup_task = asyncio.create_task(run_auth_flow_cleanup_worker())
-    if (
-        settings.google_client_id
-        and settings.google_client_secret
-        and settings.supabase_service_role_key
-        and settings.auth_encryption_key
-    ):
-        avatar_sync_task = asyncio.create_task(run_avatar_sync_worker())
-
-
-async def run_auth_flow_cleanup_worker() -> None:
-    """Purge expired credential-bearing pre-auth rows on every deployment."""
-    while True:
-        try:
-            async with AsyncSessionLocal() as session:
-                await purge_expired_auth_flows(session)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("Expired auth-flow cleanup failed")
-        await asyncio.sleep(5 * 60)
-
-
-async def run_avatar_sync_worker() -> None:
-    """Idempotently sync due Google avatars without delaying requests."""
-    while True:
-        try:
-            async with AsyncSessionLocal() as session:
-                await sync_due_google_avatars(session)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("Periodic Google avatar sync failed")
-        await asyncio.sleep(60 * 60)
-
-
-async def warm_database_connection() -> None:
-    started_at = time.perf_counter()
-    try:
-        async with AsyncSessionLocal() as session:
-            db_started_at = time.perf_counter()
-            await session.execute(text("select 1"))
-            db_ms = (time.perf_counter() - db_started_at) * 1000
-
-        cache_started_at = time.perf_counter()
-
-        async def warm_classes() -> None:
-            async with AsyncSessionLocal() as session:
-                await get_classes(session, is_active=True)
-
-        async def warm_dashboard() -> None:
-            async with AsyncSessionLocal() as session:
-                await get_dashboard_overview(session)
-
-        async def warm_students() -> None:
-            async with AsyncSessionLocal() as session:
-                await get_students(session, status="active")
-
-        async def warm_fees() -> None:
-            async with AsyncSessionLocal() as session:
-                await get_fee_records(session, get_billing_period_key())
-
-        await asyncio.gather(
-            warm_classes(),
-            warm_dashboard(),
-            warm_students(),
-            warm_fees(),
-        )
-        cache_ms = (time.perf_counter() - cache_started_at) * 1000
-
-        logger.info(
-            "Database warmup completed in %.1fms (connect %.1fms, read caches %.1fms)",
-            (time.perf_counter() - started_at) * 1000,
-            db_ms,
-            cache_ms,
-        )
-    except Exception:
-        logger.exception("Database warmup failed")
-
-
-@app.on_event("shutdown")
-async def close_http_clients() -> None:
-    global auth_flow_cleanup_task, avatar_sync_task
-    if auth_flow_cleanup_task is not None:
-        auth_flow_cleanup_task.cancel()
-        try:
-            await auth_flow_cleanup_task
-        except asyncio.CancelledError:
-            pass
-        auth_flow_cleanup_task = None
-    if avatar_sync_task is not None:
-        avatar_sync_task.cancel()
-        try:
-            await avatar_sync_task
-        except asyncio.CancelledError:
-            pass
-        avatar_sync_task = None
-    await supabase_auth_client.aclose()

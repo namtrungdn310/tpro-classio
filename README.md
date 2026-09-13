@@ -110,7 +110,7 @@ TPRO Classio phân tách rõ phạm vi sử dụng theo từng vai trò:
 
 | Vai trò | Phạm vi sử dụng |
 | --- | --- |
-| `Viewer` | Xem dữ liệu được cấp quyền, bao gồm học phí và báo cáo |
+| `Teacher` | Chỉ xem lịch được phân công và chấm công; không truy cập hồ sơ, học phí hay báo cáo |
 | `Admin` | Quản lý hoạt động hằng ngày của trung tâm |
 | `Dev` | Quản lý hệ thống, tài khoản và phân quyền |
 

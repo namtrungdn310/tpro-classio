@@ -36,7 +36,7 @@ export function validateRefundAllocations(
   allocations: FeeRefundAllocation[],
 ) {
   if (allocations.length === 0) {
-    return "Vui lòng nhập số tiền cần hoàn cho ít nhất một lớp.";
+    return "Vui lòng nhập số tiền cần hoàn.";
   }
 
   const recordsById = new Map(records.map((record) => [record.id, record]));
@@ -77,7 +77,7 @@ export function getRefundAmountErrors(
   }
 
   if (!hasValidAmount && Object.keys(errors).length === 0 && records[0]) {
-    errors[records[0].id] = "Vui lòng nhập số tiền cần hoàn cho ít nhất một lớp.";
+    errors[records[0].id] = "Vui lòng nhập số tiền cần hoàn.";
   }
 
   return errors;

@@ -10,10 +10,10 @@ import {
 } from "../src/lib/ui/slide-panel-motion";
 
 test("slide panels travel at a shared bounded speed based on their actual width", () => {
-  assert.equal(getSlidePanelDuration(0), 320);
-  assert.equal(getSlidePanelDuration(340), 320);
-  assert.equal(getSlidePanelDuration(960), 447);
-  assert.equal(getSlidePanelDuration(2_000), 520);
+  assert.equal(getSlidePanelDuration(0), 290);
+  assert.equal(getSlidePanelDuration(340), 290);
+  assert.equal(getSlidePanelDuration(960), 409);
+  assert.equal(getSlidePanelDuration(2_000), 480);
   assert.ok(getSlidePanelDuration(960) > getSlidePanelDuration(340));
 });
 

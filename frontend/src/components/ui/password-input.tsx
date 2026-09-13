@@ -1,7 +1,7 @@
 "use client";
 
 import { forwardRef, useLayoutEffect, useRef, useState } from "react";
-import { Eye, EyeOff } from "lucide-react";
+import { RiEyeLine as Eye, RiEyeOffLine as EyeOff } from "react-icons/ri";
 import { savedInfoAutocomplete } from "@/lib/forms/saved-info-policy";
 import { cn } from "@/lib/utils";
 
@@ -81,6 +81,7 @@ export const PasswordInput = forwardRef<HTMLInputElement, PasswordInputProps>(fu
         disabled={disabled}
         aria-label={isVisible ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
         aria-pressed={isVisible}
+        data-selection-policy="preserve"
         className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-gray-500 transition hover:text-gray-800 disabled:cursor-not-allowed disabled:text-gray-300"
         onPointerDown={rememberSelection}
         onMouseDown={(event) => {

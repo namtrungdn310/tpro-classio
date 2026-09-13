@@ -26,7 +26,7 @@ test("unpay confirmation explains the selected notification target", () => {
   assert.match(unnotified.description, /sẽ được xoá/);
 });
 
-test("direct payments can only be reversed to the truthful unnotified state", () => {
+test("direct payments default to the truthful unnotified state", () => {
   const directPayment = {
     ...group,
     records: [
@@ -52,4 +52,20 @@ test("direct payments can only be reversed to the truthful unnotified state", ()
   assert.equal(getDefaultUnpayTargetState(directPayment), "UNNOTIFIED");
   assert.equal(canRestoreNotifiedFeeState(notifiedPayment), true);
   assert.equal(getDefaultUnpayTargetState(notifiedPayment), "NOTIFIED_UNPAID");
+});
+
+test("legacy notified payments still expose the notified reversal target", () => {
+  const legacyNotifiedPayment = {
+    ...group,
+    records: [
+      {
+        notified_at: "2026-07-15T08:00:00Z",
+        notification_channel: null,
+        notification_message: null,
+      },
+    ],
+  } as StudentFeeGroup;
+
+  assert.equal(canRestoreNotifiedFeeState(legacyNotifiedPayment), true);
+  assert.equal(getDefaultUnpayTargetState(legacyNotifiedPayment), "NOTIFIED_UNPAID");
 });

@@ -27,13 +27,18 @@ def matches_smart_search(query: str | None, values: list[str | None]) -> bool:
 
     query_tokens = normalized_query.split()
     compact_query = normalized_query.replace(" ", "")
+    is_digits_only_query = bool(query_digits) and not re.search(
+        r"[a-z]", normalized_query
+    )
 
     for value in values:
         normalized_value = normalize_search_text(value)
         compact_value = normalized_value.replace(" ", "")
         value_digits = normalize_search_digits(value)
 
-        if query_digits and query_digits in value_digits:
+        # Keep numeric matching for phone numbers and numeric identifiers, but
+        # never reduce an alphanumeric class name such as "6C1" to "61".
+        if is_digits_only_query and query_digits in value_digits:
             return True
         if normalized_query and normalized_query in normalized_value:
             return True

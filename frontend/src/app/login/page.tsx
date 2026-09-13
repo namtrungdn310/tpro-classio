@@ -166,7 +166,7 @@ export default function LoginPage() {
           <AuthField id="login-email" label="Email" error={emailError}>
             <input
               id="login-email"
-              type="email"
+              type="text"
               inputMode="email"
               autoComplete={savedInfoAutocomplete.loginIdentifier}
               enterKeyHint="next"
@@ -230,7 +230,7 @@ export default function LoginPage() {
           </AuthField>
 
           {visibleFormError ? (
-            <p role="alert" className="form-message-text text-red-600">
+            <p role="alert" className="form-message-text text-destructive">
               {visibleFormError}
             </p>
           ) : null}

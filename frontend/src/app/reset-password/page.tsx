@@ -99,7 +99,7 @@ export default function ResetPasswordPage() {
           <AuthField id="reset-email" label="Email" error={emailError}>
             <input
               id="reset-email"
-              type="email"
+              type="text"
               inputMode="email"
               autoComplete={savedInfoAutocomplete.otpEmail}
               enterKeyHint="done"
@@ -124,7 +124,7 @@ export default function ResetPasswordPage() {
             />
           </AuthField>
           {visibleServerError ? (
-            <p role="alert" className="form-message-text text-red-600">
+            <p role="alert" className="form-message-text text-destructive">
               {visibleServerError}
             </p>
           ) : null}

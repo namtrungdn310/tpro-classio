@@ -1,7 +1,7 @@
 "use client";
 
 import { useLayoutEffect, useEffect, useRef, useState } from "react";
-import { Search, SlidersHorizontal } from "lucide-react";
+import { RiSearchLine as Search, RiEqualizer2Line as SlidersHorizontal } from "react-icons/ri";
 import { savedInfoAutocomplete } from "@/lib/forms/saved-info-policy";
 import { formTextControlHeaderClassName } from "@/components/ui/form-text-control";
 
@@ -131,15 +131,15 @@ export function HeaderFilterControls({
               type="button"
               aria-label="Bộ lọc"
               onClick={() => setIsOpen((current) => !current)}
-              className={`relative inline-flex h-6 w-8 items-center justify-center rounded-[5px] transition ${
+              className={`relative inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition ${
                 activeFilters.length > 0 || isOpen
-                  ? "bg-gray-100 text-gray-950"
-                  : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                  ? "bg-primary-soft text-primary"
+                  : "text-gray-600 hover:bg-primary-soft/70 hover:text-primary"
               }`}
             >
-              <SlidersHorizontal className="h-3.5 w-3.5" />
+              <SlidersHorizontal className="h-3 w-3" />
               {activeFilters.length > 0 ? (
-                <span className="absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-gray-900 px-1 text-[10px] font-semibold text-white">
+                <span className="absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground">
                   {activeFilters.length}
                 </span>
               ) : null}
@@ -156,7 +156,7 @@ export function HeaderFilterControls({
           <div className="space-y-2.5">
             {visibleFilters.map((filter, index) => (
               <div key={filter.label} className="space-y-1.5">
-                <p className="text-[11px] font-semibold uppercase text-gray-500">{filter.label}</p>
+                <p className="table-heading-text text-gray-500 text-[11px] font-semibold leading-4 tracking-[0.02em]">{filter.label}</p>
                 <div
                   ref={(element) => {
                     rowRefs.current[index] = element;
@@ -175,10 +175,10 @@ export function HeaderFilterControls({
                           }
                           filter.onChange(selected ? "" : option.value);
                         }}
-                        className={`inline-flex h-8 shrink-0 items-center rounded-full px-2.5 text-[12px] transition ${
+                        className={`inline-flex h-7 shrink-0 items-center rounded-full border px-2.5 text-[11px] font-medium leading-4 transition ${
                           selected
-                            ? "bg-gray-100 font-medium text-gray-950"
-                            : "bg-gray-50 text-gray-700 hover:bg-gray-100"
+                            ? "border-primary/20 bg-primary-soft font-medium text-primary"
+                            : "border-gray-200 bg-gray-100 text-gray-700 hover:border-primary/20 hover:bg-primary-soft/60"
                         }`}
                       >
                         {option.label}
@@ -193,7 +193,7 @@ export function HeaderFilterControls({
             <button
               type="button"
               onClick={clearFilters}
-              className="mt-2 inline-flex text-[12px] text-gray-600 underline underline-offset-2 hover:text-gray-950"
+              className="mt-2 inline-flex text-[12px] text-gray-600 underline underline-offset-2 hover:text-primary"
             >
               Xoá lọc
             </button>

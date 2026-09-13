@@ -6,7 +6,12 @@ from pydantic import ValidationError
 
 from app.core.business_time import business_today
 from app.schemas.fee import FeeBatchNotifyRequest, FeeNotifyRequest
-from app.schemas.student import StudentCreate, StudentUpdate
+from app.schemas.student import (
+    StudentCreate,
+    StudentEnrollmentPatch,
+    StudentEnrollmentTarget,
+    StudentUpdate,
+)
 
 
 def make_student_create(**overrides: object) -> StudentCreate:
@@ -78,11 +83,21 @@ def test_student_create_accepts_complete_contact_pairs() -> None:
 
 @pytest.mark.parametrize(
     "field",
-    ["birth_date", "school", "parent_zalo", "parent_phone", "enrollment_date"],
+    ["birth_date", "school", "parent_zalo", "parent_phone"],
 )
 def test_student_create_requires_profile_and_parent_fields(field: str) -> None:
     with pytest.raises(ValidationError):
         make_student_create(**{field: None})
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["class_id", "enrollment_date", "custom_fee"],
+)
+def test_student_create_keeps_class_and_enrollment_optional(field: str) -> None:
+    """R6: profile creation is class-independent; enrollment is separate."""
+    payload = make_student_create(**{field: None})
+    assert getattr(payload, field) is None
 
 
 def test_student_create_keeps_student_contact_notes_and_custom_fee_optional() -> None:
@@ -97,6 +112,22 @@ def test_student_create_keeps_student_contact_notes_and_custom_fee_optional() ->
 def test_student_update_rejects_explicitly_incomplete_contact_pair() -> None:
     with pytest.raises(ValidationError):
         StudentUpdate(student_zalo="An Zalo", student_phone=None)
+
+
+@pytest.mark.parametrize("schema", [StudentEnrollmentPatch, StudentEnrollmentTarget])
+def test_enrollment_slot_updates_reject_explicit_empty_selection(schema) -> None:
+    with pytest.raises(ValidationError):
+        schema(selected_slot_ids=[])
+
+
+@pytest.mark.parametrize("schema", [StudentEnrollmentPatch, StudentEnrollmentTarget])
+def test_enrollment_slot_updates_allow_omitted_selection(schema) -> None:
+    required = (
+        {"enrollment_id": uuid4()}
+        if schema is StudentEnrollmentPatch
+        else {"class_id": uuid4()}
+    )
+    assert schema(**required).selected_slot_ids is None
 
 
 def test_fee_notification_channel_is_restricted() -> None:
@@ -123,7 +154,7 @@ def test_fee_notification_message_is_normalized_and_cannot_be_blank(schema) -> N
         payload_data["record_ids"] = [uuid4()]
 
     payload = schema(**payload_data)
-    assert payload.message == "Nội dung thông báo"
+    assert payload.message == "  Nội dung thông báo\n  "
 
     blank_data = {"message": " \r\n\t "}
     if schema is FeeBatchNotifyRequest:

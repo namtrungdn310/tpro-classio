@@ -14,13 +14,15 @@ const refundIconSource = readFileSync(
   new URL("../src/components/ui/refund-icon.tsx", import.meta.url),
   "utf8",
 );
+const confirmationDialogSource = readFileSync(
+  new URL("../src/components/ui/confirmation-dialog.tsx", import.meta.url),
+  "utf8",
+);
 
 test("refund actions use the shared circular money return icon", () => {
-  assert.match(refundDialogSource, /<RefundIcon className="mr-1\.5"/);
-  assert.match(refundIconSource, /viewBox="0 0 24 24"/);
-  assert.match(refundIconSource, /A10 10/);
-  assert.match(refundIconSource, /h-3\.6/);
-  assert.match(refundIconSource, /M15\.75 7\.75h-5\.2/);
+  assert.match(refundDialogSource, /<RefundIcon className="mr-1\.5[^\"]*"/);
+  assert.match(refundIconSource, /RiRefund2Line/);
+  assert.match(refundIconSource, /react-icons\/ri/);
   assert.doesNotMatch(
     refundIconSource,
     /CircleDollarSign|DollarSign|RefreshCw|RotateCw/,
@@ -28,35 +30,52 @@ test("refund actions use the shared circular money return icon", () => {
   assert.doesNotMatch(refundDialogSource, /HandCoins/);
 });
 
-test("unpay target keeps accessible radios without a tinted segmented wrapper", () => {
+test("unpay target uses a compact segmented control matching staff type selection", () => {
   assert.match(feesPageSource, /name="fee-unpay-target-state"/);
-  assert.match(feesPageSource, /mt-2 grid h-9 gap-1\.5/);
-  assert.doesNotMatch(
+  assert.match(
     feesPageSource,
-    /mt-2 grid h-9 grid-cols-2 overflow-hidden rounded-md border border-gray-200 bg-white p-0\.5/,
+    /mt-2 grid h-8 w-full select-none grid-cols-2 overflow-hidden rounded-md border border-gray-200 bg-white p-0\.5/,
   );
   assert.match(
     feesPageSource,
-    /border-gray-950 bg-gray-950 text-white/,
+    /bg-primary text-primary-foreground/,
   );
   assert.match(feesPageSource, /visibleUnpayTargetOptions\.map/);
+  assert.match(
+    feesPageSource,
+    /const visibleUnpayTargetOptions = UNPAY_TARGET_OPTIONS;/,
+  );
+  assert.match(
+    feesPageSource,
+    /onClick=\{\(\) => setUnpayTargetState\(option\.value\)\}/,
+  );
 });
 
-test("refund method and reason share a compact responsive row", () => {
+test("bank-transfer refunds require an account in the compact responsive form", () => {
   assert.match(
     refundDialogSource,
-    /sm:grid-cols-\[248px_minmax\(0,1fr\)\]/,
+    /sm:grid-cols-2/,
   );
-  assert.match(refundDialogSource, /<legend[^>]*>[\s\S]*Hình thức hoàn/);
+  assert.match(
+    refundDialogSource,
+    /<FormField label="Hình thức hoàn" labelId="refund-method-label">/,
+  );
+  assert.match(
+    refundDialogSource,
+    /controlId="refund-settlement-account"[\s\S]*label="Tài khoản dùng để hoàn"/,
+  );
+  assert.match(refundDialogSource, /Tài khoản dùng để hoàn/);
+  assert.match(refundDialogSource, /settlement_account_id:/);
+  assert.match(refundDialogSource, /Hãy chọn tài khoản ngân hàng dùng để chuyển khoản hoàn phí/);
   assert.match(refundDialogSource, /<span[^>]*>[\s\S]*Lý do hoàn phí/);
-  assert.match(refundDialogSource, /whitespace-nowrap/);
-  assert.match(refundDialogSource, /h-8 bg-sky-600/);
+  assert.match(refundDialogSource, /<label className="block min-w-0 sm:col-span-2">/);
   assert.match(
     refundDialogSource,
-    /mt-1\.5 grid h-8 grid-cols-2 overflow-hidden rounded-md border border-gray-200 bg-white p-0\.5/,
+    /<textarea[\s\S]*?rows=\{2\}[\s\S]*?h-16 min-h-16 w-full resize-none py-2 leading-5/,
   );
-  assert.match(refundDialogSource, /form-input-text flex h-full/);
-  assert.match(refundDialogSource, /bg-gray-950 text-white/);
+  assert.match(refundDialogSource, /h-8 bg-primary/);
+  assert.match(refundDialogSource, /<SegmentedControl/);
+  assert.match(refundDialogSource, /options=\{\[\.\.\.REFUND_METHODS\]\}/);
   assert.doesNotMatch(refundDialogSource, /block max-w-\[360px\]/);
 });
 
@@ -71,6 +90,14 @@ test("refund form omits the redundant total panel and reason example", () => {
     refundDialogSource,
     /Vui lòng nhập lý do hoàn phí có ít nhất 3 ký tự\./,
   );
+});
+
+test("refund-all action uses the shared compact button size", () => {
+  assert.match(
+    refundDialogSource,
+    /className="h-8 shrink-0 px-3 text-sm"[\s\S]*?>[\s\S]*?Hoàn toàn bộ/,
+  );
+  assert.doesNotMatch(refundDialogSource, /h-10 shrink-0 px-4 text-base/);
 });
 
 test("refund validation reports each required amount while the reason remains optional", () => {
@@ -100,14 +127,22 @@ test("refund reversal keeps invalid feedback live and exposes it accessibly", ()
   assert.doesNotMatch(refundDialogSource, /setReversalError\(null\)/);
 });
 
-test("fee page finishes initial loading only after refund history is ready", () => {
+test("fee page preloads only the selected workspace refund history", () => {
   assert.match(
     feesPageSource,
-    /queryKey: \["fee-transactions", "period", \{ period, feeRecordIds \}\]/,
+    /"fee-transactions",[\s\S]*"refund-workspace",[\s\S]*groupKey: refundTarget\?\.group_key/,
   );
   assert.match(
     feesPageSource,
-    /hasFeeData &&[\s\S]*!hasFeeTransactionData &&[\s\S]*feeTransactionsQuery\.isPending/,
+    /queryFn: \(\) => loadFeeTransactionHistories\(refundFeeRecordIds\)/,
+  );
+  assert.match(
+    feesPageSource,
+    /activeFeeData !== undefined &&[\s\S]*refundTarget !== null &&[\s\S]*refundFeeRecordIds\.length > 0/,
+  );
+  assert.doesNotMatch(
+    feesPageSource,
+    /!hasFeeTransactionData[\s\S]*feeTransactionsQuery\.isPending/,
   );
   assert.match(
     feesPageSource,
@@ -115,4 +150,18 @@ test("fee page finishes initial loading only after refund history is ready", () 
   );
   assert.match(feesPageSource, /Math\.ceil\(recordIds\.length \/ 100\)/);
   assert.doesNotMatch(refundDialogSource, /useQueries|getFeeTransactions/);
+});
+
+test("copy feedback identifies the two fee message types", () => {
+  assert.match(feesPageSource, /Đã sao chép tin nhắn đóng học phí\./);
+  assert.match(
+    feesPageSource,
+    /Đã sao chép tin nhắn nhận học phí\./,
+  );
+});
+
+test("confirmation dialogs clear repeated-click selection without click-through", () => {
+  assert.match(confirmationDialogSource, /flex select-none items-center/);
+  assert.doesNotMatch(confirmationDialogSource, /clearDocumentSelection/);
+  assert.match(confirmationDialogSource, /useModalDialog/);
 });

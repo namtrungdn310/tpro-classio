@@ -4,7 +4,9 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy.exc import DBAPIError, IntegrityError
+from sqlalchemy.dialects.postgresql import ENUM
 
+from app.models.invitation import AccountInvitation
 from app.models.staff import StaffMember
 from app.schemas.staff import StaffClassResponse, StaffUpdate
 from app.services.staff_service import (
@@ -37,6 +39,13 @@ def test_staff_relationships_never_implicitly_load_business_graph() -> None:
     assert StaffMember.teaching_classes.property.lazy == "raise"
 
 
+def test_invitation_role_uses_the_database_user_role_enum() -> None:
+    role_type = AccountInvitation.__table__.c.role.type
+
+    assert isinstance(role_type, ENUM)
+    assert role_type.name == "user_role"
+
+
 def test_staff_projection_redacts_viewer_contact_details() -> None:
     staff_id = uuid4()
     rows = [
@@ -46,6 +55,10 @@ def test_staff_projection_redacts_viewer_contact_details() -> None:
             "staff_type": "TEACHER",
             "zalo_name": "Cô Hạnh",
             "phone": "0912345678",
+            "email": "cohanh@tpro.test",
+            "checkin_window_after_hours": 24,
+            "current_rate": 100000,
+            "attendance_account_status": "connected",
             "is_active": True,
             "created_at": datetime.now(timezone.utc),
             "updated_at": datetime.now(timezone.utc),
@@ -70,6 +83,10 @@ def test_staff_projection_includes_owner_contact_details() -> None:
             "staff_type": "TEACHER",
             "zalo_name": "Cô Hạnh",
             "phone": "0912345678",
+            "email": "cohanh@tpro.test",
+            "checkin_window_after_hours": 24,
+            "current_rate": 100000,
+            "attendance_account_status": "invited",
             "is_active": True,
             "created_at": datetime.now(timezone.utc),
             "updated_at": datetime.now(timezone.utc),
@@ -83,10 +100,13 @@ def test_staff_projection_includes_owner_contact_details() -> None:
 
     assert response.zalo_name == "Cô Hạnh"
     assert response.phone == "0912345678"
+    assert response.email == "cohanh@tpro.test"
+    assert response.current_rate == 100000
+    assert response.attendance_account_status == "invited"
 
 
 @pytest.mark.asyncio
-async def test_teacher_cannot_change_type_while_still_assigned() -> None:
+async def test_legacy_staff_type_can_change_without_changing_class_roles() -> None:
     staff = make_staff()
     db = AsyncMock()
     with (
@@ -99,14 +119,15 @@ async def test_teacher_cannot_change_type_while_still_assigned() -> None:
             new=AsyncMock(return_value=[make_assignment()]),
         ),
     ):
-        with pytest.raises(StaffConflictError, match="vẫn được gắn với lớp"):
-            await update_staff_member(
-                db,
-                uuid4(),
-                StaffUpdate(staff_type="ASSISTANT"),
-            )
+        updated = await update_staff_member(
+            db,
+            uuid4(),
+            StaffUpdate(staff_type="ASSISTANT"),
+        )
 
-    db.commit.assert_not_awaited()
+    assert updated is staff
+    assert staff.staff_type == "ASSISTANT"
+    db.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -123,7 +144,7 @@ async def test_teacher_cannot_deactivate_while_assigned_to_active_class() -> Non
             new=AsyncMock(return_value=[make_assignment()]),
         ),
     ):
-        with pytest.raises(StaffConflictError, match="thay giáo viên"):
+        with pytest.raises(StaffConflictError, match="kết thúc phân công"):
             await update_staff_member(
                 db,
                 uuid4(),
@@ -138,9 +159,15 @@ async def test_teacher_cannot_deactivate_while_assigned_to_active_class() -> Non
 async def test_staff_update_rejects_incomplete_contact_after_merging_patch() -> None:
     staff = make_staff()
     db = AsyncMock()
-    with patch(
-        "app.services.staff_service.get_staff_member",
-        new=AsyncMock(return_value=staff),
+    with (
+        patch(
+            "app.services.staff_service.get_staff_member",
+            new=AsyncMock(return_value=staff),
+        ),
+        patch(
+            "app.services.staff_service._read_assigned_classes",
+            new=AsyncMock(return_value=[]),
+        ),
     ):
         with pytest.raises(ValueError, match="tên Zalo nhân sự"):
             await update_staff_member(
@@ -161,7 +188,10 @@ async def test_archive_preserves_staff_row_when_no_active_assignment() -> None:
             "app.services.staff_service.get_staff_member",
             new=AsyncMock(return_value=staff),
         ),
-        patch("app.services.staff_service._clear_dependent_caches"),
+        patch(
+            "app.services.staff_service._read_assigned_classes",
+            new=AsyncMock(return_value=[]),
+        ),
     ):
         archived = await archive_staff_member(db, uuid4())
 

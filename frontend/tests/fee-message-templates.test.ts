@@ -1,23 +1,61 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  DEFAULT_FEE_MESSAGE_TEMPLATES,
   FEE_MESSAGE_TOKENS,
   feeMessageTemplatesResponseSchema,
   feeMessageTemplateValuesSchema,
+  splitFeeMessageTemplateLines,
   tokenizeFeeMessageTemplate,
 } from "../src/lib/fees/message-templates";
+import { TEST_FEE_MESSAGE_TEMPLATES as DEFAULT_FEE_MESSAGE_TEMPLATES } from "./fixtures/fee-message-templates";
 
-test("accepts and normalizes the two complete default Zalo templates", () => {
+test("keeps the default workflow layout explicit and distinguishes hard breaks from same-line fields", () => {
+  assert.deepEqual(splitFeeMessageTemplateLines(DEFAULT_FEE_MESSAGE_TEMPLATES.payment_reminder_template), [
+    "TPRO English xin thông báo học phí {{ky_hoc_phi}} của em {{ten_hoc_vien}}:",
+    "{{chi_tiet_hoc_phi}}",
+    "Ngày đến hạn: {{ngay_den_han}}.",
+    "Tổng học phí cần thanh toán: {{tong_tien}}.",
+    "Phụ huynh vui lòng thanh toán giúp trung tâm. Cảm ơn phụ huynh.",
+  ]);
+  assert.deepEqual(splitFeeMessageTemplateLines(DEFAULT_FEE_MESSAGE_TEMPLATES.payment_received_template), [
+    "TPRO English xác nhận đã nhận học phí {{ky_hoc_phi}} của em {{ten_hoc_vien}}:",
+    "{{chi_tiet_hoc_phi}}",
+    "Ngày đến hạn: {{ngay_den_han}}.",
+    "Tổng học phí đã nhận: {{tong_tien}}.",
+    "TPRO English cảm ơn phụ huynh.",
+  ]);
+  assert.equal(DEFAULT_FEE_MESSAGE_TEMPLATES.payment_reminder_template.includes("{{ky_hoc_phi}}\n"), false);
+  assert.equal(DEFAULT_FEE_MESSAGE_TEMPLATES.payment_received_template.includes("{{tong_tien}}.\n"), true);
+});
+
+test("normalizes platform line endings without changing authored layout", () => {
   const parsed = feeMessageTemplateValuesSchema.parse({
-    payment_reminder_template: `  ${DEFAULT_FEE_MESSAGE_TEMPLATES.payment_reminder_template}\r\n`,
+    payment_reminder_template: `${DEFAULT_FEE_MESSAGE_TEMPLATES.payment_reminder_template}\r\n`,
     payment_received_template: DEFAULT_FEE_MESSAGE_TEMPLATES.payment_received_template,
   });
 
   assert.equal(
     parsed.payment_reminder_template,
-    DEFAULT_FEE_MESSAGE_TEMPLATES.payment_reminder_template,
+    `${DEFAULT_FEE_MESSAGE_TEMPLATES.payment_reminder_template}\n`,
   );
+});
+
+test("preserves intentional blank and trailing editor rows", () => {
+  const reminder = DEFAULT_FEE_MESSAGE_TEMPLATES.payment_reminder_template.replace(
+    "Tổng học phí cần thanh toán: {{tong_tien}}.\n",
+    "Tổng học phí cần thanh toán: {{tong_tien}}.\n\n",
+  );
+  const receipt = `${DEFAULT_FEE_MESSAGE_TEMPLATES.payment_received_template}\n`;
+
+  const parsed = feeMessageTemplateValuesSchema.parse({
+    payment_reminder_template: reminder,
+    payment_received_template: receipt,
+  });
+
+  assert.equal(parsed.payment_reminder_template, reminder);
+  assert.equal(parsed.payment_received_template, receipt);
+  assert.equal(parsed.payment_reminder_template.split("\n").length, 6);
+  assert.equal(parsed.payment_received_template.split("\n").length, 6);
 });
 
 test("tokenizes supported variables into user-facing Zalo editor labels", () => {

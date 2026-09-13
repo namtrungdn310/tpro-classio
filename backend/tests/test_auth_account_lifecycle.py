@@ -8,6 +8,7 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 
+from app.core.principal import Principal
 from app.routers.auth.common import get_or_create_profile
 from app.routers.auth.users import list_users, update_user_role, update_user_status
 from app.schemas.auth import UpdateUserRoleRequest, UpdateUserStatusRequest
@@ -39,7 +40,7 @@ class ScalarRowsResult:
 def _profile(
     user_id: str,
     *,
-    role: str = "viewer",
+    role: str = "teacher",
     account_status: str = "active",
     is_owner: bool = False,
 ) -> SimpleNamespace:
@@ -59,6 +60,21 @@ def _profile(
     )
 
 
+def _dev_principal(actor_id: str) -> Principal:
+    return Principal(
+        user_id=actor_id,
+        email="dev@example.com",
+        persistent_role="admin",
+        effective_role="dev",
+        is_owner=True,
+        account_status="active",
+        staff_id=None,
+        aal="aal2",
+        device_type="desktop",
+        session_nonce="nonce",
+    )
+
+
 def _executed_statements(db: AsyncMock) -> list[str]:
     return [str(call.args[0]) for call in db.execute.await_args_list]
 
@@ -71,6 +87,7 @@ async def test_role_change_revokes_sessions_and_writes_security_event() -> None:
     db = AsyncMock()
     db.execute.side_effect = [ScalarResult(profile), None]
     event = AsyncMock()
+    dev_principal = _dev_principal(actor_id)
 
     with (
         patch("app.routers.auth.users.record_account_security_event", event),
@@ -83,7 +100,7 @@ async def test_role_change_revokes_sessions_and_writes_security_event() -> None:
             user_id=target_id,
             payload=UpdateUserRoleRequest(role="admin"),
             db=db,
-            current_user={"id": actor_id, "is_owner": True},
+            principal=dev_principal,
         )
 
     assert response.role == "admin"
@@ -97,7 +114,7 @@ async def test_role_change_revokes_sessions_and_writes_security_event() -> None:
         actor_user_id=actor_id,
         target_user_id=target_id,
         action="role_changed",
-        previous_role="viewer",
+        previous_role="teacher",
         next_role="admin",
     )
     db.commit.assert_awaited_once()
@@ -111,6 +128,7 @@ async def test_disabling_account_revokes_sessions_and_is_audited() -> None:
     db = AsyncMock()
     db.execute.side_effect = [ScalarResult(profile), None]
     event = AsyncMock()
+    dev_principal = _dev_principal(actor_id)
 
     with (
         patch("app.routers.auth.users.record_account_security_event", event),
@@ -123,7 +141,7 @@ async def test_disabling_account_revokes_sessions_and_is_audited() -> None:
             user_id=target_id,
             payload=UpdateUserStatusRequest(status="disabled"),
             db=db,
-            current_user={"id": actor_id, "is_owner": True},
+            principal=dev_principal,
         )
 
     assert response.account_status == "disabled"
@@ -141,12 +159,14 @@ async def test_disabling_account_revokes_sessions_and_is_audited() -> None:
 @pytest.mark.asyncio
 async def test_user_access_list_excludes_deleted_supabase_accounts() -> None:
     deleted_user_id = str(uuid4())
+    actor_id = str(uuid4())
     db = AsyncMock()
     db.execute.return_value = ScalarRowsResult([_profile(deleted_user_id)])
+    dev_principal = _dev_principal(actor_id)
 
     active_users = AsyncMock(return_value={})
     with patch("app.routers.auth.users.list_active_auth_users", active_users):
-        response = await list_users(db=db, current_user={"is_owner": True})
+        response = await list_users(db=db, principal=dev_principal)
 
     assert response == []
     active_users.assert_awaited_once_with()
@@ -156,10 +176,12 @@ async def test_user_access_list_excludes_deleted_supabase_accounts() -> None:
 @pytest.mark.parametrize("operation", ["role", "status"])
 async def test_owner_account_cannot_be_demoted_or_disabled(operation: str) -> None:
     target_id = str(uuid4())
+    actor_id = str(uuid4())
     db = AsyncMock()
     db.execute.side_effect = [
         ScalarResult(_profile(target_id, role="admin", is_owner=True))
     ]
+    dev_principal = _dev_principal(actor_id)
 
     with (
         patch("app.routers.auth.users.is_owner_email", return_value=True),
@@ -172,16 +194,16 @@ async def test_owner_account_cannot_be_demoted_or_disabled(operation: str) -> No
             if operation == "role":
                 await update_user_role(
                     user_id=target_id,
-                    payload=UpdateUserRoleRequest(role="viewer"),
+                    payload=UpdateUserRoleRequest(role="teacher"),
                     db=db,
-                    current_user={"id": str(uuid4()), "is_owner": True},
+                    principal=dev_principal,
                 )
             else:
                 await update_user_status(
                     user_id=target_id,
                     payload=UpdateUserStatusRequest(status="disabled"),
                     db=db,
-                    current_user={"id": str(uuid4()), "is_owner": True},
+                    principal=dev_principal,
                 )
 
     assert exc_info.value.status_code == 403
@@ -192,9 +214,11 @@ async def test_owner_account_cannot_be_demoted_or_disabled(operation: str) -> No
 @pytest.mark.asyncio
 async def test_unchanged_role_does_not_revoke_or_write_audit_event() -> None:
     target_id = str(uuid4())
+    actor_id = str(uuid4())
     db = AsyncMock()
-    db.execute.side_effect = [ScalarResult(_profile(target_id, role="viewer"))]
+    db.execute.side_effect = [ScalarResult(_profile(target_id, role="teacher"))]
     event = AsyncMock()
+    dev_principal = _dev_principal(actor_id)
 
     with (
         patch("app.routers.auth.users.record_account_security_event", event),
@@ -205,12 +229,12 @@ async def test_unchanged_role_does_not_revoke_or_write_audit_event() -> None:
     ):
         response = await update_user_role(
             user_id=target_id,
-            payload=UpdateUserRoleRequest(role="viewer"),
+            payload=UpdateUserRoleRequest(role="teacher"),
             db=db,
-            current_user={"id": str(uuid4()), "is_owner": True},
+            principal=dev_principal,
         )
 
-    assert response.role == "viewer"
+    assert response.role == "teacher"
     assert not any(
         "DELETE FROM user_device_sessions" in statement
         for statement in _executed_statements(db)

@@ -10,6 +10,7 @@ import {
 
 const IDS = {
   record: "0cfd47e7-4114-41c0-bff1-bbf1b6ce0189",
+  otherRecord: "07a649b7-4438-47aa-b858-3055267f27e1",
   enrollment: "480ba7f5-8f39-43cc-9040-5e28266701ab",
   student: "9d6c0beb-5603-47ba-8c83-f3414bc4cfc5",
   class_: "a1b52e4a-9a72-4de0-a5a8-0673e74871e4",
@@ -183,6 +184,31 @@ test("validates list period consistency and period-list values", () => {
     feeRecordListResponseSchema.parse({
       period: "2026-08",
       records: [feeRecord({ period: "2026-07" })],
+    }),
+  );
+  assert.equal(
+    feeRecordListResponseSchema.parse({
+      period: "outstanding",
+      records: [
+        feeRecord({ period: "2026-06" }),
+        feeRecord({ id: IDS.otherRecord, period: "2026-07" }),
+      ],
+    }).records.length,
+    2,
+  );
+  assert.throws(() =>
+    feeRecordListResponseSchema.parse({
+      period: "outstanding",
+      records: [
+        feeRecord({
+          status: "PAID",
+          notification_state: "PAID",
+          paid_amount: 750_000,
+          paid_date: "2026-07-15",
+          refundable_amount: 750_000,
+          net_collected_amount: 750_000,
+        }),
+      ],
     }),
   );
   assert.deepEqual(feePeriodListResponseSchema.parse({ periods: ["2026-07"] }).periods, [

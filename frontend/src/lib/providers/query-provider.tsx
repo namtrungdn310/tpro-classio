@@ -31,7 +31,7 @@ function createQueryClient() {
   const client = new QueryClient({
     defaultOptions: {
       queries: {
-        gcTime: 10 * 60 * 1000,
+        gcTime: 30 * 60 * 1000,
         refetchOnMount: false,
         refetchOnReconnect: true,
         refetchOnWindowFocus: false,
@@ -44,27 +44,27 @@ function createQueryClient() {
 
   client.setQueryDefaults(["classes"], {
     staleTime: 10 * 60 * 1000,
-    gcTime: 15 * 60 * 1000,
+    gcTime: 45 * 60 * 1000,
   });
   client.setQueryDefaults(["students"], {
-    staleTime: 3 * 60 * 1000,
-    gcTime: 10 * 60 * 1000,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
   });
   client.setQueryDefaults(["fees"], {
-    staleTime: 60 * 1000,
-    gcTime: 10 * 60 * 1000,
+    staleTime: 2 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
   });
   client.setQueryDefaults(["dashboard"], {
-    staleTime: 30 * 1000,
-    gcTime: 5 * 60 * 1000,
+    staleTime: 60 * 1000,
+    gcTime: 15 * 60 * 1000,
   });
   client.setQueryDefaults(["reports"], {
-    staleTime: 30 * 1000,
-    gcTime: 10 * 60 * 1000,
+    staleTime: 2 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
   });
   client.setQueryDefaults(["staff"], {
     staleTime: 10 * 60 * 1000,
-    gcTime: 15 * 60 * 1000,
+    gcTime: 45 * 60 * 1000,
   });
   client.setQueryDefaults(authQueryKeys.users, {
     staleTime: 2 * 60 * 1000,

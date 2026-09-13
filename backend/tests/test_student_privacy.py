@@ -5,7 +5,7 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from app.core.dependencies import require_admin
+from app.core.dependencies import require_management
 from app.routers.students import list_student_enrollments
 from app.schemas.student import StudentEnrollmentInfo, StudentResponse, StudentUpdate
 from app.services.student_service import redact_student_hidden_fields
@@ -14,6 +14,7 @@ from app.services.student_service import redact_student_hidden_fields
 def _student_response() -> StudentResponse:
     return StudentResponse(
         id=uuid4(),
+        student_code="TP000000018",
         full_name="Nguyễn Minh Anh",
         birth_date=date(2012, 4, 3),
         school="THCS Trưng Vương",
@@ -26,10 +27,9 @@ def _student_response() -> StudentResponse:
         hidden_fields=[
             "birth_date",
             "student_contact",
-            "enrollment_date",
-            "custom_fee",
         ],
         status="active",
+        list_state="CURRENT",
         classes=[],
         active_enrollments=[
             StudentEnrollmentInfo(
@@ -43,6 +43,7 @@ def _student_response() -> StudentResponse:
             )
         ],
         created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
     )
 
 
@@ -54,8 +55,8 @@ def test_redaction_hides_selected_fields_without_mutating_admin_response() -> No
     assert viewer_response.birth_date is None
     assert viewer_response.student_phone is None
     assert viewer_response.student_zalo is None
-    assert viewer_response.active_enrollments[0].enrollment_date is None
-    assert viewer_response.active_enrollments[0].custom_fee is None
+    assert viewer_response.active_enrollments[0].enrollment_date == date(2026, 7, 1)
+    assert viewer_response.active_enrollments[0].custom_fee == 750_000
     assert viewer_response.school == "THCS Trưng Vương"
     assert admin_response.birth_date == date(2012, 4, 3)
     assert admin_response.active_enrollments[0].custom_fee == 750_000
@@ -72,8 +73,8 @@ def test_student_update_rejects_null_hidden_fields() -> None:
         StudentUpdate(hidden_fields=None)
 
 
-def test_raw_enrollment_history_requires_admin_access() -> None:
+def test_raw_enrollment_history_requires_management_access() -> None:
     dependency = (
-        inspect.signature(list_student_enrollments).parameters["current_user"].default
+        inspect.signature(list_student_enrollments).parameters["principal"].default
     )
-    assert dependency.dependency is require_admin
+    assert dependency.dependency is require_management

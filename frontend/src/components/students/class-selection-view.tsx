@@ -1,19 +1,19 @@
 "use client";
 
-import { useDeferredValue, useMemo } from "react";
+import { useDeferredValue, useMemo, useRef } from "react";
 import {
-  ChevronRight,
-  GraduationCap,
-  LoaderCircle,
-  RefreshCw,
-  SearchX,
-  UsersRound,
-} from "lucide-react";
+  RiArrowRightSLine as ChevronRight,
+  RiGraduationCapLine as GraduationCap,
+  RiRefreshLine as RefreshCw,
+  RiSearchLine as SearchX,
+  RiTeamLine as UsersRound,
+} from "react-icons/ri";
 import { HeaderControlsPortal } from "@/components/layout/header-controls-portal";
 import { HeaderFilterControls } from "@/components/layout/header-filter-controls";
 import { DataSectionEmpty, DataSectionError } from "@/components/ui/data-section-state";
+import { LoadingLabel } from "@/components/ui/loading-label";
 import type { ClassResponse, ClassType } from "@/lib/types";
-import { getClassGroupInfo } from "@/lib/utils/class-groups";
+import { getClassGroupInfoForRecord } from "@/lib/classes/presentation";
 import { formatCurrency, getCourseWeeks } from "@/lib/utils/format";
 import { filterAndSortClassSelection } from "@/lib/students/class-selection";
 
@@ -65,13 +65,15 @@ export function ClassSelectionView({
         new Set(
           classes
             .filter((class_) => class_.type === "COURSE")
-            .map((class_) => class_.billing_cycle_months),
+            .flatMap((class_) =>
+              [getCourseWeeks(class_.billing_cycle_months, class_.billing_cycle_weeks)],
+            ),
         ),
       )
         .sort((first, second) => first - second)
-        .map((months) => ({
-          label: `${getCourseWeeks(months)} tuần`,
-          value: String(months),
+        .map((weeks) => ({
+          label: `${weeks} tuần`,
+          value: String(weeks),
         })),
     [classes],
   );
@@ -131,9 +133,8 @@ export function ClassSelectionView({
           {filterControls}
           <ActiveClassStatus label={resultLabel} hasActiveClasses={classes.length > 0} />
           {isRefreshing ? (
-            <span className="caption-text hidden items-center gap-1.5 text-gray-500 2xl:inline-flex">
-              <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-              Đang cập nhật
+            <span className="caption-text inline-flex shrink-0 items-center gap-1.5 text-gray-500">
+              <LoadingLabel label="Đang tải" />
             </span>
           ) : null}
         </div>
@@ -143,6 +144,11 @@ export function ClassSelectionView({
         <div className="flex min-w-0 items-center gap-2">
           {filterControls}
           <ActiveClassStatus label={resultLabel} hasActiveClasses={classes.length > 0} compact />
+          {isRefreshing ? (
+            <span className="caption-text inline-flex shrink-0 items-center text-gray-500">
+              <LoadingLabel label="Đang tải" />
+            </span>
+          ) : null}
         </div>
         <p className="caption-text px-0.5 text-gray-500">Chọn một lớp để xem danh sách.</p>
       </div>
@@ -159,8 +165,12 @@ export function ClassSelectionView({
             onClick={onRetry}
             className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-xs font-semibold hover:bg-amber-100 disabled:opacity-60"
           >
-            <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
-            Thử lại
+            {isRefreshing ? <LoadingLabel label="Đang thử lại" /> : (
+              <>
+                <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+                Thử lại
+              </>
+            )}
           </button>
         </div>
       ) : null}
@@ -224,47 +234,68 @@ function ClassSelectionCard({
   onPrefetch: () => void;
   onSelect: () => void;
 }) {
-  const group = getClassGroupInfo(class_.name);
+  const hoverPrefetchTimerRef = useRef<number | null>(null);
+  const group = getClassGroupInfoForRecord(class_);
   const teacherNames = class_.teacher_names?.length
     ? class_.teacher_names
     : class_.teacher_name
       ? [class_.teacher_name]
       : [];
   const billingLabel = class_.type === "COURSE"
-    ? `${getCourseWeeks(class_.billing_cycle_months)} tuần`
+    ? `${getCourseWeeks(class_.billing_cycle_months, class_.billing_cycle_weeks)} tuần`
     : "tháng";
+
+  function scheduleHoverPrefetch() {
+    if (hoverPrefetchTimerRef.current !== null) return;
+    hoverPrefetchTimerRef.current = window.setTimeout(() => {
+      hoverPrefetchTimerRef.current = null;
+      onPrefetch();
+    }, 120);
+  }
+
+  function cancelHoverPrefetch() {
+    if (hoverPrefetchTimerRef.current === null) return;
+    window.clearTimeout(hoverPrefetchTimerRef.current);
+    hoverPrefetchTimerRef.current = null;
+  }
 
   return (
     <button
       type="button"
-      title={class_.name}
-      aria-label={`Mở lớp ${class_.name}, ${class_.student_count} học viên`}
+      title={class_.display_name}
+      aria-label={`Mở lớp ${class_.display_name}, ${class_.student_count} học viên`}
       onFocus={onPrefetch}
-      onMouseEnter={onPrefetch}
+      onMouseEnter={scheduleHoverPrefetch}
+      onMouseLeave={cancelHoverPrefetch}
       onTouchStart={onPrefetch}
       onClick={onSelect}
-      className="group relative flex min-h-[128px] flex-col overflow-hidden rounded-lg border px-4 py-3.5 text-left shadow-[0_1px_2px_rgba(15,23,42,0.035)] transition-shadow duration-150 hover:shadow-[0_3px_10px_rgba(15,23,42,0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#1967D2]/30"
+      className="group relative flex min-h-[128px] flex-col overflow-hidden rounded-lg border px-4 py-3.5 text-left shadow-[0_1px_2px_rgba(15,23,42,0.035)] transition-shadow duration-150 hover:shadow-[0_3px_10px_rgba(15,23,42,0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/30"
       style={{
         backgroundColor: group.color.background,
         borderColor: group.color.border,
       }}
     >
-      <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
-        <div className="min-w-0">
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-start justify-between gap-3">
           <h2 className="font-ui line-clamp-2 text-[16px] font-semibold leading-5 text-gray-950">
-            {class_.name}
+            {class_.primary_label}
           </h2>
-          <p className="mt-1 truncate text-xs text-gray-600">
-            {teacherNames.length > 0 ? teacherNames.join(", ") : "Chưa phân công giáo viên"}
-          </p>
+          <span
+            className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold"
+            style={{ color: group.color.text }}
+          >
+            <UsersRound className="h-3.5 w-3.5" aria-hidden="true" />
+            {class_.student_count}
+          </span>
         </div>
-        <span
-          className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold"
-          style={{ color: group.color.text }}
-        >
-          <UsersRound className="h-3.5 w-3.5" aria-hidden="true" />
-          {class_.student_count}
-        </span>
+        {class_.secondary_label && (class_.grade_level || class_.academic_year_start) ? (
+          <p className="mt-0.5 whitespace-normal break-words text-xs font-medium leading-4 tracking-[-0.01em] text-gray-500">
+            {class_.secondary_label}
+          </p>
+        ) : null}
+        <p className="mt-1 truncate text-xs text-gray-600">
+          {teacherNames.length > 0 ? teacherNames.join(", ") : "Chưa phân công giáo viên"}
+        </p>
       </div>
 
       <div className="mt-2.5 flex w-full items-center justify-between gap-3 border-t border-black/5 pt-2.5">
@@ -276,6 +307,11 @@ function ClassSelectionCard({
           aria-hidden="true"
         />
       </div>
+      {class_.active_suspension ? (
+        <span className="mt-1 text-[12px] font-semibold text-amber-800">
+          Đang hoãn · học lại {new Intl.DateTimeFormat("vi-VN").format(new Date(`${class_.active_suspension.resume_on}T00:00:00`))}
+        </span>
+      ) : null}
     </button>
   );
 }

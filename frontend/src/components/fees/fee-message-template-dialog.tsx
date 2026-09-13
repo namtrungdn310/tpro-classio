@@ -1,27 +1,25 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import { RotateCcw, X } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { RiArrowGoBackLine as RotateCcw } from "react-icons/ri";
 import { Button } from "@/components/ui/button";
+import { FormDialogBody, FormDialogFooter, FormDialogShell } from "@/components/ui/form-dialog-shell";
 import { SaveButton } from "@/components/ui/save-button";
 import {
   shouldShowUnsavedChanges,
   UnsavedChangesNotice,
 } from "@/components/ui/unsaved-changes-notice";
 import {
-  FeeTemplateEditor,
-  type FeeTemplateEditorHandle,
-} from "@/components/fees/fee-template-editor";
+  FeeMessageCodeEditor,
+  type FeeMessageCodeEditorHandle,
+} from "@/components/fees/fee-message-code-editor";
 import {
-  DEFAULT_FEE_MESSAGE_TEMPLATES,
   FEE_MESSAGE_TOKENS,
   MAX_FEE_MESSAGE_TEMPLATE_LENGTH,
   feeMessageTemplateValuesSchema,
   type FeeMessageTemplateValues,
 } from "@/lib/fees/message-templates";
 import { useFormFieldFeedback } from "@/lib/forms/use-form-field-feedback";
-import { useModalDialog } from "@/lib/hooks/useModalDialog";
 import type {
   FeeMessageTemplatesResponse,
   FeeMessageTemplatesUpdate,
@@ -38,6 +36,7 @@ type FeeMessageTemplateDialogProps = {
   isSaving: boolean;
   onClose: () => void;
   onSave: (payload: FeeMessageTemplatesUpdate) => void;
+  onReset: (version: number) => void;
   open: boolean;
   templates: FeeMessageTemplatesResponse;
 };
@@ -46,6 +45,7 @@ export function FeeMessageTemplateDialog({
   isSaving,
   onClose,
   onSave,
+  onReset,
   open,
   templates,
 }: FeeMessageTemplateDialogProps) {
@@ -58,6 +58,7 @@ export function FeeMessageTemplateDialog({
       isSaving={isSaving}
       onClose={onClose}
       onSave={onSave}
+      onReset={onReset}
       templates={templates}
     />
   );
@@ -67,16 +68,16 @@ function FeeMessageTemplateDialogContent({
   isSaving,
   onClose,
   onSave,
+  onReset,
   templates,
 }: Omit<FeeMessageTemplateDialogProps, "open">) {
-  const titleId = useId();
-  const reminderRef = useRef<FeeTemplateEditorHandle>(null);
-  const receivedRef = useRef<FeeTemplateEditorHandle>(null);
+  const reminderRef = useRef<FeeMessageCodeEditorHandle>(null);
+  const receivedRef = useRef<FeeMessageCodeEditorHandle>(null);
   const [values, setValues] = useState<FeeMessageTemplateValues>({
-    payment_reminder_template: templates.payment_reminder_template,
-    payment_received_template: templates.payment_received_template,
+    payment_reminder_template: templates.active.payment_reminder_template,
+    payment_received_template: templates.active.payment_received_template,
   });
-  const [baseVersion, setBaseVersion] = useState(templates.version);
+  const [baseVersion] = useState(templates.version);
   const [isSubmitted, setIsSubmitted] = useState(false);
   const {
     markBlur,
@@ -85,20 +86,15 @@ function FeeMessageTemplateDialogContent({
     resetFeedback,
     shouldShowError,
   } = useFormFieldFeedback(TEMPLATE_FIELDS);
-  const { backdropPointerDownRef, dialogRef, requestClose } = useModalDialog({
-    isBusy: isSaving,
-    onClose,
-  });
+  const requestClose = () => {
+    if (!isSaving) {
+      onClose();
+    }
+  };
 
-  // A 409 refreshes the latest template metadata while this dialog remains
-  // mounted. Rebase the next explicit retry onto that version instead of
-  // repeatedly submitting the stale version captured when the dialog opened.
-  useEffect(() => {
-    setBaseVersion(templates.version);
-  }, [templates.version]);
   const hasDraftChanges =
-    values.payment_reminder_template !== templates.payment_reminder_template ||
-    values.payment_received_template !== templates.payment_received_template;
+    values.payment_reminder_template !== templates.active.payment_reminder_template ||
+    values.payment_received_template !== templates.active.payment_received_template;
   const validation = useMemo(() => {
     const result = feeMessageTemplateValuesSchema.safeParse(values);
     if (result.success) {
@@ -118,14 +114,11 @@ function FeeMessageTemplateDialogContent({
     };
   }, [values]);
   const hasErrors = validation.data === null;
-  const hasPersistableChanges = Boolean(
-    validation.data &&
-      (validation.data.payment_reminder_template !== templates.payment_reminder_template ||
-        validation.data.payment_received_template !== templates.payment_received_template),
-  );
-  const hasActionableDraft = validation.data ? hasPersistableChanges : hasDraftChanges;
+  // Compare the raw editor values so an explicit Enter is immediately visible
+  // as a draft change and remains an intentional part of the saved message.
+  const hasActionableDraft = hasDraftChanges;
   const shouldShowUnsavedNotice = shouldShowUnsavedChanges({
-    hasChanges: hasPersistableChanges,
+    hasChanges: hasDraftChanges,
     hasErrors,
     isSaving,
   });
@@ -155,7 +148,7 @@ function FeeMessageTemplateDialogContent({
 
   function insertToken(
     field: TemplateField,
-    editorRef: React.RefObject<FeeTemplateEditorHandle | null>,
+    editorRef: React.RefObject<FeeMessageCodeEditorHandle | null>,
     token: string,
     label: string,
   ) {
@@ -173,60 +166,25 @@ function FeeMessageTemplateDialogContent({
   }
 
   function resetToDefaults() {
-    setValues({ ...DEFAULT_FEE_MESSAGE_TEMPLATES });
-    setIsSubmitted(false);
-    resetFeedback();
+    if (templates.is_customized) {
+      onReset(baseVersion);
+    } else {
+      setValues({ ...templates.defaults });
+      setIsSubmitted(false);
+      resetFeedback();
+    }
   }
 
-  return createPortal(
-    <div
-      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/30 p-4"
-      onPointerDown={(event) => {
-        backdropPointerDownRef.current = event.target === event.currentTarget;
-      }}
-      onPointerUp={(event) => {
-        if (backdropPointerDownRef.current && event.target === event.currentTarget) {
-          requestClose();
-        }
-        backdropPointerDownRef.current = false;
-      }}
-      onPointerCancel={() => {
-        backdropPointerDownRef.current = false;
-      }}
+  return (
+    <FormDialogShell
+      title="Nội dung tin nhắn Zalo"
+      width="xl"
+      isBusy={isSaving}
+      dirty={hasDraftChanges}
+        onClose={requestClose}
     >
-      <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        aria-busy={isSaving || undefined}
-        tabIndex={-1}
-        className="flex max-h-[calc(100vh-2rem)] w-full max-w-[1100px] flex-col overflow-hidden rounded-xl bg-white shadow-xl"
-      >
-        <header className="flex shrink-0 items-start justify-between gap-4 border-b border-gray-200 px-5 py-4">
-          <div>
-            <h2 id={titleId} className="section-title-text text-gray-950">
-              Nội dung tin nhắn Zalo
-            </h2>
-          </div>
-          <button
-            type="button"
-            aria-label="Đóng khung nội dung Zalo"
-            disabled={isSaving}
-            onClick={requestClose}
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-900 disabled:opacity-50"
-          >
-            <X className="h-4 w-4" aria-hidden="true" />
-          </button>
-        </header>
-
-        <div className="scrollbar-hidden min-h-0 flex-1 overflow-y-auto px-5 py-4">
-          <UnsavedChangesNotice
-            hasChanges={hasPersistableChanges}
-            hasErrors={hasErrors}
-            isSaving={isSaving}
-          />
-          <div className={`${shouldShowUnsavedNotice ? "mt-4" : ""} grid gap-5 lg:grid-cols-2`}>
+        <FormDialogBody>
+          <div className="grid gap-5 lg:grid-cols-2">
             {fieldConfigs.map((config) => {
               const errorId = `${config.field}-error`;
               const error = shouldShowError(config.field, isSubmitted)
@@ -236,11 +194,14 @@ function FeeMessageTemplateDialogContent({
                 <section key={config.field} className="min-w-0">
                   <label
                     htmlFor={config.field}
-                    className="form-label-text block select-none text-[15px] text-gray-700"
+                    className="form-label-text block select-none text-gray-700"
                   >
                     {config.label}
                   </label>
-                  <FeeTemplateEditor
+                  <p className="mt-1 text-xs text-gray-500">
+                    Enter để xuống dòng · Backspace ở đầu dòng để nối.
+                  </p>
+                  <FeeMessageCodeEditor
                     ref={config.textareaRef}
                     id={config.field}
                     value={values[config.field]}
@@ -250,9 +211,9 @@ function FeeMessageTemplateDialogContent({
                     onChange={(value) => updateField(config.field, value)}
                     onBlur={() => markBlur(config.field)}
                   />
-                  <div className="mt-1.5 flex min-h-5 items-start justify-between gap-3">
+                  <div className="mt-1.5 flex min-h-5 flex-wrap items-center justify-between gap-x-3 gap-y-1">
                     {error ? (
-                      <p id={errorId} className="text-sm font-medium text-red-600">
+                      <p id={errorId} className="text-sm font-medium text-destructive">
                         {error}
                       </p>
                     ) : (
@@ -270,6 +231,7 @@ function FeeMessageTemplateDialogContent({
                         disabled={isSaving}
                         title={`Chèn ${label}`}
                         data-fee-template-editor-control={config.field}
+                        data-selection-policy="preserve"
                         onPointerDown={(event) => event.preventDefault()}
                         onClick={() =>
                           insertToken(config.field, config.textareaRef, token, label)
@@ -284,39 +246,50 @@ function FeeMessageTemplateDialogContent({
               );
             })}
           </div>
-        </div>
+          {shouldShowUnsavedNotice ? (
+            <div className="mt-4">
+              <UnsavedChangesNotice
+                hasChanges={hasDraftChanges}
+                hasErrors={hasErrors}
+                isSaving={isSaving}
+              />
+            </div>
+          ) : null}
+          </FormDialogBody>
 
-        <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-gray-200 bg-gray-50/70 px-5 py-3">
-          <Button
-            type="button"
-            variant="outline"
-            disabled={isSaving}
-            onClick={resetToDefaults}
-            className="h-8 gap-1.5 rounded-md px-3 text-sm"
-          >
-            <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
-            Mặc định
-          </Button>
-          <div className="flex items-center gap-2">
+        <FormDialogFooter
+          left={
             <Button
               type="button"
               variant="outline"
               disabled={isSaving}
-              onClick={requestClose}
-              className="h-8 rounded-md px-3 text-sm"
+              onClick={resetToDefaults}
+              className="h-8 gap-1.5 rounded-md px-3 text-sm"
             >
-              Huỷ
+              <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+              Mặc định
             </Button>
-            <SaveButton
-              type="button"
-              disabled={!hasActionableDraft}
-              onClick={handleSave}
-              isSaving={isSaving}
-            />
-          </div>
-        </footer>
-      </div>
-    </div>,
-    document.body,
-  );
-}
+          }
+          right={
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isSaving}
+                onClick={requestClose}
+                className="h-8 rounded-md px-3 text-sm"
+              >
+                Huỷ
+              </Button>
+              <SaveButton
+                type="button"
+                disabled={!hasActionableDraft}
+                onClick={handleSave}
+                isSaving={isSaving}
+              />
+            </>
+          }
+        />
+      </FormDialogShell>
+    );
+  }

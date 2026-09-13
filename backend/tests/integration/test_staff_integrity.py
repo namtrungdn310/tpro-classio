@@ -107,24 +107,40 @@ async def test_staff_lifecycle_triggers_preserve_class_assignments() -> None:
                 {"teacher_id": teacher_id},
                 match="cannot be deactivated",
             )
-            await _assert_trigger_rejects(
-                db,
-                """
-                update public.staff_members
-                set staff_type = 'ASSISTANT'
-                where id = cast(:teacher_id as uuid)
-                """,
+            # staff_type chỉ còn là projection tương thích. Vai trò TEACHER
+            # của liên kết lớp phải không đổi khi projection này đổi.
+            await db.execute(
+                text(
+                    """
+                    update public.staff_members
+                    set staff_type = 'ASSISTANT'
+                    where id = cast(:teacher_id as uuid)
+                    """
+                ),
                 {"teacher_id": teacher_id},
-                match="cannot change staff type",
             )
-            await _assert_trigger_rejects(
-                db,
-                """
-                insert into public.class_teachers (class_id, teacher_id)
-                values (cast(:class_id as uuid), cast(:assistant_id as uuid))
-                """,
+            assignment_role = await db.scalar(
+                text(
+                    """
+                    select role from public.class_teachers
+                    where class_id = cast(:class_id as uuid)
+                      and teacher_id = cast(:teacher_id as uuid)
+                    """
+                ),
+                {"class_id": class_id, "teacher_id": teacher_id},
+            )
+            assert assignment_role == "TEACHER"
+            # Kể từ migration 049, ASSISTANT hợp lệ trong junction class_teachers:
+            # link assistant phải được chấp nhận (không còn bị chặn "must reference
+            # a teacher").
+            await db.execute(
+                text(
+                    """
+                    insert into public.class_teachers (class_id, teacher_id)
+                    values (cast(:class_id as uuid), cast(:assistant_id as uuid))
+                    """
+                ),
                 {"class_id": class_id, "assistant_id": assistant_id},
-                match="must reference a teacher",
             )
             await _assert_trigger_rejects(
                 db,
@@ -166,17 +182,22 @@ async def test_staff_lifecycle_triggers_preserve_class_assignments() -> None:
                 where id = cast(:class_id as uuid)
                 """,
                 {"class_id": class_id},
-                match="invalid teacher assignment",
+                match="inactive teacher or assistant",
             )
-            await _assert_trigger_rejects(
-                db,
-                """
-                update public.staff_members
-                set staff_type = 'ASSISTANT'
-                where id = cast(:teacher_id as uuid)
-                """,
-                {"teacher_id": teacher_id},
-                match="cannot change staff type",
+            # Việc ngừng nhân sự hoặc kích hoạt lại lớp vẫn được bảo vệ, còn
+            # projection staff_type không thay đổi vai trò contextual đã lưu.
+            assert (
+                await db.scalar(
+                    text(
+                        """
+                        select role from public.class_teachers
+                        where class_id = cast(:class_id as uuid)
+                          and teacher_id = cast(:teacher_id as uuid)
+                        """
+                    ),
+                    {"class_id": class_id, "teacher_id": teacher_id},
+                )
+                == "TEACHER"
             )
         finally:
             if transaction.is_active:

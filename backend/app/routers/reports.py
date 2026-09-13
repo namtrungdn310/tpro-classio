@@ -2,15 +2,138 @@ from datetime import date
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_user
-from app.schemas.report import FeeOperationListResponse, FeeOperationResponse
+from app.core.dependencies import Principal, require_management
+from app.schemas.report import (
+    FeeOperationListResponse,
+    FeeOperationResponse,
+    FeePaidReceiptDetailResponse,
+    FeePaidReceiptListResponse,
+    PaymentReconciliationListResponse,
+    PaymentReconciliationResolveRequest,
+    PaymentReconciliationItemResponse,
+)
+from app.services.paid_report_service import (
+    get_paid_fee_receipt,
+    get_paid_fee_receipts,
+)
 from app.services.report_service import get_fee_operation, get_fee_operations
+from app.services.payment_reconciliation_service import (
+    list_payment_reconciliation,
+    resolve_payment_reconciliation,
+)
 
 router = APIRouter(tags=["reports"])
+
+
+@router.get("/billing/enrollments/{id}/suspensions")
+async def suspension_report_history(
+    id: UUID,
+    year: int | None = Query(default=None, ge=0, le=9998),
+    page: int = Query(default=1, ge=1, le=100000),
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+):
+    from app.services.suspension_report_service import read_suspension_history
+
+    return await read_suspension_history(db, id, year=year, page=page)
+
+
+@router.get("/billing/enrollments")
+async def billing_report_enrollments(
+    q: str = Query(default="", max_length=100),
+    page: int = Query(default=1, ge=1, le=100000),
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+):
+    from app.services.billing_schedule_read_service import read_report_enrollments
+
+    return await read_report_enrollments(db, q=q, page=page)
+
+
+@router.get("/billing/enrollments/{id}/history")
+async def billing_report_history(
+    id: UUID,
+    year: int | None = Query(default=None, ge=0, le=9998),
+    page: int = Query(default=1, ge=1, le=100000),
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+):
+    from app.services.billing_schedule_read_service import read_schedule_history
+
+    return await read_schedule_history(db, id, year=year, page=page)
+
+
+@router.get("/billing/enrollments/{id}/fees")
+async def billing_report_fees(
+    id: UUID,
+    year: int | None = Query(default=None, ge=0, le=9998),
+    state: Literal["ALL", "PENDING", "PAID", "REFUNDED"] = "ALL",
+    include_inactive: bool = False,
+    order: Literal["asc", "desc"] = "desc",
+    page: int = Query(default=1, ge=1, le=100000),
+    page_size: int = Query(default=20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+):
+    from app.services.billing_schedule_read_service import read_schedule_fees
+
+    return await read_schedule_fees(
+        db,
+        id,
+        year=year,
+        state=state,
+        include_inactive=include_inactive,
+        order=order,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get("/fees/paid", response_model=FeePaidReceiptListResponse)
+async def list_paid_fee_receipts(
+    period: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$"),
+    q: str | None = Query(default=None, min_length=1, max_length=100),
+    date_from: date | None = None,
+    date_to: date | None = None,
+    payment_method: Literal["bank_transfer", "cash"] | None = None,
+    payment_origin: Literal["manual", "manual_early", "pay2s"] | None = None,
+    refund_state: Literal["NONE", "PARTIAL", "FULL", "REVERSED"] | None = None,
+    cursor: str | None = Query(default=None, max_length=500),
+    limit: int = Query(default=30, ge=10, le=100),
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> FeePaidReceiptListResponse:
+    return await get_paid_fee_receipts(
+        db,
+        period=period,
+        query_text=q,
+        date_from=date_from,
+        date_to=date_to,
+        payment_method=payment_method,
+        payment_origin=payment_origin,
+        refund_state=refund_state,
+        cursor=cursor,
+        limit=limit,
+    )
+
+
+@router.get("/fees/paid/{receipt_id}", response_model=FeePaidReceiptDetailResponse)
+async def read_paid_fee_receipt(
+    receipt_id: str = Path(min_length=20, max_length=500),
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> FeePaidReceiptDetailResponse:
+    receipt = await get_paid_fee_receipt(db, receipt_id)
+    if receipt is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Không tìm thấy phiếu thu",
+        )
+    return receipt
 
 
 @router.get("/fees/operations", response_model=FeeOperationListResponse)
@@ -33,7 +156,7 @@ async def list_fee_operations(
     cursor: str | None = Query(default=None, max_length=300),
     limit: int = Query(default=30, ge=10, le=100),
     db: AsyncSession = Depends(get_db),
-    current_user: dict[str, str | bool | None] = Depends(get_current_user),
+    principal: Principal = Depends(require_management),
 ) -> FeeOperationListResponse:
     return await get_fee_operations(
         db,
@@ -51,7 +174,7 @@ async def list_fee_operations(
 async def read_fee_operation(
     operation_id: UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: dict[str, str | bool | None] = Depends(get_current_user),
+    principal: Principal = Depends(require_management),
 ) -> FeeOperationResponse:
     operation = await get_fee_operation(db, operation_id)
     if operation is None:
@@ -60,3 +183,42 @@ async def read_fee_operation(
             detail="Không tìm thấy hoạt động học phí",
         )
     return operation
+
+
+@router.get(
+    "/fees/reconciliation",
+    response_model=PaymentReconciliationListResponse,
+)
+async def list_fee_reconciliation(
+    queue_status: Literal["PENDING", "PROCESSING", "POSTED", "REVIEW", "DEAD"] = Query(
+        default="REVIEW", alias="status"
+    ),
+    limit: int = Query(default=100, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> PaymentReconciliationListResponse:
+    return await list_payment_reconciliation(db, queue_status=queue_status, limit=limit)
+
+
+@router.post(
+    "/fees/reconciliation/{queue_id}/resolve",
+    response_model=PaymentReconciliationItemResponse,
+)
+async def resolve_fee_reconciliation(
+    queue_id: UUID,
+    payload: PaymentReconciliationResolveRequest,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+) -> PaymentReconciliationItemResponse:
+    try:
+        response = await resolve_payment_reconciliation(
+            db,
+            queue_id=queue_id,
+            payload=payload,
+            actor_id=principal.user_id,
+        )
+        await db.commit()
+        return response
+    except HTTPException:
+        await db.rollback()
+        raise

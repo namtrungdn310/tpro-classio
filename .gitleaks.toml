@@ -1,0 +1,15 @@
+title = "TPRO Classio secret scanning policy"
+
+[allowlist]
+description = "Known non-secret purpose labels used for server-side credential encryption"
+paths = [
+  '''backend/app/services/banking_service\.py''',
+  '''backend/app/services/pay2s_service\.py''',
+]
+regexTarget = "match"
+regexes = [
+  '''_PAY2S_SECRET_KEY_PURPOSE\s*=\s*"pay2s-secret-key-v1"''',
+  '''_PAY2S_CREDENTIAL_KEY_PURPOSE\s*=\s*"pay2s-secret-key-v1"''',
+  '''_SECRET_KEY_PURPOSE\s*=\s*"pay2s-secret-key-v1"''',
+  '''_CREDENTIAL_KEY_PURPOSE\s*=\s*"pay2s-secret-key-v1"''',
+]

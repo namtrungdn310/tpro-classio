@@ -1,0 +1,147 @@
+import { StrictMode, useState } from "react";
+import { createRoot } from "react-dom/client";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ClassMakeupWorkspace } from "@/components/classes/class-makeup-workspace";
+import { classQueryKeys } from "@/lib/classes/query-keys";
+import { AuthProvider } from "@/lib/hooks/useAuth";
+import type { ClassResponse } from "@/lib/types";
+
+function getVnToday(): Date {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const year = Number(parts.find((p) => p.type === "year")!.value);
+  const month = Number(parts.find((p) => p.type === "month")!.value);
+  const day = Number(parts.find((p) => p.type === "day")!.value);
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+function daysFromNow(days: number): string {
+  const d = getVnToday();
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+const mockClass: ClassResponse = {
+  id: "11111111-1111-4111-8111-111111111111",
+  name: "Lớp 6A1",
+  type: "MONTHLY",
+  base_fee: 750000,
+  billing_cycle_months: 1,
+  billing_cycle_weeks: null,
+  start_date: daysFromNow(-30),
+  end_date: daysFromNow(120),
+  identity_scheme: "ACADEMIC_YEAR",
+  class_category: "GENERAL",
+  grade_mode: "GRADE",
+  program_name: null,
+  grade_level: 6,
+  education_level: "MIDDLE",
+  academic_year_start: 2026,
+  schedule: null,
+  teacher_id: null,
+  teacher_ids: [],
+  teacher_name: null,
+  teacher_names: [],
+  assistant_ids: [],
+  assistant_names: [],
+  is_active: true,
+  student_count: 4,
+  created_at: "2026-01-01T00:00:00.000Z",
+  updated_at: "2026-01-01T00:00:00.000Z",
+  version: 1,
+  display_name: "Lớp 6A1",
+  primary_label: "Lớp 6A1",
+  secondary_label: null,
+  effective_status: "ACTIVE",
+  can_edit_end_date: true,
+  end_date_edit_deadline: null,
+  can_edit: true,
+  can_cancel: true,
+  can_view_history: true,
+  operational_end_date: "2027-06-06",
+  unresolved_makeup_count: 2,
+};
+
+function Harness() {
+  const [open, setOpen] = useState(true);
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+
+  // The end date is intentionally blank on first render. The test selects
+  // today + 14 days, so seed the exact date-range query key that follows.
+  const from = daysFromNow(0);
+  const to = daysFromNow(14);
+  queryClient.setQueryData(classQueryKeys.occurrences(mockClass.id, { from, to: daysFromNow(13) }), {
+    class_id: mockClass.id,
+    occurrences: [
+      {
+        key: `${mockClass.id}:${new Date(`${daysFromNow(3)}T18:00:00`).toISOString()}`,
+        kind: "REGULAR",
+        original_start_at: new Date(`${daysFromNow(3)}T18:00:00`).toISOString(),
+        original_end_at: new Date(`${daysFromNow(3)}T19:00:00`).toISOString(),
+        source_slot_key: "Thứ 2|18:00|19:00",
+        teacher_ids: [],
+        assistant_ids: [],
+        exception_id: null,
+        status: null,
+        replacement_start_at: null,
+        replacement_end_at: null,
+        adjustable: true,
+        already_adjusted: false,
+        passed: false,
+      },
+      {
+        key: `${mockClass.id}:${new Date(`${daysFromNow(5)}T18:00:00`).toISOString()}`,
+        kind: "REGULAR",
+        original_start_at: new Date(`${daysFromNow(5)}T18:00:00`).toISOString(),
+        original_end_at: new Date(`${daysFromNow(5)}T19:00:00`).toISOString(),
+        source_slot_key: "Thứ 2|18:00|19:00",
+        teacher_ids: [],
+        assistant_ids: [],
+        exception_id: "44444444-4444-4444-8444-444444444444",
+        status: "MAKEUP_PENDING",
+        replacement_start_at: null,
+        replacement_end_at: null,
+        adjustable: false,
+        already_adjusted: true,
+        passed: false,
+      },
+    ],
+  });
+  queryClient.setQueryData(classQueryKeys.suspensionPreview(mockClass.id, from, to), {
+    class_id: mockClass.id,
+    suspended_from: from,
+    resume_on: to,
+    credit_days: 14,
+    member_summary: [
+      { enrollment_id: "55555555-5555-4555-8555-555555555555", overlap_days: 14, student_name: "Học viên thử", old_due_date: daysFromNow(20), new_due_date: daysFromNow(34), target_coverage_start: daysFromNow(20), pending_days: 0 },
+    ],
+    target_cycle_count: 1,
+    protected_case_count: 0, fingerprint: "a".repeat(64), adjustment_id: null, occurrence_count: 1, blocked_reasons: [],
+  });
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <StrictMode>
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider initialUser={{ id: "90000000-0000-4000-8000-000000000001", workspace_id: "90000000-0000-4000-8000-000000000002",
+          email: "suspension@example.test", role: "admin", username: "test", full_name: "TPRO test", avatar_url: null, is_owner: true }}>
+        <ClassMakeupWorkspace
+          class_={mockClass}
+          isSaving={false}
+          onClose={() => setOpen(false)}
+        />
+        </AuthProvider>
+      </QueryClientProvider>
+    </StrictMode>
+  );
+}
+
+createRoot(document.getElementById("root")!).render(<Harness />);

@@ -5,11 +5,13 @@ import { useQueryClient } from "@tanstack/react-query";
 import { usePathname, useRouter } from "next/navigation";
 import Image from "next/image";
 import { useAuth } from "@/lib/hooks/useAuth";
+import { isManagementUser } from "@/lib/auth/permissions";
 import { prefetchRouteData } from "@/lib/query-prefetch";
 import { Navbar } from "@/components/layout/navbar";
-import { TabNav } from "@/components/layout/tab-nav";
+import { BottomNav } from "@/components/layout/bottom-nav";
 import { DashboardSidebar } from "@/components/layout/dashboard-sidebar";
 import { LoadingLabel } from "@/components/ui/loading-label";
+import { useOptimisticNavigation } from "@/lib/hooks/useOptimisticNavigation";
 
 
 export function DashboardShell({ children }: { children: ReactNode }) {
@@ -20,12 +22,14 @@ function DashboardContent({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const pathname = usePathname();
   const router = useRouter();
+  useOptimisticNavigation(pathname);
   const { getMeSilently, isLoading, isLoggingOut, isSessionUnavailable, logout, user } = useAuth();
   const lockScrollToPanel =
     pathname === "/" ||
     pathname.startsWith("/classes") ||
     pathname.startsWith("/students") ||
     pathname.startsWith("/fees") ||
+    pathname.startsWith("/banking") ||
     pathname.startsWith("/report") ||
     pathname.startsWith("/staff") ||
     pathname.startsWith("/settings");
@@ -36,6 +40,12 @@ function DashboardContent({ children }: { children: ReactNode }) {
       router.replace("/login");
     }
   }, [isLoading, isSessionUnavailable, router, user]);
+
+  useEffect(() => {
+    if (!isLoading && user?.role === "teacher") {
+      router.replace("/attendance");
+    }
+  }, [isLoading, router, user?.role]);
 
   useEffect(() => {
     if (!user) {
@@ -51,7 +61,7 @@ function DashboardContent({ children }: { children: ReactNode }) {
         }
 
         await prefetchRouteData(queryClient, pathname, {
-          isAdmin: user.role === "admin",
+          isAdmin: isManagementUser(user),
           isOwner: Boolean(user.is_owner),
         });
       })();
@@ -89,7 +99,7 @@ function DashboardContent({ children }: { children: ReactNode }) {
 
   if (!user && isSessionUnavailable) {
     return (
-      <div className="flex h-[100dvh] w-screen items-center justify-center bg-[#F8FAFD] px-4">
+      <div className="flex h-[100dvh] w-screen items-center justify-center bg-background px-4">
         <div className="w-full max-w-sm rounded-2xl border border-gray-200 bg-white px-6 py-6 text-center shadow-sm">
           <p className="font-ui text-[15px] font-semibold text-gray-950">
             Chưa thể kiểm tra phiên đăng nhập
@@ -100,7 +110,7 @@ function DashboardContent({ children }: { children: ReactNode }) {
           <button
             type="button"
             onClick={() => void getMeSilently()}
-            className="mt-4 h-9 rounded-lg bg-gray-950 px-4 text-sm font-semibold text-white transition hover:bg-gray-800"
+            className="mt-4 h-9 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground transition hover:bg-primary/90"
           >
             Thử lại
           </button>
@@ -113,35 +123,38 @@ function DashboardContent({ children }: { children: ReactNode }) {
     return <DashboardSessionScreen label="Đang chuyển hướng" />;
   }
 
+
+  if (user.role === "teacher") {
+    return <DashboardSessionScreen label="Đang mở lịch chấm công" />;
+  }
+
   return (
-    <div className={lockScrollToPanel ? "dashboard-app min-h-screen bg-[#F8FAFD] md:h-screen md:overflow-hidden" : "dashboard-app min-h-screen bg-[#F8FAFD]"}>
-      <header className="dashboard-header fixed inset-x-0 top-0 z-40 border-b border-gray-100 bg-white">
+    <div className={lockScrollToPanel ? "dashboard-app min-h-screen bg-background md:h-screen md:overflow-hidden" : "dashboard-app min-h-screen bg-background"}>
+      <header className="dashboard-header fixed inset-x-0 top-0 z-40 select-none border-b border-slate-200 bg-white">
         <Navbar />
       </header>
       <div className={lockScrollToPanel ? "pt-14 md:flex md:h-full md:overflow-hidden" : "pt-14 md:flex"}>
         <DashboardSidebar onLogout={() => void logout()} />
-        <div className={`dashboard-content min-w-0 flex-1 ${lockScrollToPanel ? "md:h-full md:overflow-hidden" : ""}`}>
-          <div className="bg-white md:hidden">
-            <TabNav />
-          </div>
-          <main
-            className={lockScrollToPanel
+          <div className={`dashboard-content min-w-0 flex-1 ${lockScrollToPanel ? "md:h-full md:overflow-hidden" : ""}`}>
+            <main
+            className={`page-enter ${lockScrollToPanel
               ? isDashboardRoute
-                ? "w-full overflow-x-hidden px-4 py-5 md:h-full md:overflow-y-auto md:px-5 md:py-4"
-                : "w-full px-4 py-5 md:h-full md:overflow-hidden md:px-5 md:py-4"
-              : "w-full px-4 py-5 md:px-5 md:py-4"}
+                ? "w-full overflow-x-hidden px-4 pt-5 pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:h-full md:overflow-y-auto md:px-5 md:py-4"
+                : "w-full px-4 pt-5 pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:h-full md:overflow-hidden md:px-5 md:py-4"
+              : "w-full px-4 pt-5 pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:px-5 md:py-4"}`}
           >
             {children}
           </main>
         </div>
       </div>
+      <BottomNav />
     </div>
   );
 }
 
 function DashboardSessionScreen({ label }: { label: string }) {
   return (
-    <div className="flex h-[100dvh] w-screen items-center justify-center bg-[#F8FAFD] px-4">
+    <div className="flex h-[100dvh] w-screen items-center justify-center bg-background px-4">
       <div
         role="status"
         aria-live="polite"
@@ -149,9 +162,11 @@ function DashboardSessionScreen({ label }: { label: string }) {
       >
         <div className="relative h-12 w-12">
           <Image
-            src="/logo-mark-bw.png"
+            src="/logo-mark.png"
             alt="TPRO"
             fill
+            sizes="48px"
+            quality={100}
             className="object-contain"
             priority
           />

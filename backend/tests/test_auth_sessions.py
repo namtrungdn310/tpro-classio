@@ -7,7 +7,8 @@ import pytest
 import jwt
 from fastapi import HTTPException, Response
 
-from app.core.dependencies import get_current_user
+from app.core.dependencies import resolve_principal
+from app.core.principal import Principal
 from app.core.device_sessions import DeviceSessionContext, hash_device_value
 from app.models.user_device_session import UserDeviceSession
 from app.routers.auth import common, session
@@ -55,7 +56,7 @@ def _profile(
     return SimpleNamespace(
         id=user_id,
         email="member@example.com",
-        role="viewer",
+        role="teacher",
         username="Member",
         full_name="Member",
         avatar_url=None,
@@ -78,11 +79,11 @@ async def test_current_user_uses_current_database_role_and_requires_aal2() -> No
     )
     db = AsyncMock()
     db.execute.return_value = OneResult(
-        (stored_session, "viewer", "active", "Viewer", "Viewer", None)
+        (stored_session, "admin", "active", "Admin", "Admin", None, None)
     )
     token_payload = {
         "sub": user_id,
-        "email": "viewer@example.com",
+        "email": "admin@example.com",
         "role": "admin",
         "aal": "aal2",
         "device_type": "desktop",
@@ -90,18 +91,58 @@ async def test_current_user_uses_current_database_role_and_requires_aal2() -> No
     }
 
     with (
-        patch("app.core.dependencies.verify_token", return_value=token_payload),
-        patch("app.core.dependencies.read_device_id", return_value=device_id),
+        patch("app.core.principal.verify_token", return_value=token_payload),
+        patch("app.core.principal.read_device_id", return_value=device_id),
     ):
-        current_user = await get_current_user(
+        current_user = await resolve_principal(
             request=SimpleNamespace(),
             db=db,
             token="signed-token",
         )
 
-    assert current_user["role"] == "viewer"
-    assert current_user["aal"] == "aal2"
-    assert current_user["mfa_verified_at"] == verified_at
+    assert current_user.effective_role == "admin"
+    assert current_user.aal == "aal2"
+    assert current_user.user_id == user_id
+
+
+@pytest.mark.asyncio
+async def test_current_user_fails_closed_for_retired_viewer_role() -> None:
+    """R6: viewer runtime đã bị retire — role viewer fail closed (403)."""
+    user_id = str(uuid4())
+    device_id = "device_identifier_123456"
+    verified_at = datetime.now(timezone.utc)
+    stored_session = SimpleNamespace(
+        session_nonce="nonce",
+        device_id_hash=hash_device_value(device_id),
+        created_at=datetime.now(timezone.utc),
+        aal="aal2",
+        mfa_verified_at=verified_at,
+    )
+    db = AsyncMock()
+    db.execute.return_value = OneResult(
+        (stored_session, "viewer", "active", "Viewer", "Viewer", None, None)
+    )
+    token_payload = {
+        "sub": user_id,
+        "email": "viewer@example.com",
+        "role": "viewer",
+        "aal": "aal2",
+        "device_type": "desktop",
+        "session_nonce": "nonce",
+    }
+
+    with (
+        patch("app.core.principal.verify_token", return_value=token_payload),
+        patch("app.core.principal.read_device_id", return_value=device_id),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await resolve_principal(
+                request=SimpleNamespace(),
+                db=db,
+                token="signed-token",
+            )
+
+    assert exc_info.value.status_code == 403
 
 
 @pytest.mark.asyncio
@@ -118,7 +159,7 @@ async def test_current_user_rejects_non_active_account(account_status: str) -> N
     )
     db = AsyncMock()
     db.execute.return_value = OneResult(
-        (stored_session, "viewer", account_status, None, None, None)
+        (stored_session, "viewer", account_status, None, None, None, None)
     )
     token_payload = {
         "sub": user_id,
@@ -130,11 +171,11 @@ async def test_current_user_rejects_non_active_account(account_status: str) -> N
     }
 
     with (
-        patch("app.core.dependencies.verify_token", return_value=token_payload),
-        patch("app.core.dependencies.read_device_id", return_value=device_id),
+        patch("app.core.principal.verify_token", return_value=token_payload),
+        patch("app.core.principal.read_device_id", return_value=device_id),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await get_current_user(
+            await resolve_principal(
                 request=SimpleNamespace(),
                 db=db,
                 token="signed-token",
@@ -503,15 +544,22 @@ async def test_current_password_verification_does_not_rotate_device_session() ->
         ) as revoke,
         patch("app.routers.auth.session.upsert_device_session", new=upsert),
     ):
+        principal = Principal(
+            user_id=user_id,
+            email="active@example.com",
+            persistent_role="teacher",
+            effective_role="teacher",
+            is_owner=False,
+            account_status="active",
+            staff_id=None,
+            aal="aal2",
+            device_type="desktop",
+            session_nonce="nonce",
+        )
         response = await session.verify_current_password(
             VerifyCurrentPasswordRequest(password="StrongPassword1!"),
             AsyncMock(),
-            {
-                "id": user_id,
-                "email": "active@example.com",
-                "role": "viewer",
-                "is_owner": False,
-            },
+            principal,
         )
 
     assert "xác minh" in response.message.lower()
@@ -522,6 +570,18 @@ async def test_current_password_verification_does_not_rotate_device_session() ->
 
 @pytest.mark.asyncio
 async def test_wrong_current_password_has_a_specific_error() -> None:
+    principal = Principal(
+        user_id=str(uuid4()),
+        email="active@example.com",
+        persistent_role="teacher",
+        effective_role="teacher",
+        is_owner=False,
+        account_status="active",
+        staff_id=None,
+        aal="aal2",
+        device_type="desktop",
+        session_nonce="nonce",
+    )
     with (
         patch("app.routers.auth.session.ensure_supabase_auth_configured"),
         patch("app.routers.auth.session.enforce_rate_limit", new=AsyncMock()),
@@ -536,12 +596,7 @@ async def test_wrong_current_password_has_a_specific_error() -> None:
             await session.verify_current_password(
                 VerifyCurrentPasswordRequest(password="WrongPassword1!"),
                 AsyncMock(),
-                {
-                    "id": str(uuid4()),
-                    "email": "active@example.com",
-                    "role": "viewer",
-                    "is_owner": False,
-                },
+                principal,
             )
 
     assert exc_info.value.status_code == 400

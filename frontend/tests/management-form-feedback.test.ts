@@ -65,6 +65,7 @@ test("new students require profile and parent data but keep class-fee inheritanc
   assert.match(studentPageSource, /validationMessages\.required\("trường"\)/);
   assert.match(studentPageSource, /validationMessages\.required\("tên Zalo phụ huynh"\)/);
   assert.match(studentPageSource, /validationMessages\.required\("số điện thoại phụ huynh"\)/);
+  assert.match(studentPageSource, /phonePlaceholder="SĐT phụ huynh"/);
   assert.match(studentPageSource, /validationMessages\.required\("ngày bắt đầu"\)/);
   assert.match(studentPageSource, /means "use the selected class fee", not missing data/);
   assert.doesNotMatch(studentPageSource, /aria-hidden="true">\*<\/span>/);
@@ -79,7 +80,8 @@ test("a new student's start date participates in the persisted-value comparison"
   );
   assert.match(
     studentPageSource,
-    /normalizedStudentCreateFormKey\(watchedStudentValues\) !== initialCreateFormKeyRef\.current/,
+    /normalizedStudentCreateFormKey\(comparableWatchedStudentValues\) !== initialCreateFormKeyRef\.current/,
   );
-  assert.match(studentPageSource, /markInput\("enrollment_date", dateStr\)/);
+  assert.match(studentPageSource, /enrollment_date:\s*comparableManualDate\(/);
+  assert.match(studentPageSource, /markInput\("enrollment_date", value \?\? ""\)/);
 });

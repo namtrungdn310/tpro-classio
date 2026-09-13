@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   LOGOUT_NAVIGATION_ICON,
   NavigationIcon,
@@ -9,11 +9,10 @@ import {
 import { useAuth } from "@/lib/hooks/useAuth";
 
 export function Navbar() {
-  const router = useRouter();
   const { logout, user } = useAuth();
   const displayName = user?.username || user?.full_name || user?.email?.split("@")[0] || "Tài khoản";
   const avatarLetter = displayName.charAt(0).toLocaleUpperCase("vi-VN");
-  const roleLabel = user?.is_owner ? "Dev" : user?.role === "admin" ? "Admin" : "Viewer";
+  const roleLabel = user?.is_owner ? "Dev" : user?.role === "admin" ? "Admin" : "Giáo viên";
 
   async function handleLogout() {
     await logout();
@@ -21,10 +20,6 @@ export function Navbar() {
 
   function handleRefresh() {
     window.location.reload();
-  }
-
-  function handleOpenSettings() {
-    router.push("/settings");
   }
 
   return (
@@ -36,13 +31,15 @@ export function Navbar() {
         aria-label="Tải lại trang"
         title="Tải lại trang"
       >
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center bg-transparent md:hidden sm:h-9 sm:w-9">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center bg-transparent md:hidden sm:h-10 sm:w-10">
           <Image
-            src="/logo-mark-bw.png"
+            src="/logo-mark.png"
             alt="TPRO"
-            width={24}
-            height={24}
-            className="h-[22px] w-[22px] object-contain sm:h-[25px] sm:w-[25px]"
+            width={100}
+            height={100}
+            sizes="30px"
+            quality={100}
+            className="h-[30px] w-[30px] object-contain sm:h-[32px] sm:w-[32px]"
             priority
           />
         </span>
@@ -52,11 +49,10 @@ export function Navbar() {
         id="dashboard-header-controls"
         className="hidden min-w-0 flex-1 items-center justify-start md:flex md:pl-2"
       />
-      <div className="flex min-w-0 items-center gap-2 text-sm text-[#5F6368] md:pr-2.5">
-        <button
-          type="button"
-          onClick={handleOpenSettings}
-          className="font-ui hidden min-w-0 items-center gap-2 rounded-md border border-gray-200 bg-white px-2 py-1 text-left md:flex"
+      <div className="flex min-w-0 items-center gap-2 text-sm text-slate-600 md:pr-2.5">
+        <Link
+          href="/settings"
+          className="font-ui hidden min-w-0 items-center gap-2 rounded-md border border-slate-300 bg-white px-2 py-1 text-left md:flex"
           aria-label="Mở cài đặt tài khoản"
           title="Mở cài đặt"
         >
@@ -71,15 +67,15 @@ export function Navbar() {
             <span className="block max-w-[150px] truncate text-xs font-semibold leading-4 text-gray-900 xl:max-w-[200px]">
               {displayName}
             </span>
-            <span className="block text-[11px] font-medium leading-3 text-gray-500">{roleLabel}</span>
+            <span className="block text-[12px] font-medium leading-3 text-slate-600">{roleLabel}</span>
           </span>
-        </button>
+        </Link>
         <button
           type="button"
           onClick={() => void handleLogout()}
           aria-label="Đăng xuất"
           title="Đăng xuất"
-          className="inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-600 transition hover:bg-gray-100 hover:text-[#1967D2] md:hidden"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-600 transition hover:bg-primary/10 hover:text-primary md:hidden"
         >
           <NavigationIcon icon={LOGOUT_NAVIGATION_ICON} />
         </button>

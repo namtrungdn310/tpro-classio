@@ -45,9 +45,13 @@ export function createPreparedSearchMatcher(query: string | null | undefined) {
 
   const queryTokens = normalizedQuery.split(" ").filter(Boolean);
   const compactQuery = normalizedQuery.replace(/\s/g, "");
+  const isDigitsOnlyQuery = Boolean(queryDigits) && !/[a-z]/.test(normalizedQuery);
 
   return (corpus: PreparedSearchCorpus) => {
-    if (queryDigits && corpus.digits.includes(queryDigits)) {
+    // Digit-only matching is intentionally reserved for phone numbers and
+    // numeric identifiers. An alphanumeric class name such as "6C1" must not
+    // degrade to "61" and accidentally match fees, dates or schedules.
+    if (isDigitsOnlyQuery && corpus.digits.includes(queryDigits)) {
       return true;
     }
     if (normalizedQuery && corpus.normalized.includes(normalizedQuery)) {
@@ -70,5 +74,4 @@ export function createSmartSearchMatcher(query: string | null | undefined) {
   return (values: Array<string | number | null | undefined>) =>
     matchesPrepared(prepareSearchCorpus(values));
 }
-
 

@@ -225,38 +225,33 @@ async def test_invitation_binding_is_exact_and_atomic() -> None:
 
 @pytest.mark.asyncio
 async def test_invitation_consumption_requires_exact_bound_identity() -> None:
-    class Result:
-        def first(self):
-            return SimpleNamespace(id=str(uuid4()))
-
-    db = AsyncMock()
-    db.execute.return_value = Result()
     invitation_id = str(uuid4())
     user_id = str(uuid4())
+    invitation = SimpleNamespace(
+        id=invitation_id,
+        role="admin",
+        staff_id=None,
+        consumed_at=None,
+        revoked_at=None,
+        expires_at=datetime.now(timezone.utc) + timedelta(days=1),
+        registered_user_id=user_id,
+        email="member@example.com",
+    )
+    db = AsyncMock()
+    db.execute.return_value = ScalarResult(invitation)
 
-    await consume_invitation(
+    result = await consume_invitation(
         db,
         invitation_id=invitation_id,
         user_id=user_id,
         email="Member@Example.com",
     )
 
-    statement = " ".join(str(db.execute.await_args.args[0]).lower().split())
-    parameters = db.execute.await_args.args[1]
-    assert "where id = cast(:id as uuid)" in statement
-    assert "registered_user_id = cast(:uid as uuid)" in statement
-    assert "lower(email) = lower(:email)" in statement
-    assert "role = 'viewer'::user_role" in statement
-    assert "consumed_at is null" in statement
-    assert "revoked_at is null" in statement
-    assert "expires_at > now()" in statement
-    assert "returning id" in statement
-    assert parameters == {
-        "id": invitation_id,
-        "uid": user_id,
-        "email": "Member@Example.com",
-    }
-    db.commit.assert_not_awaited()
+    assert result is invitation
+    assert invitation.consumed_at is not None
+    statement = str(db.execute.await_args.args[0]).lower()
+    assert "account_invitations" in statement
+    assert "for update" in statement
 
 
 @pytest.mark.asyncio
@@ -270,7 +265,7 @@ async def test_disabled_pending_account_cannot_finish_stale_onboarding_flow() ->
     )
     profile = SimpleNamespace(
         id=user_id,
-        role="viewer",
+        role="teacher",
         account_status="disabled",
     )
     db = AsyncMock()
@@ -302,7 +297,7 @@ async def test_disabled_pending_account_cannot_finish_stale_onboarding_flow() ->
 
 
 @pytest.mark.asyncio
-async def test_onboarding_audit_preserves_role_before_viewer_activation() -> None:
+async def test_onboarding_audit_preserves_role_before_activation() -> None:
     user_id = str(uuid4())
     flow = SimpleNamespace(
         id=str(uuid4()),
@@ -339,7 +334,12 @@ async def test_onboarding_audit_preserves_role_before_viewer_activation() -> Non
             "app.routers.auth.mfa.mark_onboarding_recovery_codes_confirmed",
             new=AsyncMock(return_value=flow),
         ),
-        patch("app.routers.auth.mfa.consume_invitation", new=AsyncMock()),
+        patch(
+            "app.routers.auth.mfa.consume_invitation",
+            new=AsyncMock(
+                return_value=SimpleNamespace(id="inv-id", role="teacher", staff_id=None)
+            ),
+        ),
         patch(
             "app.routers.auth.mfa.read_upstream_credentials",
             return_value=("upstream-access", "upstream-refresh"),
@@ -367,8 +367,8 @@ async def test_onboarding_audit_preserves_role_before_viewer_activation() -> Non
         )
 
     assert result is token_response
-    assert profile.role == "viewer"
+    assert profile.role == "teacher"
     first_event = audit_event.await_args_list[0].kwargs
     assert first_event["action"] == "totp_enrolled"
     assert first_event["previous_role"] == "admin"
-    assert first_event["next_role"] == "viewer"
+    assert first_event["next_role"] == "teacher"

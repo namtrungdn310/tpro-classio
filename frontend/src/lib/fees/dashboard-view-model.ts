@@ -5,7 +5,7 @@ import type {
   FeeTab,
   UnpaidStage,
 } from "@/lib/fees/types";
-import type { FeeRecordResponse } from "@/lib/types";
+import type { ClassCategory, FeeRecordResponse } from "@/lib/types";
 import { getClassSortKey } from "@/lib/utils/class-groups";
 import {
   prepareSearchCorpus,
@@ -20,6 +20,8 @@ export type IndexedFeeRecord = {
 type FeeClass = {
   id: string;
   name: string;
+  class_category?: ClassCategory | null;
+  grade_level?: number | null;
 };
 
 type DeriveFeeViewModelOptions = {
@@ -29,6 +31,7 @@ type DeriveFeeViewModelOptions = {
   matchesFeeSearch: (corpus: PreparedSearchCorpus) => boolean;
   unpaidStage: UnpaidStage;
   classes: FeeClass[];
+  separatePeriods?: boolean;
 };
 
 export function indexFeeRecords(records: FeeRecordResponse[]): IndexedFeeRecord[] {
@@ -36,6 +39,7 @@ export function indexFeeRecords(records: FeeRecordResponse[]): IndexedFeeRecord[
     record,
     searchCorpus: prepareSearchCorpus([
       record.student_name,
+      record.student_code,
       record.class_name,
       record.student_phone,
       record.student_zalo,
@@ -55,8 +59,13 @@ export function deriveFeeViewModel({
   matchesFeeSearch,
   unpaidStage,
   classes,
+  separatePeriods = false,
 }: DeriveFeeViewModelOptions) {
   const records = indexedRecords.map(({ record }) => record);
+  const summaryRecords =
+    classId === ""
+      ? records
+      : records.filter((record) => record.class_id === classId);
   const searchedRecords = indexedRecords
     .filter(({ searchCorpus }) => matchesFeeSearch(searchCorpus))
     .map(({ record }) => record);
@@ -75,7 +84,7 @@ export function deriveFeeViewModel({
   let notified = 0;
   let paid = 0;
 
-  for (const record of records) {
+  for (const record of summaryRecords) {
     total += record.final_amount;
 
     if (record.notification_state === "PAID") {
@@ -107,9 +116,16 @@ export function deriveFeeViewModel({
     }
   }
 
-  const paidGroups = buildStudentFeeGroups(paidRecords);
-  const unnotifiedGroups = buildStudentFeeGroups(unnotifiedRecords);
-  const notifiedUnpaidGroups = buildStudentFeeGroups(notifiedUnpaidRecords);
+  const groupingOptions = { separatePeriods };
+  const paidGroups = buildStudentFeeGroups(paidRecords, groupingOptions);
+  const unnotifiedGroups = buildStudentFeeGroups(
+    unnotifiedRecords,
+    groupingOptions,
+  );
+  const notifiedUnpaidGroups = buildStudentFeeGroups(
+    notifiedUnpaidRecords,
+    groupingOptions,
+  );
 
   const activeGroups =
     activeTab === "paid"
@@ -137,7 +153,7 @@ export function deriveFeeViewModel({
     notified,
     paid,
     refunded,
-    recordCount: records.length,
+    recordCount: summaryRecords.length,
     outstanding,
   };
 
@@ -157,6 +173,8 @@ export function buildClassFeeSummaries(
     {
       id: string;
       name: string;
+      classCategory: ClassCategory | null;
+      gradeLevel: number | null;
       totalAmount: number;
       paidStudentIds: Set<string>;
       unpaidStudentIds: Set<string>;
@@ -167,6 +185,8 @@ export function buildClassFeeSummaries(
     summaries.set(class_.id, {
       id: class_.id,
       name: class_.name,
+      classCategory: class_.class_category ?? null,
+      gradeLevel: class_.grade_level ?? null,
       paidStudentIds: new Set(),
       totalAmount: 0,
       unpaidStudentIds: new Set(),
@@ -177,6 +197,8 @@ export function buildClassFeeSummaries(
     const current = summaries.get(record.class_id) ?? {
       id: record.class_id,
       name: record.class_name,
+      classCategory: null,
+      gradeLevel: null,
       paidStudentIds: new Set<string>(),
       totalAmount: 0,
       unpaidStudentIds: new Set<string>(),
@@ -196,6 +218,8 @@ export function buildClassFeeSummaries(
     .map((summary) => ({
       id: summary.id,
       name: summary.name,
+      classCategory: summary.classCategory,
+      gradeLevel: summary.gradeLevel,
       paidStudentCount: summary.paidStudentIds.size,
       totalAmount: summary.totalAmount,
       unpaidStudentCount: summary.unpaidStudentIds.size,

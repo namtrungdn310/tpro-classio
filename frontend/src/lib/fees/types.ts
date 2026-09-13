@@ -7,6 +7,8 @@ export type FeeMutationAction = "notify" | "pay" | "refund" | "unpay" | "unnotif
 export type ClassFeeSummary = {
   id: string;
   name: string;
+  classCategory?: import("@/lib/types").ClassCategory | null;
+  gradeLevel?: number | null;
   totalAmount: number;
   paidStudentCount: number;
   unpaidStudentCount: number;

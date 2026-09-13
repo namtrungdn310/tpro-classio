@@ -18,9 +18,10 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+from app.core.workspace import WorkspaceScoped
 
 
-class FeeOperation(Base):
+class FeeOperation(WorkspaceScoped, Base):
     """Immutable business event shown by the read-only fee report."""
 
     __tablename__ = "fee_operations"
@@ -60,7 +61,7 @@ class FeeOperation(Base):
     )
 
 
-class FeeOperationItem(Base):
+class FeeOperationItem(WorkspaceScoped, Base):
     __tablename__ = "fee_operation_items"
 
     id: Mapped[str] = mapped_column(
@@ -75,6 +76,7 @@ class FeeOperationItem(Base):
     fee_record_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False))
     enrollment_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False))
     student_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False))
+    student_code_snapshot: Mapped[str | None] = mapped_column(Text)
     student_name_snapshot: Mapped[str | None] = mapped_column(Text)
     class_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False))
     class_name_snapshot: Mapped[str | None] = mapped_column(Text)

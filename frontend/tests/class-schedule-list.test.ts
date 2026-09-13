@@ -20,14 +20,20 @@ test("class schedule list keeps sessions distinct and limits gray to day chips",
   assert.match(html, /13:30–15:00/);
   assert.match(html, /Thứ 6/);
   assert.match(html, /rounded-md bg-gray-100/);
-  assert.match(html, /grid-cols-\[repeat\(4,102px\)\]/);
+  assert.match(html, /grid-cols-\[repeat\(4,minmax\(0,1fr\)\)\]/);
   assert.match(html, /text-left/);
+  assert.match(html, /text-\[12px\] font-semibold leading-4/);
+  assert.match(html, /text-\[13px\] font-medium leading-\[18px\]/);
+  assert.doesNotMatch(html, /w-\[104px\]/);
+  assert.doesNotMatch(html, /classes-schedule-tracks/);
+  assert.doesNotMatch(html, /flex-wrap/);
+  assert.doesNotMatch(html, /text-\[13px\] font-semibold leading-\[18px\]/);
+  assert.doesNotMatch(html, /gap-3/);
   assert.doesNotMatch(html, /border-l/);
   assert.doesNotMatch(html, /bg-gray-200/);
   assert.match(html, /inline-field-divider/);
   assert.doesNotMatch(html, /bg-sky-200/);
   assert.equal((html.match(/data-schedule-divider="true"/g) ?? []).length, 3);
-  assert.equal((html.match(/font-body-ui/g) ?? []).length, 6);
   assert.doesNotMatch(html, /absolute|translate-x|schedule-divider-offset/);
   assert.match(html, /aria-label="Lịch học: Thứ 2, 13:30 đến 15:00/);
 });
@@ -45,14 +51,17 @@ test("class form schedule keeps its original centered alignment", () => {
   assert.match(html, /grid-cols-4/);
   assert.doesNotMatch(html, /sm:grid-cols-\[repeat\(4,102px\)\]/);
   assert.equal((html.match(/data-schedule-divider="true"/g) ?? []).length, 1);
-  assert.match(html, /grid-cols-\[1px_minmax\(0,1fr\)\]/);
+  assert.match(
+    html,
+    /grid-cols-\[var\(--inline-field-divider-width\)_minmax\(0,1fr\)\]/,
+  );
   assert.match(html, /data-schedule-divider-variant="field"/);
   assert.match(html, /inline-field-divider/);
   assert.doesNotMatch(html, /w-\[1\.5px\]/);
   assert.doesNotMatch(html, /absolute|translate-x|schedule-divider-offset/);
 });
 
-test("class schedule list keeps four sessions visible and summarizes overflow", () => {
+test("class schedule list keeps four sessions on one row and surfaces overflow", () => {
   const fourHtml = renderToStaticMarkup(
     createElement(ClassScheduleList, {
       maxVisibleSlots: 4,
@@ -64,7 +73,8 @@ test("class schedule list keeps four sessions visible and summarizes overflow", 
       ],
     }),
   );
-  assert.doesNotMatch(fourHtml, /Xem chi tiết/);
+  assert.doesNotMatch(fourHtml, /Lịch học vượt quá/);
+  assert.doesNotMatch(fourHtml, /\+N ca|Còn lại/);
   assert.match(fourHtml, /Thứ 5/);
   assert.equal((fourHtml.match(/data-schedule-divider="true"/g) ?? []).length, 4);
 
@@ -80,7 +90,7 @@ test("class schedule list keeps four sessions visible and summarizes overflow", 
       ],
     }),
   );
-  assert.match(overflowHtml, /\+2 ca/);
-  assert.match(overflowHtml, /Còn lại/);
+  assert.match(overflowHtml, /Lịch học vượt quá 4 buổi/);
+  assert.doesNotMatch(overflowHtml, /\+N ca|Còn lại/);
   assert.equal((overflowHtml.match(/data-schedule-divider="true"/g) ?? []).length, 4);
 });

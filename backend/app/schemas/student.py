@@ -7,8 +7,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.core.business_time import business_today
 from app.core.contact import validate_complete_contact_pair
 from app.core.phone import is_valid_vietnam_mobile_phone, normalize_vietnam_phone
+from app.schemas.enrollment import MAX_SELECTED_SLOTS
 
-StudentStatus = Literal["active", "inactive"]
+StudentStatus = Literal["active", "inactive", "archived"]
+StudentListState = Literal["UNASSIGNED", "CURRENT", "STOPPED"]
+StudentIdentityMatchStrength = Literal["strong", "possible"]
 StudentHiddenField = Literal[
     "birth_date",
     "school",
@@ -46,13 +49,21 @@ def validate_complete_contact_pairs(
 
 
 class StudentCreate(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    # R6: write payloads forbid unknown fields — a client-supplied
+    # `student_code` must fail with 422, never be silently ignored. Profile
+    # creation is class-optional; enrollment is a separate command.
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     full_name: str = Field(min_length=1, max_length=120)
-    class_id: UUID
+    class_id: UUID | None = None
     # None deliberately inherits the class fee; this field is an override.
     custom_fee: int | None = Field(default=None, ge=0, le=999_999_999_999)
-    enrollment_date: date
+    enrollment_date: date | None = None
+    selected_slot_ids: list[UUID] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_SELECTED_SLOTS,
+    )
     birth_date: date
     school: str = Field(min_length=1, max_length=160)
     parent_name: str | None = Field(default=None, max_length=120)
@@ -70,6 +81,16 @@ class StudentCreate(BaseModel):
         value: list[StudentHiddenField],
     ) -> list[StudentHiddenField]:
         return _deduplicate_hidden_fields(value)
+
+    @field_validator("selected_slot_ids")
+    @classmethod
+    def deduplicate_selected_slots(
+        cls,
+        value: list[UUID] | None,
+    ) -> list[UUID] | None:
+        if value is not None and len(value) != len(set(value)):
+            raise ValueError("Danh sách buổi học không được trùng lặp")
+        return value
 
     @field_validator("birth_date")
     @classmethod
@@ -113,8 +134,65 @@ class StudentCreate(BaseModel):
         return self
 
 
+class StudentDuplicateResolution(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["create_new"]
+    candidate_ids: list[UUID] = Field(min_length=1, max_length=5)
+
+    @field_validator("candidate_ids")
+    @classmethod
+    def deduplicate_candidate_ids(cls, value: list[UUID]) -> list[UUID]:
+        if len(set(value)) != len(value):
+            raise ValueError("Danh sách hồ sơ đã kiểm tra không được trùng lặp")
+        return value
+
+
+class StudentCreateCommand(StudentCreate):
+    duplicate_resolution: StudentDuplicateResolution | None = None
+
+
+class StudentReactivationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    student: StudentCreate
+    expected_updated_at: datetime
+
+
+class StudentPreviousClass(BaseModel):
+    name: str
+    enrollment_date: date | None
+
+
+class StudentIdentityCandidate(BaseModel):
+    id: UUID
+    student_code: str
+    status: StudentStatus
+    list_state: StudentListState
+    full_name: str
+    birth_date: date | None
+    school: str | None
+    masked_parent_phone: str | None
+    masked_student_phone: str | None
+    previous_classes: list[StudentPreviousClass]
+    updated_at: datetime
+    match_strength: StudentIdentityMatchStrength
+    match_reason: str
+    already_in_target_class: bool
+
+
+class StudentIdentityConflict(BaseModel):
+    code: Literal[
+        "STUDENT_IDENTITY_CONFLICT",
+        "STUDENT_IDENTITY_CONFLICT_CHANGED",
+    ] = "STUDENT_IDENTITY_CONFLICT"
+    message: str = "Có thể học viên này đã có hồ sơ trong hệ thống"
+    target_class_id: UUID | None = None
+    candidates: list[StudentIdentityCandidate] = Field(min_length=1, max_length=5)
+
+
 class StudentUpdate(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     full_name: str | None = Field(default=None, min_length=1, max_length=120)
     birth_date: date | None = None
@@ -126,7 +204,6 @@ class StudentUpdate(BaseModel):
     student_phone: str | None = Field(default=None, max_length=32)
     notes: str | None = Field(default=None, max_length=1000)
     hidden_fields: list[StudentHiddenField] | None = Field(default=None, max_length=7)
-    status: StudentStatus | None = None
 
     @field_validator("hidden_fields")
     @classmethod
@@ -196,14 +273,41 @@ class StudentEnrollmentInfo(BaseModel):
     id: UUID
     class_id: UUID
     class_name: str
+    class_category: Literal["GENERAL", "SPECIALIZED", "IELTS", "CUSTOM"] | None = None
+    class_grade_mode: Literal["GRADE", "NONE"] | None = None
+    class_grade_level: int | None = None
+    class_start_date: date | None = None
+    class_end_date: date | None = None
     custom_fee: int | None
     effective_fee: int
     enrollment_date: date | None
-    status: Literal["active", "dropped"]
+    ended_on: date | None = None
+    effective_state: Literal["SCHEDULED", "CURRENT", "ENDED", "CANCELLED"] = "CURRENT"
+    billing_anchor_version: int = 0
+    billing_anchor_date: date | None = None
+    next_due_date: date | None = None
+    current_period: str | None = None
+    current_fee_status: str | None = None
+    next_period: str | None = None
+    admission_version: int = 0
+    status: Literal["active", "dropped", "completed", "cancelled"]
+    selected_slot_ids: list[UUID] = Field(default_factory=list)
+
+
+class StudentLastEnrollmentInfo(BaseModel):
+    class_id: UUID
+    class_name: str
+    status: Literal["active", "dropped", "completed", "cancelled"]
+    enrollment_date: date | None
+    ended_on: date | None = None
+    effective_state: Literal["SCHEDULED", "CURRENT", "ENDED", "CANCELLED"] = "ENDED"
+    ended_at: datetime | None
+    end_reason: str | None
 
 
 class StudentResponse(BaseModel):
     id: UUID
+    student_code: str
     full_name: str
     birth_date: date | None
     school: str | None
@@ -215,13 +319,252 @@ class StudentResponse(BaseModel):
     notes: str | None
     hidden_fields: list[StudentHiddenField]
     status: StudentStatus
+    list_state: StudentListState = "UNASSIGNED"
+    archived_at: datetime | None = None
+    archived_reason: str | None = None
     classes: list[StudentClassInfo]
     active_enrollments: list[StudentEnrollmentInfo]
+    last_enrollment: StudentLastEnrollmentInfo | None = None
     created_at: datetime
+    updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
 
 
-class ContactSuggestionResponse(BaseModel):
-    phone: str
-    zalo_name: str
+class StudentListPageResponse(BaseModel):
+    items: list[StudentResponse]
+    next_cursor: UUID | None = None
+    has_more: bool = False
+
+
+class StudentScopeSummary(BaseModel):
+    unassigned: int = Field(ge=0)
+    current: int = Field(ge=0)
+    stopped: int = Field(ge=0)
+
+
+class StudentArchiveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class StudentRestoreRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=3, max_length=500)
+    expected_updated_at: datetime
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def normalize_reason(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        return value.strip()
+
+
+class StudentEnrollmentPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enrollment_id: UUID
+    custom_fee: int | None = Field(default=None, ge=0, le=999_999_999_999)
+    enrollment_date: date | None = None
+    expected_admission_version: int | None = Field(default=None, ge=0)
+    billing_change_reason: str | None = Field(
+        default=None, min_length=3, max_length=500
+    )
+    expected_billing_version: int | None = Field(default=None, ge=0)
+    decision_code: str | None = None
+    selected_historical_cycles: list[int] | None = None
+    # ``None`` means the caller is not changing the schedule.  An explicit
+    # list must contain at least one slot; an empty list must never be
+    # interpreted as "restore every session".
+    selected_slot_ids: list[UUID] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_SELECTED_SLOTS,
+    )
+
+
+class StudentEnrollmentTarget(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    class_id: UUID
+    custom_fee: int | None = Field(default=None, ge=0, le=999_999_999_999)
+    enrollment_date: date | None = None
+    decision_code: str | None = None
+    selected_historical_cycles: list[int] | None = None
+    # New memberships also require an explicit non-empty selection whenever
+    # the field is supplied.  Omitting it keeps the legacy/default behaviour.
+    selected_slot_ids: list[UUID] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_SELECTED_SLOTS,
+    )
+
+    @field_validator("selected_slot_ids")
+    @classmethod
+    def deduplicate_selected_slots(cls, value: list[UUID] | None) -> list[UUID] | None:
+        if value is not None and len(value) != len(set(value)):
+            raise ValueError("Danh sách buổi học không được trùng lặp")
+        return value
+
+
+class StudentMembershipCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: UUID
+    contract_version: Literal[1, 2, 3, 4] = 1
+    expected_preview_fingerprint: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    expected_updated_at: datetime
+    profile: StudentUpdate
+    enrollment_updates: list[StudentEnrollmentPatch] = Field(
+        default_factory=list, max_length=20
+    )
+    targets: list[StudentEnrollmentTarget] = Field(default_factory=list, max_length=20)
+    mode: Literal["supplement", "transfer"] = "supplement"
+    source_enrollment_id: UUID | None = None
+    collect_source_final_cycle: bool = True
+    billing_change_reason: str | None = Field(
+        default=None, min_length=3, max_length=500
+    )
+
+    @model_validator(mode="after")
+    def validate_transfer_source(self) -> "StudentMembershipCommand":
+        class_ids = [target.class_id for target in self.targets]
+        if len(class_ids) != len(set(class_ids)):
+            raise ValueError("Danh sách lớp đích không được trùng lặp")
+        if self.mode == "transfer":
+            if self.source_enrollment_id is None:
+                raise ValueError("Chuyển lớp phải chỉ định lớp nguồn")
+            if not self.targets:
+                raise ValueError("Chuyển lớp phải chọn ít nhất một lớp đích")
+        elif self.source_enrollment_id is not None:
+            raise ValueError("Học thêm hoặc xếp lớp không được gửi lớp nguồn")
+        if self.mode != "transfer" and not self.collect_source_final_cycle:
+            raise ValueError("Tuỳ chọn kỳ cuối chỉ áp dụng khi đổi lớp")
+        if self.contract_version in (2, 3, 4):
+            if self.targets and any(
+                target.enrollment_date is None for target in self.targets
+            ):
+                raise ValueError("Mỗi lớp được chọn phải có ngày bắt đầu")
+            has_enrollment_date_change = any(
+                update.enrollment_date is not None for update in self.enrollment_updates
+            )
+            if (
+                self.targets or has_enrollment_date_change
+            ) and not self.expected_preview_fingerprint:
+                raise ValueError(
+                    "Yêu cầu thay đổi lớp bắt buộc phải có mã xác thực xem trước"
+                )
+        if self.contract_version == 4:
+            validate_academic_updates(self.enrollment_updates)
+        return self
+
+
+class StudentMembershipPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_updated_at: datetime
+    targets: list[StudentEnrollmentTarget] = Field(default_factory=list, max_length=20)
+    enrollment_updates: list[StudentEnrollmentPatch] = Field(
+        default_factory=list, max_length=20
+    )
+    mode: Literal["supplement", "transfer"] = "supplement"
+    source_enrollment_id: UUID | None = None
+    collect_source_final_cycle: bool = True
+    contract_version: Literal[1, 2, 3, 4] = 3
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> "StudentMembershipPreviewRequest":
+        if not self.targets and not self.enrollment_updates:
+            raise ValueError(
+                "Yêu cầu xem trước phải có ít nhất một lớp đích hoặc một cập nhật ghi danh"
+            )
+        class_ids = [target.class_id for target in self.targets]
+        if len(class_ids) != len(set(class_ids)):
+            raise ValueError("Danh sách lớp đích không được trùng lặp")
+        if any(target.enrollment_date is None for target in self.targets):
+            raise ValueError("Mỗi lớp được chọn phải có ngày bắt đầu")
+        if self.mode == "transfer":
+            if self.source_enrollment_id is None or not self.targets:
+                raise ValueError("Chuyển lớp cần một lớp nguồn và ít nhất một lớp đích")
+        elif self.source_enrollment_id is not None:
+            raise ValueError("Học thêm hoặc xếp lớp không được gửi lớp nguồn")
+        if self.mode != "transfer" and not self.collect_source_final_cycle:
+            raise ValueError("Tuỳ chọn kỳ cuối chỉ áp dụng khi đổi lớp")
+        if self.contract_version == 4:
+            validate_academic_updates(self.enrollment_updates)
+        return self
+
+
+def validate_academic_updates(updates: list[StudentEnrollmentPatch]) -> None:
+    ids = [update.enrollment_id for update in updates]
+    if len(ids) != len(set(ids)):
+        raise ValueError("Danh sách cập nhật ghi danh không được trùng lặp")
+    for update in updates:
+        if "enrollment_date" in update.model_fields_set:
+            if (
+                update.enrollment_date is None
+                or update.expected_admission_version is None
+            ):
+                raise ValueError(
+                    "Sửa ngày ghi danh cần ngày hợp lệ và phiên bản ghi danh"
+                )
+            if "custom_fee" in update.model_fields_set:
+                raise ValueError(
+                    "Vui lòng lưu học phí riêng với thay đổi ngày ghi danh"
+                )
+        if (
+            update.decision_code is not None
+            or update.selected_historical_cycles is not None
+        ):
+            raise ValueError("Điều chỉnh lịch thu phải dùng thao tác tài chính riêng")
+
+
+class StudentMembershipPreviewWarning(BaseModel):
+    code: str
+    message: str
+    class_id: UUID | None = None
+
+
+class StudentMembershipTargetImpact(BaseModel):
+    class_id: UUID
+    class_name: str
+    requested_start: date
+    resolved_start: date
+    effective_fee: int
+    billing_type: Literal["MONTHLY", "COURSE"]
+    billing_cycle_weeks: int | None = None
+    first_due_date: date
+    coverage_start: date
+    coverage_end: date
+    skipped_cycle_count: int = Field(ge=0)
+    review_required: bool
+    decisions: list[dict[str, object]] = Field(default_factory=list)
+    recommended_decision: str | None = None
+
+
+class StudentMembershipSourceImpact(BaseModel):
+    enrollment_id: UUID
+    class_id: UUID
+    class_name: str
+    ends_on: date
+    mutable_fee_count: int = Field(ge=0)
+    protected_fee_count: int = Field(ge=0)
+    collect_final_cycle: bool
+    waivable_final_cycle_count: int = Field(ge=0)
+
+
+class StudentMembershipPreviewResponse(BaseModel):
+    can_apply: bool = True
+    preview_fingerprint: str
+    expires_at: datetime
+    student_updated_at: datetime
+    targets: list[StudentMembershipTargetImpact]
+    source: StudentMembershipSourceImpact | None = None
+    warnings: list[StudentMembershipPreviewWarning] = Field(default_factory=list)
+    enrollment_updates: list[dict[str, object]] = Field(default_factory=list)

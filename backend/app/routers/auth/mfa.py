@@ -254,13 +254,13 @@ async def confirm_onboarding_recovery_codes(
         )
 
     if flow.invitation_id:
-        await consume_invitation(
+        invitation = await consume_invitation(
             db,
             invitation_id=flow.invitation_id,
             user_id=flow.user_id,
             email=flow.email,
         )
-        profile.role = "viewer"
+        profile.role = invitation.role
 
     now = datetime.now(timezone.utc)
     profile.account_status = "active"

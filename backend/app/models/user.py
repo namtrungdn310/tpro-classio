@@ -5,16 +5,17 @@ from sqlalchemy.dialects.postgresql import ENUM, UUID  # UUUI: set khoá chính
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
+from app.core.workspace import WorkspaceScoped
 
 
-class Profile(Base):
+class Profile(WorkspaceScoped, Base):
     __tablename__ = "profiles"
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True)
     role: Mapped[str] = mapped_column(
-        ENUM("admin", "viewer", name="user_role", create_type=False),
+        ENUM("admin", "teacher", "viewer", name="user_role", create_type=False),
         nullable=False,
-        default="viewer",
+        default="teacher",
     )
     username: Mapped[str | None] = mapped_column(Text)
     full_name: Mapped[str | None] = mapped_column(Text)

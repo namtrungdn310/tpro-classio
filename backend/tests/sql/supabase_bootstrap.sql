@@ -1,18 +1,31 @@
-create role anon nologin;
-create role authenticated nologin;
-create role service_role nologin bypassrls;
+-- Bootstrap fixture Supabase cho PostgreSQL disposable (idempotent).
+-- Roles là GLOBAL trên cluster: tạo có điều kiện. Schema/bảng là per-DB:
+-- dùng IF NOT EXISTS để chạy được trên nhiều database cùng cluster.
 
-create schema auth;
-create schema storage;
+do $$
+begin
+  if not exists (select 1 from pg_roles where rolname = 'anon') then
+    create role anon nologin;
+  end if;
+  if not exists (select 1 from pg_roles where rolname = 'authenticated') then
+    create role authenticated nologin;
+  end if;
+  if not exists (select 1 from pg_roles where rolname = 'service_role') then
+    create role service_role nologin bypassrls;
+  end if;
+end $$;
 
-create table auth.users (
+create schema if not exists auth;
+create schema if not exists storage;
+
+create table if not exists auth.users (
   id uuid primary key,
   email text,
   deleted_at timestamptz,
   raw_user_meta_data jsonb default '{}'::jsonb
 );
 
-create table auth.identities (
+create table if not exists auth.identities (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade
 );
@@ -20,7 +33,7 @@ create table auth.identities (
 -- Minimal Supabase Storage contract needed by the avatar hardening migration.
 -- Production uses the provider-owned storage schema; this table only makes
 -- the security invariant executable in isolated PostgreSQL CI.
-create table storage.buckets (
+create table if not exists storage.buckets (
   id text primary key,
   name text not null unique,
   public boolean not null default false,
@@ -28,11 +41,16 @@ create table storage.buckets (
   allowed_mime_types text[]
 );
 
-create table storage.objects (
+create table if not exists storage.objects (
   id uuid primary key default gen_random_uuid(),
   bucket_id text not null references storage.buckets(id) on delete cascade,
   name text not null
 );
+
+-- Hosted Supabase enables RLS on provider-owned Storage tables. Mirror that
+-- security boundary without changing ownership in this isolated CI fixture.
+alter table storage.buckets enable row level security;
+alter table storage.objects enable row level security;
 
 create or replace function auth.uid()
 returns uuid

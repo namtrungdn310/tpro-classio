@@ -7,7 +7,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_user, require_owner
+from app.core.dependencies import Principal, get_current_user, require_dev
 from app.models.google_identity import AuthGoogleIdentity
 from app.models.totp_factor import AuthTotpFactor
 from app.models.user_device_session import UserDeviceSession
@@ -34,7 +34,7 @@ logger = logging.getLogger("tpro_classio.auth.users")
 @router.get("/users", response_model=list[UserAccount])
 async def list_users(
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(require_owner),
+    principal: Principal = Depends(require_dev),
 ) -> list[UserAccount]:
     auth_users = await list_active_auth_users()
     result = await db.execute(select(Profile).order_by(Profile.created_at.desc()))
@@ -47,7 +47,7 @@ async def list_users(
             UserAccount(
                 id=str(profile.id),
                 email=auth_user.email,
-                role=profile.role or "viewer",
+                role=profile.role or "teacher",
                 account_status=profile.account_status or "pending",
                 username=profile.username,
                 full_name=profile.full_name,
@@ -65,7 +65,7 @@ async def update_user_role(
     user_id: str,
     payload: UpdateUserRoleRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(require_owner),
+    principal: Principal = Depends(require_dev),
 ) -> UserAccount:
     result = await db.execute(
         select(Profile).where(Profile.id == user_id).with_for_update()
@@ -87,7 +87,7 @@ async def update_user_role(
             detail="Không thể thay đổi vai trò tài khoản Dev.",
         )
 
-    actor_id = str(current_user["id"] or "")
+    actor_id = principal.user_id
     previous_role = profile.role
     if previous_role == payload.role:
         return UserAccount(
@@ -132,7 +132,7 @@ async def update_user_status(
     user_id: str,
     payload: UpdateUserStatusRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(require_owner),
+    principal: Principal = Depends(require_dev),
 ) -> UserAccount:
     result = await db.execute(
         select(Profile).where(Profile.id == user_id).with_for_update()
@@ -154,7 +154,7 @@ async def update_user_status(
             detail="Không thể thay đổi trạng thái tài khoản Dev.",
         )
 
-    actor_id = str(current_user["id"] or "")
+    actor_id = principal.user_id
     previous_status = profile.account_status
     if previous_status == payload.status:
         return UserAccount(
@@ -239,13 +239,13 @@ async def update_user_status(
 async def update_my_username(
     payload: UpdateUsernameRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    principal: Principal = Depends(get_current_user),
 ) -> MessageResponse:
-    user_id = str(current_user["id"] or "")
+    user_id = principal.user_id
     normalized = normalize_username(payload.username)
     if not normalized:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Tên người dùng không hợp lệ.",
         )
     unique_username = await ensure_unique_username(db, normalized, user_id)

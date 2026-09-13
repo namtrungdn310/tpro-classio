@@ -6,6 +6,8 @@ const SCOPE_SELECTOR = '[data-text-selection-scope="true"]';
 const VALUE_SELECTOR = '[data-text-selection-value="true"]';
 const HOST_SELECTOR = '[role="cell"], [data-text-selection-host="true"]';
 const EDITABLE_SELECTOR = 'input, textarea, [contenteditable="true"]';
+const INTERACTIVE_SELECTOR =
+  "button, a[href], summary, [role='button'], [role='link'], [data-action-control='true'], input[type='button'], input[type='submit'], input[type='reset']";
 const DRAG_THRESHOLD_PX = 3;
 
 type TextPoint = {
@@ -245,6 +247,7 @@ export function useScopedTextSelection<T extends HTMLElement>(
 
     function handlePointerDown(event: PointerEvent) {
       if (
+        event.defaultPrevented ||
         event.button !== 0 ||
         event.pointerType !== "mouse" ||
         event.shiftKey ||
@@ -256,6 +259,11 @@ export function useScopedTextSelection<T extends HTMLElement>(
 
       const target = event.target;
       if (!(target instanceof Element)) {
+        clearDrag();
+        return;
+      }
+
+      if (target.closest(INTERACTIVE_SELECTOR)) {
         clearDrag();
         return;
       }
@@ -348,8 +356,19 @@ export function useScopedTextSelection<T extends HTMLElement>(
     }
 
     function handleDoubleClick(event: MouseEvent) {
+      if (event.defaultPrevented) {
+        clearDrag();
+        return;
+      }
+
       const target = event.target;
       if (!(target instanceof Element)) {
+        return;
+      }
+
+      if (target.closest(INTERACTIVE_SELECTOR)) {
+        event.preventDefault();
+        window.getSelection()?.removeAllRanges();
         return;
       }
 

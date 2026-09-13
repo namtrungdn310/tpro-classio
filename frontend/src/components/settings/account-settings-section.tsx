@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
-import { UserRound } from "lucide-react";
+import { RiUserLine as UserRound } from "react-icons/ri";
 import { z } from "zod";
 import { useToast } from "@/components/providers/toast-provider";
 import { getSettingsRoleLabel } from "@/components/settings/settings-role";

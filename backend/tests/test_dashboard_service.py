@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import app.services.dashboard_service as dashboard_service
 
 from app.core.business_time import business_today
-from app.core.dependencies import get_current_user, require_admin
+from app.core.dependencies import require_management
 from app.routers.dashboard import router as dashboard_router
 from app.services.dashboard_service import _period_key
 
@@ -17,7 +17,7 @@ def test_dashboard_uses_vietnam_business_date() -> None:
     assert _period_key(business_today(utc_time)) == "2026-08"
 
 
-def test_dashboard_fee_summary_is_available_to_every_authenticated_role() -> None:
+def test_dashboard_fee_summary_is_management_gated() -> None:
     overview_route = next(
         route for route in dashboard_router.routes if route.path == "/overview"
     )
@@ -25,8 +25,7 @@ def test_dashboard_fee_summary_is_available_to_every_authenticated_role() -> Non
         dependency.call for dependency in overview_route.dependant.dependencies
     }
 
-    assert get_current_user in dependency_calls
-    assert require_admin not in dependency_calls
+    assert require_management in dependency_calls
 
 
 class _DashboardResult:
@@ -37,6 +36,8 @@ class _DashboardResult:
             weekly_session_count=26,
             active_teacher_count=4,
             active_assistant_count=2,
+            active_staff_count=7,
+            unstaffed_class_count=3,
             total_amount=Decimal("32000000"),
             gross_collected_amount=Decimal("24000000"),
             refunded_amount=Decimal("1000000"),
@@ -78,6 +79,8 @@ async def test_dashboard_returns_operational_and_real_fee_metrics(monkeypatch) -
     assert session.parameters == {"today": today, "period": "2026-07"}
     assert overview.summary.active_student_count == 32
     assert overview.summary.active_assistant_count == 2
+    assert overview.summary.active_staff_count == 7
+    assert overview.summary.unstaffed_class_count == 3
     assert overview.fees.total_amount == 32_000_000
     assert overview.fees.gross_collected_amount == 24_000_000
     assert overview.fees.refunded_amount == 1_000_000
@@ -97,3 +100,16 @@ def test_dashboard_revenue_trend_uses_signed_payment_ledger() -> None:
     assert "payment.payment_date" in sql
     assert "sum(payment.amount)" in sql
     assert "interval '5 months'" in sql
+
+
+def test_dashboard_metrics_are_workspace_scoped_in_raw_sql() -> None:
+    sql = str(dashboard_service._DASHBOARD_METRICS_SQL)
+
+    # Dashboard uses one optimized text query, so it does not benefit from
+    # SQLAlchemy's ORM loader criteria.  Every business aggregate must carry
+    # the same server-side workspace predicate explicitly.
+    assert sql.count("public.current_workspace_id()") >= 8
+    assert "payment.workspace_id" in sql
+    assert "fee.workspace_id" in sql
+    assert "class_.workspace_id" in sql
+    assert "staff.workspace_id" in sql

@@ -1,24 +1,44 @@
 "use client";
 
-import { Pencil, RotateCcw, UserRoundX } from "lucide-react";
-import { getStaffTypeLabel, type PreparedStaffRecord } from "@/lib/staff/presentation";
+import type {
+  ClassResponse,
+  StaffAttendanceAccountStatus,
+  StaffResponse,
+} from "@/lib/types";
+import { useClickableRowProps } from "@/lib/ui/click-guard";
+import { formatCurrency } from "@/lib/utils/format";
+import type { PreparedStaffRecord } from "@/lib/staff/presentation";
+import {
+  getClassScheduleSlots,
+  getClassScheduleText,
+  getClassTeacherIds,
+  getSlotEffectiveAssistantIds,
+  getSlotEffectiveTeacherIds,
+  normalizeClassScheduleSlots,
+} from "@/lib/classes/presentation";
 
 export const STAFF_MANAGER_GRID =
-  "w-full min-w-0 grid-cols-[minmax(170px,1fr)_minmax(220px,1.25fr)_minmax(300px,1.7fr)_minmax(132px,.72fr)_78px]";
+  "w-full min-w-0 grid-cols-[minmax(140px,0.9fr)_minmax(170px,1fr)_minmax(240px,1.6fr)_minmax(200px,1.1fr)_minmax(120px,0.7fr)]";
 export const STAFF_PRIVATE_VIEWER_GRID =
-  "w-full min-w-0 grid-cols-[minmax(180px,1fr)_minmax(230px,1.25fr)_minmax(320px,1.8fr)_minmax(140px,.75fr)]";
+  "w-full min-w-0 grid-cols-[minmax(180px,1fr)_minmax(220px,1fr)_minmax(340px,2fr)]";
 export const STAFF_PUBLIC_VIEWER_GRID =
-  "w-full min-w-0 grid-cols-[minmax(190px,1fr)_minmax(320px,1.8fr)_minmax(150px,.8fr)]";
+  "w-full min-w-0 grid-cols-[minmax(200px,1fr)_minmax(360px,2.2fr)]";
 
 type StaffTableProps = {
   canManage: boolean;
   canViewPrivate: boolean;
-  onEdit: (record: PreparedStaffRecord) => void;
-  onToggleStatus: (record: PreparedStaffRecord) => void;
+  classesById?: Map<string, ClassResponse>;
+  onRowClick: (record: PreparedStaffRecord) => void;
   records: PreparedStaffRecord[];
 };
 
-export function StaffTable({ canManage, canViewPrivate, onEdit, onToggleStatus, records }: StaffTableProps) {
+export function StaffTable({
+  canManage,
+  canViewPrivate,
+  classesById,
+  onRowClick,
+  records,
+}: StaffTableProps) {
   const gridClass = canManage
     ? STAFF_MANAGER_GRID
     : canViewPrivate
@@ -33,8 +53,8 @@ export function StaffTable({ canManage, canViewPrivate, onEdit, onToggleStatus, 
             key={record.staff.id}
             canManage={canManage}
             canViewPrivate={canViewPrivate}
-            onEdit={() => onEdit(record)}
-            onToggleStatus={() => onToggleStatus(record)}
+            classesById={classesById}
+            onRowClick={() => onRowClick(record)}
             record={record}
           />
         ))}
@@ -45,68 +65,32 @@ export function StaffTable({ canManage, canViewPrivate, onEdit, onToggleStatus, 
         aria-label="Danh sách nhân sự"
         className="hidden h-full min-h-0 overflow-hidden rounded-lg border border-gray-200 bg-white xl:flex xl:flex-col"
       >
-        <div role="rowgroup" className="shrink-0 border-b border-gray-200 bg-gray-50">
-          <div role="row" className={`grid ${gridClass} table-heading-text items-center text-left text-gray-700`}>
+        <div role="rowgroup" className="shrink-0 border-b border-gray-200 bg-gray-100">
+          <div role="row" className={`grid ${gridClass} table-heading-text items-center text-left text-gray-800`}>
             <ColumnHeader>Nhân sự</ColumnHeader>
             {canViewPrivate ? <ColumnHeader>Thông tin nhân sự</ColumnHeader> : null}
             <ColumnHeader>Lớp phụ trách</ColumnHeader>
-            <ColumnHeader>Trạng thái</ColumnHeader>
-            {canManage ? <ColumnHeader compact>Thao tác</ColumnHeader> : null}
+            {canManage ? <ColumnHeader>Kết nối Email (Chấm công)</ColumnHeader> : null}
+            {canManage ? <ColumnHeader>Thù lao</ColumnHeader> : null}
           </div>
         </div>
 
         <div
           role="rowgroup"
-          className="scrollbar-hidden min-h-0 flex-1 touch-pan-y divide-y divide-gray-100 overflow-x-hidden overflow-y-auto overscroll-contain"
+          className="scrollbar-hidden min-h-0 flex-1 touch-pan-y divide-y divide-gray-200 overflow-x-hidden overflow-y-auto overscroll-contain"
         >
           {records.map((record) => {
             const { staff } = record;
             return (
-              <div
+              <StaffTableRow
                 key={staff.id}
-                role="row"
-                className={`cv-auto grid ${gridClass} items-center transition-colors hover:bg-gray-50/80`}
-              >
-                <DataCell>
-                  <p className="break-words font-semibold text-gray-950">{staff.full_name}</p>
-                  <p className="mt-0.5 select-none text-[13px] font-medium leading-4 text-gray-500">
-                    {getStaffTypeLabel(staff.staff_type)}
-                  </p>
-                </DataCell>
-                {canViewPrivate ? (
-                  <DataCell className="text-gray-700">
-                    <ContactSummary record={record} />
-                  </DataCell>
-                ) : null}
-                <DataCell className="text-gray-700">
-                  <ClassAssignments record={record} />
-                </DataCell>
-                <DataCell>
-                  <ActivityStatus isActive={staff.is_active} />
-                </DataCell>
-                {canManage ? (
-                  <DataCell compact className="flex self-stretch items-center justify-center">
-                    <div className="flex items-center justify-center gap-1.5">
-                      <IconButton label={`Chỉnh sửa ${staff.full_name}`} onClick={() => onEdit(record)}>
-                        <Pencil className="h-4 w-4" aria-hidden="true" />
-                      </IconButton>
-                      {staff.staff_type === "TEACHER" ? (
-                        <IconButton
-                          label={`${staff.is_active ? "Ngừng hoạt động" : "Kích hoạt lại"} ${staff.full_name}`}
-                          tone={staff.is_active ? "danger" : "success"}
-                          onClick={() => onToggleStatus(record)}
-                        >
-                          {staff.is_active ? (
-                            <UserRoundX className="h-4 w-4" aria-hidden="true" />
-                          ) : (
-                            <RotateCcw className="h-4 w-4" aria-hidden="true" />
-                          )}
-                        </IconButton>
-                      ) : null}
-                    </div>
-                  </DataCell>
-                ) : null}
-              </div>
+                canManage={canManage}
+                canViewPrivate={canViewPrivate}
+                classesById={classesById}
+                gridClass={gridClass}
+                onRowClick={() => onRowClick(record)}
+                record={record}
+              />
             );
           })}
         </div>
@@ -115,49 +99,98 @@ export function StaffTable({ canManage, canViewPrivate, onEdit, onToggleStatus, 
   );
 }
 
-function StaffCard({
+function StaffTableRow({
   canManage,
   canViewPrivate,
-  onEdit,
-  onToggleStatus,
+  classesById,
+  gridClass,
+  onRowClick,
   record,
 }: {
   canManage: boolean;
   canViewPrivate: boolean;
-  onEdit: () => void;
-  onToggleStatus: () => void;
+  classesById?: Map<string, ClassResponse>;
+  gridClass: string;
+  onRowClick: () => void;
   record: PreparedStaffRecord;
 }) {
   const { staff } = record;
+  const clickableProps = useClickableRowProps(canManage ? onRowClick : undefined);
   return (
-    <article className="rounded-lg border border-gray-200 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.035)]">
+    <div
+      role="row"
+      {...clickableProps}
+      tabIndex={canManage ? 0 : undefined}
+      onKeyDown={(event) => {
+        if (canManage && (event.key === "Enter" || event.key === " ")) {
+          event.preventDefault();
+          onRowClick();
+        }
+      }}
+      className={`cv-auto grid ${gridClass} items-center transition-colors ${canManage ? "cursor-pointer hover:bg-gray-100/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/30" : ""}`}
+    >
+      <DataCell>
+        <p className="break-words font-semibold text-gray-950">{staff.full_name}</p>
+        <p className="mt-0.5 select-none text-[13px] font-medium leading-4 text-gray-500">
+          {record.summaryRoles}
+        </p>
+      </DataCell>
+      {canViewPrivate ? (
+        <DataCell className="text-gray-700">
+          <ContactSummary record={record} />
+        </DataCell>
+      ) : null}
+      <DataCell className="text-gray-700">
+        <ClassAssignments record={record} classesById={classesById} />
+      </DataCell>
+      {canManage ? (
+        <DataCell className="text-gray-700">
+          <AttendanceEmailConnection staff={staff} />
+        </DataCell>
+      ) : null}
+      {canManage ? (
+        <DataCell className="text-gray-700">
+          <RateCell currentRate={staff.current_rate} />
+        </DataCell>
+      ) : null}
+    </div>
+  );
+}
+
+function StaffCard({
+  canManage,
+  canViewPrivate,
+  classesById,
+  onRowClick,
+  record,
+}: {
+  canManage: boolean;
+  canViewPrivate: boolean;
+  classesById?: Map<string, ClassResponse>;
+  onRowClick: () => void;
+  record: PreparedStaffRecord;
+}) {
+  const { staff } = record;
+  const clickableProps = useClickableRowProps(canManage ? onRowClick : undefined);
+  return (
+    <article
+      {...clickableProps}
+      tabIndex={canManage ? 0 : undefined}
+      onKeyDown={(event) => {
+        if (canManage && (event.key === "Enter" || event.key === " ")) {
+          event.preventDefault();
+          onRowClick();
+        }
+      }}
+      className={`rounded-lg border border-gray-200 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.035)] ${canManage ? "cursor-pointer transition hover:bg-gray-100/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/30" : ""}`}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h2 className="break-words text-base font-semibold text-gray-950">{staff.full_name}</h2>
           <p className="mt-0.5 select-none text-[13px] font-medium text-gray-500">
-            {getStaffTypeLabel(staff.staff_type)}
+            {record.summaryRoles}
           </p>
         </div>
-        {canManage ? (
-          <div className="flex shrink-0 gap-1.5">
-            <IconButton label={`Chỉnh sửa ${staff.full_name}`} onClick={onEdit}>
-              <Pencil className="h-4 w-4" aria-hidden="true" />
-            </IconButton>
-            {staff.staff_type === "TEACHER" ? (
-              <IconButton
-                label={`${staff.is_active ? "Ngừng hoạt động" : "Kích hoạt lại"} ${staff.full_name}`}
-                tone={staff.is_active ? "danger" : "success"}
-                onClick={onToggleStatus}
-              >
-                {staff.is_active ? (
-                  <UserRoundX className="h-4 w-4" aria-hidden="true" />
-                ) : (
-                  <RotateCcw className="h-4 w-4" aria-hidden="true" />
-                )}
-              </IconButton>
-            ) : null}
-          </div>
-        ) : null}
       </div>
 
       <dl className="mt-4 grid gap-3 text-[15px] font-medium leading-5 sm:grid-cols-2">
@@ -167,25 +200,86 @@ function StaffCard({
             <dd className="mt-1 text-gray-700"><ContactSummary record={record} /></dd>
           </div>
         ) : null}
-        <div className="min-w-0">
-          <dt className="table-heading-text select-none text-gray-500">Trạng thái</dt>
-          <dd className="mt-1"><ActivityStatus isActive={staff.is_active} /></dd>
-        </div>
+        {canManage ? (
+          <div className="min-w-0">
+            <dt className="table-heading-text select-none text-gray-500">
+              Kết nối Email (Chấm công)
+            </dt>
+            <dd className="mt-1">
+              <AttendanceEmailConnection staff={staff} />
+            </dd>
+          </div>
+        ) : null}
+        {canManage ? (
+          <div className="min-w-0">
+            <dt className="table-heading-text select-none text-gray-500">Thù lao</dt>
+            <dd className="mt-1"><RateCell currentRate={staff.current_rate} /></dd>
+          </div>
+        ) : null}
         <div className="min-w-0 sm:col-span-2">
           <dt className="table-heading-text select-none text-gray-500">Lớp phụ trách</dt>
-          <dd className="mt-1 text-gray-700"><ClassAssignments record={record} /></dd>
+          <dd className="mt-1 text-gray-700"><ClassAssignments record={record} classesById={classesById} /></dd>
         </div>
       </dl>
     </article>
   );
 }
 
-function ClassAssignments({ record }: { record: PreparedStaffRecord }) {
+export function formatStaffAssignedClassSchedule(
+  class_: ClassResponse,
+  staff: StaffResponse,
+): string {
+  const allSlots = normalizeClassScheduleSlots(getClassScheduleSlots(class_));
+  if (allSlots.length === 0) {
+    return getClassScheduleText(class_);
+  }
+
+  const staffSlots = allSlots.filter((slot) => {
+    const teacherIds = getSlotEffectiveTeacherIds(slot, getClassTeacherIds(class_));
+    const assistantIds = getSlotEffectiveAssistantIds(slot);
+    return teacherIds.includes(staff.id) || assistantIds.includes(staff.id);
+  });
+
+  const targetSlots = staffSlots.length > 0 ? staffSlots : allSlots;
+  return targetSlots
+    .map((slot) => `${slot.day} (${slot.start}–${slot.end})`)
+    .join(", ");
+}
+
+function ClassAssignments({
+  record,
+  classesById,
+}: {
+  record: PreparedStaffRecord;
+  classesById?: Map<string, ClassResponse>;
+}) {
   if (record.activeClasses.length === 0) return <EmptyValue />;
+
   return (
-    <span className="block break-words">
-      {record.activeClasses.map((class_) => class_.name).join(", ")}
-    </span>
+    <div className="space-y-1 py-0.5">
+      {record.activeClasses.map((classItem) => {
+        const fullClass = classesById?.get(classItem.id);
+        const scheduleLabel = fullClass
+          ? formatStaffAssignedClassSchedule(fullClass, record.staff)
+          : null;
+
+        return (
+          <div key={classItem.id} className="text-[13px] leading-snug break-words">
+            <span className="font-semibold text-gray-950">
+              {classItem.name}
+              {classItem.role ? (
+                <span className="font-normal text-gray-500">
+                  {" "}({classItem.role === "TEACHER" ? "GV" : "TG"})
+                </span>
+              ) : null}
+            </span>
+            {scheduleLabel ? (
+              <span className="font-normal text-gray-600">: {scheduleLabel}</span>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -200,26 +294,61 @@ function ContactSummary({ record }: { record: PreparedStaffRecord }) {
   );
 }
 
-function ActivityStatus({ isActive }: { isActive: boolean }) {
+const ATTENDANCE_ACCOUNT_LABELS: Record<
+  StaffAttendanceAccountStatus,
+  { dotClass: string; label: string }
+> = {
+  connected: { dotClass: "bg-emerald-500", label: "Đã kết nối" },
+  disabled: { dotClass: "bg-red-500", label: "Tài khoản bị vô hiệu hóa" },
+  invited: { dotClass: "bg-amber-500", label: "Đã gửi lời mời" },
+  expired: { dotClass: "bg-orange-500", label: "Lời mời hết hạn" },
+  not_connected: { dotClass: "bg-gray-300", label: "Chưa kết nối" },
+};
+
+function AttendanceEmailConnection({ staff }: { staff: StaffResponse }) {
+  const status = ATTENDANCE_ACCOUNT_LABELS[staff.attendance_account_status];
   return (
-    <span className={`inline-flex select-none items-center gap-1.5 whitespace-nowrap ${isActive ? "text-emerald-700" : "text-gray-500"}`}>
-      <span className={`h-2 w-2 rounded-full ${isActive ? "bg-emerald-500" : "bg-gray-300"}`} aria-hidden="true" />
-      {isActive ? "Đang hoạt động" : "Đã ngừng"}
-    </span>
+    <div className="min-w-0">
+      <p className="flex items-center gap-1.5 text-[13px] font-semibold leading-5 text-gray-800">
+        <span aria-hidden="true" className={`h-2 w-2 shrink-0 rounded-full ${status.dotClass}`} />
+        {status.label}
+      </p>
+      {staff.email ? (
+        <p className="break-all text-[13px] font-normal leading-5 text-gray-600">{staff.email}</p>
+      ) : (
+        <p className="text-[13px] font-normal leading-5 text-gray-400">Chưa có email</p>
+      )}
+    </div>
   );
 }
 
-function ColumnHeader({ children, compact = false }: { children: React.ReactNode; compact?: boolean }) {
+function RateCell({
+  currentRate,
+}: {
+  currentRate: number | null;
+}) {
+  if (currentRate !== null) {
+    return (
+      <span className="text-[13px] font-semibold tabular-nums text-gray-800">
+        {formatCurrency(currentRate)}
+        <span className="ml-0.5 font-normal text-gray-500">/buổi</span>
+      </span>
+    );
+  }
+  return <span className="select-none text-gray-400">—</span>;
+}
+
+function ColumnHeader({ children }: { children: React.ReactNode }) {
   return (
-    <div role="columnheader" className={`select-none whitespace-nowrap py-3 ${compact ? "px-2" : "px-2.5"}`}>
+    <div role="columnheader" className="select-none whitespace-nowrap px-2.5 py-3">
       {children}
     </div>
   );
 }
 
-function DataCell({ children, className = "", compact = false }: { children: React.ReactNode; className?: string; compact?: boolean }) {
+function DataCell({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
-    <div role="cell" className={`min-w-0 py-3 text-[15px] font-medium leading-5 ${compact ? "px-2" : "px-2.5"} ${className}`}>
+    <div role="cell" className={`min-w-0 px-2.5 py-3 text-[15px] font-medium leading-5 ${className}`}>
       {children}
     </div>
   );
@@ -227,33 +356,4 @@ function DataCell({ children, className = "", compact = false }: { children: Rea
 
 function EmptyValue() {
   return <span aria-label="Chưa có thông tin" className="select-none font-normal text-gray-400">—</span>;
-}
-
-function IconButton({
-  children,
-  label,
-  onClick,
-  tone = "default",
-}: {
-  children: React.ReactNode;
-  label: string;
-  onClick: () => void;
-  tone?: "default" | "danger" | "success";
-}) {
-  const toneClass = tone === "danger"
-    ? "border-red-200 text-red-700 hover:bg-red-50 focus-visible:ring-red-200"
-    : tone === "success"
-      ? "border-emerald-200 text-emerald-700 hover:bg-emerald-50 focus-visible:ring-emerald-200"
-      : "border-gray-200 text-gray-600 hover:bg-gray-50 hover:text-gray-900 focus-visible:ring-gray-200";
-  return (
-    <button
-      type="button"
-      title={label}
-      aria-label={label}
-      onClick={onClick}
-      className={`inline-flex h-7 w-7 items-center justify-center rounded-md border bg-white transition focus-visible:outline-none focus-visible:ring-2 ${toneClass}`}
-    >
-      {children}
-    </button>
-  );
 }

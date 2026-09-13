@@ -60,9 +60,54 @@ test("formatted money edits preserve the logical digit caret", () => {
   );
 });
 
-test("money input rejects comma, k and mixed units", () => {
+test("smart money input expands supported thousand notation (k)", () => {
+  assert.deepEqual(parseSmartMoneyInput("50k"), {
+    value: 50_000,
+    preview: "50.000",
+  });
+  assert.deepEqual(parseSmartMoneyInput("500k"), {
+    value: 500_000,
+    preview: "500.000",
+  });
+  assert.deepEqual(parseSmartMoneyInput("1.5k"), {
+    value: 1_500,
+    preview: "1.500",
+  });
+  assert.deepEqual(parseSmartMoneyInput("1k5"), {
+    value: 1_500,
+    preview: "1.500",
+  });
+  assert.deepEqual(parseSmartMoneyInput("1k50"), {
+    value: 1_500,
+    preview: "1.500",
+  });
+  assert.deepEqual(parseSmartMoneyInput("1k500"), {
+    value: 1_500,
+    preview: "1.500",
+  });
+  assert.deepEqual(parseSmartMoneyInput("1k505"), {
+    value: 1_505,
+    preview: "1.505",
+  });
+});
+
+test("smart money input expands supported million notation (tr, m)", () => {
+  assert.deepEqual(parseSmartMoneyInput("1m"), {
+    value: 1_000_000,
+    preview: "1.000.000",
+  });
+  assert.deepEqual(parseSmartMoneyInput("1.5m"), {
+    value: 1_500_000,
+    preview: "1.500.000",
+  });
+  assert.deepEqual(parseSmartMoneyInput("1m5"), {
+    value: 1_500_000,
+    preview: "1.500.000",
+  });
+});
+
+test("money input rejects comma and invalid mixed units", () => {
   assert.equal(parseSmartMoneyInput("1,5tr").value, null);
-  assert.equal(parseSmartMoneyInput("100k").value, null);
   assert.equal(parseSmartMoneyInput("1tr505k").value, null);
   assert.equal(parsePlainMoneyInput("100,000"), null);
 });

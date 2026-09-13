@@ -6,9 +6,10 @@ from sqlalchemy.dialects.postgresql import ENUM, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+from app.core.workspace import WorkspaceScoped
 
 
-class Payment(Base):
+class Payment(WorkspaceScoped, Base):
     """Append-only payment ledger entry.
 
     A correction is represented by a negative entry instead of deleting the
@@ -61,6 +62,22 @@ class Payment(Base):
         UUID(as_uuid=False),
         ForeignKey("profiles.id", ondelete="SET NULL"),
     )
+    payment_origin: Mapped[str] = mapped_column(
+        Text, nullable=False, default="manual", server_default=text("'manual'")
+    )
+    payment_request_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("payment_requests.id", ondelete="SET NULL"),
+    )
+    settlement_account_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("workspace_payment_accounts.id", ondelete="SET NULL"),
+    )
+    settlement_bank_code_snapshot: Mapped[str | None] = mapped_column(Text)
+    settlement_bank_name_snapshot: Mapped[str | None] = mapped_column(Text)
+    settlement_account_number_snapshot: Mapped[str | None] = mapped_column(Text)
+    settlement_account_name_snapshot: Mapped[str | None] = mapped_column(Text)
+    provider_transaction_id: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { TEST_FEE_MESSAGE_TEMPLATES } from "./fixtures/fee-message-templates";
 import {
   buildRefundAllocations,
   getRefundAmountErrors,
@@ -107,7 +108,7 @@ test("refund amount errors stay attached to the exact class amount field", () =>
   ];
 
   assert.deepEqual(getRefundAmountErrors(records, {}), {
-    [FIRST_ID]: "Vui lòng nhập số tiền cần hoàn cho ít nhất một lớp.",
+    [FIRST_ID]: "Vui lòng nhập số tiền cần hoàn.",
   });
   assert.deepEqual(
     getRefundAmountErrors(records, {
@@ -129,7 +130,7 @@ test("refund amount errors stay attached to the exact class amount field", () =>
 
 test("paid Zalo receipt states gross refund and current net after a refund", () => {
   const group = buildStudentFeeGroups([paidRecord()])[0];
-  const message = getGroupCopyMessage(group, true);
+  const message = getGroupCopyMessage(group, true, TEST_FEE_MESSAGE_TEMPLATES);
 
   assert.match(message, /Cập nhật sau hoàn phí/);
   assert.match(message, /Tổng đã hoàn: 250\.000đ/);

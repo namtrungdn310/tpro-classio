@@ -1,7 +1,7 @@
 import type { ComponentPropsWithoutRef } from "react";
 import { cn } from "@/lib/utils";
 
-/** A single physical divider token shared by schedules and compact forms. */
+/** A single crisp divider token shared by schedules and compact forms. */
 export const inlineFieldDividerClassName =
   "inline-field-divider pointer-events-none block shrink-0";
 

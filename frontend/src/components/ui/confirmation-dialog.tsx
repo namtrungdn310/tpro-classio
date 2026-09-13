@@ -11,6 +11,7 @@ export type ConfirmationDialogProps = {
   title: ReactNode;
   description: ReactNode;
   confirmLabel: string;
+  pendingLabel?: string;
   cancelLabel?: string;
   tone?: "default" | "danger";
   isPending?: boolean;
@@ -34,6 +35,7 @@ function ConfirmationDialogContent({
   title,
   description,
   confirmLabel,
+  pendingLabel,
   cancelLabel = "Huỷ",
   tone = "default",
   isPending = false,
@@ -47,10 +49,11 @@ function ConfirmationDialogContent({
     onClose: onCancel,
   });
   const focusCancelFirst = tone === "danger";
+  const activePendingLabel = pendingLabel ?? (confirmLabel === "Hoàn tác" ? "Đang hoàn tác" : "Đang xử lý");
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/30 px-4"
+      className="fixed inset-0 z-[70] flex select-none items-center justify-center bg-black/30 px-4"
       onPointerDown={(event) => {
         backdropPointerDownRef.current = event.target === event.currentTarget;
       }}
@@ -72,44 +75,51 @@ function ConfirmationDialogContent({
         aria-describedby={descriptionId}
         aria-busy={isPending || undefined}
         tabIndex={-1}
-        className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl"
+        className="relative w-full max-w-md overflow-hidden rounded-xl bg-white shadow-xl"
       >
-        <h2 id={titleId} className="section-title-text text-gray-900">
-          {title}
-        </h2>
-        <div id={descriptionId} className="mt-2 text-sm font-normal leading-6 text-gray-600">
-          {description}
+        <div className={`border-b px-5 py-3.5 ${tone === "danger" ? "border-destructive/15 bg-destructive-soft/60" : "border-primary/15 bg-primary-soft/60"}`}>
+          <h2
+            id={titleId}
+            className={`section-title-text select-none ${tone === "danger" ? "text-destructive" : "text-primary"}`}
+          >
+            {title}
+          </h2>
         </div>
+        <div className="p-5">
+          <div id={descriptionId} className="text-sm font-normal leading-6 text-gray-600">
+            {description}
+          </div>
 
-        <div className="mt-5 flex justify-end gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            className="h-8 rounded-md px-3 text-sm"
-            disabled={isPending}
-            onClick={requestClose}
-            data-dialog-autofocus={focusCancelFirst || undefined}
-          >
-            {cancelLabel}
-          </Button>
-          <Button
-            type="button"
-            variant={tone === "danger" ? "destructive" : "default"}
-            className={
-              tone === "danger"
-                ? "h-8 rounded-md bg-red-600 px-3 text-sm text-white hover:bg-red-700"
-                : "h-8 rounded-md bg-gray-950 px-3 text-sm text-white hover:bg-black"
-            }
-            disabled={isPending}
-            onClick={onConfirm}
-            data-dialog-autofocus={!focusCancelFirst || undefined}
-          >
-            <LoadingLabel
-              label="Đang xử lý"
-              isLoading={isPending}
-              idleLabel={confirmLabel}
-            />
-          </Button>
+          <div className="mt-5 flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-8 rounded-md px-3 text-xs font-medium"
+              disabled={isPending}
+              onClick={requestClose}
+              data-dialog-autofocus={focusCancelFirst || undefined}
+            >
+              {cancelLabel}
+            </Button>
+            <Button
+              type="button"
+              variant={tone === "danger" ? "destructive" : "default"}
+              className={
+                tone === "danger"
+                  ? "h-8 rounded-md bg-destructive px-3 text-xs font-semibold text-destructive-foreground transition-[width,padding,background-color] hover:bg-destructive/90 disabled:opacity-80"
+                  : "h-8 rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground transition-[width,padding,background-color] hover:bg-primary/90 disabled:opacity-80"
+              }
+              disabled={isPending}
+              onClick={onConfirm}
+              data-dialog-autofocus={!focusCancelFirst || undefined}
+            >
+              {isPending ? (
+                <LoadingLabel label={activePendingLabel} />
+              ) : (
+                confirmLabel
+              )}
+            </Button>
+          </div>
         </div>
       </div>
     </div>,

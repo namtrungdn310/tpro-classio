@@ -37,7 +37,11 @@ insert into public.enrollments (
   '10000000-0000-0000-0000-000000000002',
   '10000000-0000-0000-0000-000000000001',
   current_date,
-  'active'
+  -- This fixture preserves a legacy fee/payment/refund row, but it is not a
+  -- current service enrollment.  Keeping it dropped prevents the post-059
+  -- canonical-slot invariant (M062) from treating a deliberately schedule-
+  -- less legacy class as an active enrollment.
+  'dropped'
 );
 
 insert into public.fee_records (

@@ -1,36 +1,64 @@
 import { apiClient } from "@/lib/api/client";
 import {
-  contactSuggestionResponseSchema,
   enrollmentResponseSchema,
-  studentResponseListSchema,
+  studentIdentityConflictSchema,
+  studentListPageResponseSchema,
+  studentMembershipPreviewResponseSchema,
   studentResponseSchema,
+  studentScopeSummarySchema,
 } from "@/lib/schemas/student";
+import axios from "axios";
+import { z } from "zod";
 import type {
-  EnrollmentCreate,
   EnrollmentResponse,
-  EnrollmentUpdate,
-  ContactSuggestionResponse,
   StudentCreate,
+  StudentIdentityConflict,
+  StudentReactivationRequest,
   StudentResponse,
+  StudentListPageResponse,
+  StudentListState,
+  StudentMembershipCommand,
+  StudentMembershipPreviewRequest,
+  StudentMembershipPreviewResponse,
+  StudentScopeSummary,
   StudentStatus,
-  StudentUpdate,
 } from "@/lib/types";
 
-type GetStudentsParams = {
+export type GetStudentsParams = {
   search?: string;
   class_id?: string;
   status?: StudentStatus | "";
+  list_state?: StudentListState;
+  cursor?: string;
+  limit?: number;
 };
 
-export async function getStudents(params: GetStudentsParams): Promise<StudentResponse[]> {
-  const { data } = await apiClient.get<unknown>("/students", {
+export async function getStudentsPage(
+  params: GetStudentsParams,
+  signal?: AbortSignal,
+): Promise<StudentListPageResponse> {
+  const response = await apiClient.get<unknown>("/students/page", {
+    signal,
     params: {
       search: params.search || undefined,
       class_id: params.class_id || undefined,
       status: params.status || undefined,
+      list_state: params.list_state || undefined,
+      cursor: params.cursor || undefined,
+      limit: params.limit ?? 80,
     },
   });
-  return studentResponseListSchema.parse(data);
+  return studentListPageResponseSchema.parse(response.data);
+}
+
+export async function getStudentScopeSummary(signal?: AbortSignal): Promise<StudentScopeSummary> {
+  const response = await apiClient.get<unknown>("/students/summary", { signal });
+  return studentScopeSummarySchema.parse(response.data);
+}
+
+export async function getStudent(id: string, signal?: AbortSignal): Promise<StudentResponse> {
+  const response = await apiClient.get<unknown>(`/students/${id}`, { signal });
+  return studentResponseSchema.parse(response.data);
 }
 
 export async function createStudent(data: StudentCreate): Promise<StudentResponse> {
@@ -38,43 +66,79 @@ export async function createStudent(data: StudentCreate): Promise<StudentRespons
   return studentResponseSchema.parse(response.data);
 }
 
-export async function updateStudent(
+export async function reactivateStudent(
   id: string,
-  data: StudentUpdate,
+  data: StudentReactivationRequest,
 ): Promise<StudentResponse> {
-  const response = await apiClient.patch<unknown>(`/students/${id}`, data);
+  const response = await apiClient.post<unknown>(`/students/${id}/reactivate`, data);
   return studentResponseSchema.parse(response.data);
 }
 
-export async function lookupContactSuggestion({
-  owner,
-  phone,
-  zaloName,
-}: {
-  owner: "student" | "parent";
-  phone?: string;
-  zaloName?: string;
-}): Promise<ContactSuggestionResponse | null> {
-  const { data } = await apiClient.get<unknown>(
-    "/students/contact-suggestion",
-    { params: { owner, phone, zalo_name: zaloName } },
+export function getStudentIdentityConflict(
+  error: unknown,
+): StudentIdentityConflict | null {
+  if (!axios.isAxiosError(error) || error.response?.status !== 409) {
+    return null;
+  }
+
+  const parsed = studentIdentityConflictSchema.safeParse(
+    error.response.data?.detail,
   );
-  return contactSuggestionResponseSchema.parse(data);
+  return parsed.success ? parsed.data : null;
 }
 
-export async function updateEnrollment(
+export async function previewStudentMembership(
   id: string,
-  data: EnrollmentUpdate,
-): Promise<EnrollmentResponse> {
-  const response = await apiClient.patch<unknown>(`/enrollments/${id}`, data);
-  return enrollmentResponseSchema.parse(response.data);
+  data: StudentMembershipPreviewRequest,
+  options?: { signal?: AbortSignal }
+): Promise<StudentMembershipPreviewResponse> {
+  const response = await apiClient.post<unknown>(
+    `/students/${id}/membership-command/preview`,
+    data,
+    {
+      timeout: 30_000,
+      signal: options?.signal,
+    }
+  );
+  return studentMembershipPreviewResponseSchema.parse(response.data);
 }
 
-export async function createEnrollment(
-  data: EnrollmentCreate,
-): Promise<EnrollmentResponse> {
-  const response = await apiClient.post<unknown>("/enrollments", data);
-  return enrollmentResponseSchema.parse(response.data);
+export async function applyStudentMembershipCommand(
+  id: string,
+  data: StudentMembershipCommand,
+): Promise<StudentResponse> {
+  const response = await apiClient.post<unknown>(`/students/${id}/membership-command`, data, {
+    timeout: 60_000,
+  });
+  return studentResponseSchema.parse(response.data);
+}
+
+export async function archiveStudent(
+  id: string,
+  reason: string,
+): Promise<StudentResponse> {
+  const response = await apiClient.post<unknown>(`/students/${id}/archive`, { reason });
+  return studentResponseSchema.parse(response.data);
+}
+
+export async function restoreStudent(
+  id: string,
+  reason: string,
+  expected_updated_at: string,
+): Promise<StudentResponse> {
+  const response = await apiClient.post<unknown>(`/students/${id}/restore`, {
+    reason,
+    expected_updated_at,
+  });
+  return studentResponseSchema.parse(response.data);
+}
+
+export async function getStudentEnrollments(
+  id: string,
+  signal?: AbortSignal,
+): Promise<EnrollmentResponse[]> {
+  const response = await apiClient.get<unknown>(`/students/${id}/enrollments`, { signal });
+  return z.array(enrollmentResponseSchema).parse(response.data);
 }
 
 export async function dropEnrollment(id: string): Promise<EnrollmentResponse> {

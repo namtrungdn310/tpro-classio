@@ -17,14 +17,30 @@ function makeClass(
     billing_cycle_months: billingCycleMonths,
     start_date: null,
     end_date: null,
+    identity_scheme: "LEGACY",
+    class_category: null,
+    grade_mode: null,
+    program_name: null,
+    grade_level: null,
+    education_level: null,
+    academic_year_start: null,
     schedule: null,
     teacher_id: null,
     teacher_ids: [],
     teacher_name: null,
     teacher_names: [],
+    assistant_ids: [],
+    assistant_names: [],
     is_active: true,
     student_count: 0,
     created_at: "2026-07-13T00:00:00Z",
+    updated_at: "2026-07-13T00:00:00Z",
+    version: 1,
+    display_name: name,
+    primary_label: name,
+    secondary_label: null,
+    effective_status: "LEGACY",
+    can_edit_end_date: false,
   };
 }
 
@@ -47,7 +63,7 @@ test("student class selection search is accent and case insensitive", () => {
 
 test("student class selection combines type and dynamic duration filters", () => {
   const result = filterAndSortClassSelection(classes, {
-    duration: "3",
+    duration: "12",
     search: "",
     type: "COURSE",
   });

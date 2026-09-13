@@ -89,7 +89,7 @@ export default function OnboardingRecoveryPage() {
           </div>
         ) : error && codes.length === 0 ? (
           <div className="flex flex-col gap-4">
-            <p role="alert" className="form-message-text rounded-md border border-red-200 bg-red-50 px-3 py-2 text-red-700">
+            <p role="alert" className="form-message-text rounded-md border border-destructive/20 bg-destructive-soft px-3 py-2 text-destructive">
               {error}
             </p>
             <Link href="/login" className="auth-action-link text-center">
@@ -108,7 +108,7 @@ export default function OnboardingRecoveryPage() {
             {error ? (
               <p
                 role="alert"
-                className="form-message-text rounded-md border border-red-200 bg-red-50 px-3 py-2 text-red-700"
+                className="form-message-text rounded-md border border-destructive/20 bg-destructive-soft px-3 py-2 text-destructive"
               >
                 {error}
               </p>

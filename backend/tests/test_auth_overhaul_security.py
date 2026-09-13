@@ -304,6 +304,15 @@ def test_deployed_configuration_rejects_privileged_or_reused_credentials() -> No
         "google_redirect_uri": "https://classio.tpro.vn/auth/google/callback",
         "auth_cookie_secure": True,
     }
+    with pytest.raises(ValueError, match="operator-only"):
+        Settings(
+            **common,
+            database_url=(
+                "postgresql+asyncpg://tpro_backend:strong@db.tpro.vn:5432/postgres"
+            ),
+            supabase_db_owner_password="owner-secret-never-for-runtime",
+        )
+
     with pytest.raises(ValueError, match="dedicated non-superuser"):
         Settings(
             **common,
