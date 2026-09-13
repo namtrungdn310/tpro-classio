@@ -8,23 +8,33 @@ const studentPageSource = readFileSync(
   "utf8",
 );
 
-test("transfer mode enforces exactly one target class and mode switch prunes to one class", () => {
-  // Check onAddClass replaces class when in transfer mode
+test("transfer and supplement modes both preserve multiple selected target classes", () => {
   assert.match(
     studentPageSource,
-    /if \(draftEnrollmentActionMode === "transfer"\) \{\s*setDraftTransferTargetClassIds\(\[classId\]\)/,
+    /setDraftTransferTargetClassIds\(\(current\) =>\s*current\.includes\(classId\) \? current : \[\.\.\.current, classId\]/,
   );
-
-  // Check onModeChange prunes to first class when switching to transfer mode
   assert.match(
     studentPageSource,
-    /if \(mode === "transfer" && draftTransferTargetClassIds\.length > 1\) \{\s*const firstClassId = draftTransferTargetClassIds\[0\];/,
+    /setDraftTargetEnrollmentConfigs\(\(current\) => \(\{\s*\.\.\.current,\s*\[classId\]: current\[classId\] \?\? newConfig/,
   );
+  assert.doesNotMatch(studentPageSource, /setDraftTransferTargetClassIds\(\[classId\]\)/);
+  assert.doesNotMatch(studentPageSource, /draftTransferTargetClassIds\.length > 1/);
 });
 
 test("students/page.tsx sends contract_version 3 for targets/date changes and expected_preview_fingerprint", () => {
   assert.match(studentPageSource, /contract_version: contractVersion/);
   assert.match(studentPageSource, /expected_preview_fingerprint: enrollmentActionPlan\.previewMeta\?\.previewFingerprint \?\? null/);
+  assert.match(studentPageSource, /collect_source_final_cycle:/);
+});
+
+test("transfer preview exposes one compact final-cycle decision without duplicate guidance", () => {
+  assert.match(studentPageSource, /Xem trước đổi lớp/);
+  assert.match(studentPageSource, /Xử lý kỳ học phí cuối/);
+  assert.match(studentPageSource, /Thu kỳ cuối/);
+  assert.match(studentPageSource, /Không thu kỳ cuối/);
+  assert.match(studentPageSource, /name="source-final-cycle-policy"/);
+  assert.doesNotMatch(studentPageSource, /Cập nhật \{previewResponse\.source\.mutable_fee_count\} khoản phí/);
+  assert.doesNotMatch(studentPageSource, /Học viên sẽ rời lớp hiện tại từ ngày bắt đầu sớm nhất/);
 });
 
 test("students/page.tsx maintains stable request_id across retries with identical payload", () => {

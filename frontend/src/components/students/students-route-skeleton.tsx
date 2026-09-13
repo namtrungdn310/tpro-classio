@@ -213,7 +213,7 @@ export function StudentTableSkeleton({ isAdmin }: { isAdmin: boolean }) {
   const tableGridClass = isAdmin
     ? STUDENTS_TABLE_GRID_CLASS
     : STUDENTS_TABLE_VIEWER_GRID_CLASS;
-  const columnWidths = [72, 52, 96, 68, 90, 94, 108];
+  const columnWidths = [70, 78, 52, 76, 68, 80, 88, 88, 96];
 
   return (
     <div
@@ -245,7 +245,7 @@ export function StudentTableSkeleton({ isAdmin }: { isAdmin: boolean }) {
             {columnWidths.map((width, index) => (
               <div
                 key={index}
-                className={index === 4 ? "py-3 pl-4 pr-2.5" : "px-2.5 py-3"}
+                className={index === 8 ? "pl-4 pr-2 py-3" : "px-2 py-3"}
               >
                 <div
                   className="h-3 rounded bg-gray-200"
@@ -263,7 +263,7 @@ export function StudentTableSkeleton({ isAdmin }: { isAdmin: boolean }) {
                 {columnWidths.map((width, cellIndex) => (
                   <div
                     key={cellIndex}
-                    className={cellIndex === 4 ? "py-3 pl-4 pr-2.5" : "px-2.5 py-3"}
+                    className={cellIndex === 8 ? "pl-4 pr-2 py-3" : "px-2 py-3"}
                   >
                     <div
                       className="h-4 rounded bg-gray-100"

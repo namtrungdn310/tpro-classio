@@ -28,6 +28,8 @@ import type {
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { formatDate } from "@/lib/utils/format";
+import { useIndependentDates } from "@/lib/hooks/use-independent-dates";
+import { ClassAdmissionDateDialog } from "./class-admission-date-dialog";
 
 type Props = {
   class_: ClassResponse;
@@ -37,7 +39,14 @@ type Props = {
   onClose: () => void;
 };
 
-export function ClassStartDateDialog({
+export function ClassStartDateDialog(props: Props) {
+  const capabilities = useIndependentDates();
+  if (capabilities.isPending) return <FormDialogShell title="Ngày bắt đầu lớp" onClose={props.onClose}><FormDialogBody><LoadingLabel label="Đang kiểm tra" /></FormDialogBody></FormDialogShell>;
+  if (capabilities.data?.independent_billing_dates) return <ClassAdmissionDateDialog {...props} />;
+  return <LegacyClassStartDateDialog {...props} />;
+}
+
+function LegacyClassStartDateDialog({
   class_,
   newStartDate,
   classPatch,

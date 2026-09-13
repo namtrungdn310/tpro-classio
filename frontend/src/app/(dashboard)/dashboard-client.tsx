@@ -100,7 +100,8 @@ export default function DashboardPage() {
   const hasSettledOverview = overviewQuery.data !== undefined || overviewQuery.isError;
   const hasSettledClasses = classesQuery.data !== undefined || classesQuery.isError;
   const hasSettledOccurrences = occurrencesQuery.data !== undefined || occurrencesQuery.isError;
-  const isInitialLoading = !user || !hasSettledOverview || !hasSettledClasses;
+  const isInitialLoading =
+    !user || !hasSettledOverview || !hasSettledClasses || !hasSettledOccurrences;
   const isRefreshing =
     overviewQuery.isFetching || classesQuery.isFetching || occurrencesQuery.isFetching;
   const hasRefreshError =

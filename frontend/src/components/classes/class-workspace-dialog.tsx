@@ -77,6 +77,8 @@ export function ClassWorkspaceDialog({
   const [leaving, setLeaving] = useState(false);
   const [animateIn, setAnimateIn] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [suspensionBusy, setSuspensionBusy] = useState(false);
+  const [suspensionDirty, setSuspensionDirty] = useState(false);
   const [nestedOverlayOpen, setNestedOverlayOpen] = useState(false);
   const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -104,16 +106,16 @@ export function ClassWorkspaceDialog({
   }, []);
 
   const requestClose = useCallback(() => {
-    if (dirty && !isSaving && !isDeleting && !isContinuing) {
+    if ((dirty || suspensionDirty) && !isSaving && !isDeleting && !isContinuing) {
       setConfirmDiscardOpen(true);
       return;
     }
     onClose();
-  }, [dirty, isSaving, isDeleting, isContinuing, onClose]);
+  }, [dirty, suspensionDirty, isSaving, isDeleting, isContinuing, onClose]);
 
   const { backdropPointerDownRef, dialogRef, requestClose: requestShellClose } =
     useModalDialog({
-      isBusy: isSaving || isDeleting || isContinuing,
+      isBusy: isSaving || isDeleting || isContinuing || suspensionBusy,
       onClose: requestClose,
       suspended: nestedOverlayOpen || confirmDiscardOpen,
     });
@@ -127,7 +129,7 @@ export function ClassWorkspaceDialog({
   });
 
   function changeMode(next: WorkspaceMode) {
-    if (!class_) {
+    if (!class_ || suspensionBusy) {
       return;
     }
     if (next === mode) {
@@ -235,7 +237,7 @@ export function ClassWorkspaceDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="class-workspace-title"
-        aria-busy={isSaving || isDeleting || isContinuing || undefined}
+        aria-busy={isSaving || isDeleting || isContinuing || suspensionBusy || undefined}
         tabIndex={-1}
         inert={nestedOverlayOpen || confirmDiscardOpen ? true : undefined}
         data-workspace-dismiss-surface="true"
@@ -248,7 +250,7 @@ export function ClassWorkspaceDialog({
               subtitle={headerSubtitle}
               titleId="class-workspace-title"
               onClose={requestShellClose}
-              closeDisabled={isSaving || isDeleting || isContinuing}
+              closeDisabled={isSaving || isDeleting || isContinuing || suspensionBusy}
             />
             {rail ? <MobileModeRail mode={mode} dirty={dirty} canCancel={Boolean(class_.can_cancel)} canMakeup={Boolean(class_.can_edit)} canEdit={canEdit} canContinue={canContinue} onSelect={changeMode} /> : null}
             <div
@@ -392,6 +394,8 @@ export function ClassWorkspaceDialog({
                 <ClassMakeupWorkspace
                   class_={class_}
                   isSaving={isSaving}
+                  onBusyChange={setSuspensionBusy}
+                  onDirtyChange={setSuspensionDirty}
                   onClose={requestShellClose}
                   onPostponed={onPostponed}
                 />

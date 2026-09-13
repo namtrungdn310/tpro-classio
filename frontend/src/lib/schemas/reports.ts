@@ -12,6 +12,7 @@ export const feeOperationActionSchema = z.enum([
   "supersede",
   "anchor_recalculation",
   "billing_cycle_change",
+  "due_date_change",
   "template_update",
 ]);
 

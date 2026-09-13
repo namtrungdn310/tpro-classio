@@ -16,6 +16,7 @@ const ACTION_LABELS: Record<string, string> = {
   supersede: "Thay thế lịch thu",
   anchor_recalculation: "Tính lại lịch thu",
   billing_cycle_change: "Đổi thời lượng gói",
+  due_date_change: "Đổi hạn thu",
   template_update: "Cập nhật mẫu nhắc phí",
 };
 

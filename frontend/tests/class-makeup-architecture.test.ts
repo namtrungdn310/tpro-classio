@@ -43,16 +43,17 @@ test("make-up workspace never offers a substitute staff selector", () => {
 });
 
 test("postpone workspace keeps the intended notes and aligned controls", () => {
-  assert.match(workspaceSource, /aria-label="Hoãn buổi học"/);
-  assert.match(workspaceSource, /Ngày thu sẽ dời theo số ngày hoãn thực tế của/);
-  assert.match(workspaceSource, /Chọn khoảng ngày để xem các buổi học trong phạm vi thời gian lớp có thể hoãn/);
+  assert.match(workspaceSource, /aria-label="Hoãn lớp"/);
+  assert.match(workspaceSource, /Bảo lưu ngày nghỉ cho học viên và dời lịch thu tương ứng/);
+  assert.match(workspaceSource, /Ngày bắt đầu nghỉ/);
+  assert.match(workspaceSource, /Ngày học lại/);
   assert.doesNotMatch(workspaceSource, /Tổng .*buổi chưa hoàn tất/);
   assert.doesNotMatch(workspaceSource, />Hoãn buổi học<\/h3>/);
   assert.doesNotMatch(workspaceSource, /không ảnh hưởng tài chính/);
   assert.doesNotMatch(workspaceSource, /Giáo viên\/trợ giảng buổi bù được kế thừa từ buổi gốc/);
   assert.doesNotMatch(workspaceSource, /scheduleNow|schedule_now/);
   assert.doesNotMatch(workspaceSource, /Xếp bù ngay|Xếp sau/);
-  assert.match(workspaceSource, />Ghi chú<\/span>/);
+  assert.match(workspaceSource, />Ghi chú/);
   assert.doesNotMatch(workspaceSource, /Ghi chú \(tùy chọn\)/);
   assert.match(workspaceSource, /formTextControlClassName/);
   assert.equal((workspaceSource.match(/<ManualDateInput/g) ?? []).length, 2);
@@ -62,15 +63,18 @@ test("postpone workspace keeps the intended notes and aligned controls", () => {
 });
 
 test("postpone reason and note use full-width controls matching the student note field", () => {
-  assert.match(workspaceSource, /className="mt-3 grid gap-3"/);
+  assert.match(workspaceSource, /form-label-text mt-3 block/);
   assert.match(workspaceSource, /<select[\s\S]*?"mt-1\.5 w-full"/);
   assert.match(workspaceSource, /<textarea[\s\S]*?rows=\{2\}[\s\S]*?h-16 min-h-16 w-full resize-none py-2 leading-5/);
 });
 
 test("postpone preview uses per-enrollment credit semantics", () => {
   assert.match(workspaceSource, /member_summary/);
-  assert.match(workspaceSource, /Ngày thu sẽ dời theo số ngày hoãn thực tế/);
-  assert.match(workspaceSource, /suspensionPreviewQuery/);
+  assert.match(workspaceSource, /m\.overlap_days/);
+  assert.match(workspaceSource, /suspensionPreview/);
+  assert.match(workspaceSource, /m\.pending_days/);
+  assert.match(workspaceSource, /expected_fingerprint/);
+  assert.match(workspaceSource, /mutation\.mutate\(request\.current\)/);
   assert.doesNotMatch(workspaceSource, /schedule_now|billing_impact/);
 });
 
@@ -100,7 +104,7 @@ test("upcoming enrollment and postponed-session badges share one status primitiv
     /<StatusPill className="text-xs font-semibold" title="Ngày bắt đầu trong tương lai">/,
   );
   assert.match(tableSource, /<StatusPill/);
-  assert.match(statusPillSource, /rounded-full border/);
+  assert.match(statusPillSource, /rounded-md border/);
   assert.match(statusPillSource, /aria-label=\{title\}/);
   assert.match(statusPillSource, /onKeyDown=\{\(event\) => event\.stopPropagation\(\)\}/);
 });

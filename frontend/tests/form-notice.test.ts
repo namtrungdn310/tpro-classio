@@ -41,11 +41,14 @@ test("inline form error is a compact red line without a box", () => {
   assert.match(errorSource, /action\?: ReactNode/);
 });
 
-test("student transfer guidance uses the shared blue notice", () => {
-  assert.match(studentsSource, /<FormNotice>/);
-  assert.match(studentsSource, /Lưu xong, học viên sẽ rời lớp hiện tại\./);
-  assert.doesNotMatch(studentsSource, /FormNotice className="whitespace-nowrap"/);
-  assert.doesNotMatch(studentsSource, />\s*\* Lưu xong/);
+test("student transfer guidance is consolidated into the impact preview", () => {
+  assert.match(
+    studentsSource,
+    /aria-labelledby="transfer-impact-title"/,
+  );
+  assert.match(studentsSource, /Lớp hiện tại/);
+  assert.match(studentsSource, /Ngày rời lớp/);
+  assert.doesNotMatch(studentsSource, /Lưu xong, học viên sẽ rời lớp hiện tại/);
 });
 
 test("unsaved changes use a shared icon-and-text line without a warning surface", () => {

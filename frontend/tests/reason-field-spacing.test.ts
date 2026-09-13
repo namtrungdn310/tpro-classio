@@ -46,7 +46,7 @@ test("reason inputs use the shared six-pixel label-to-control spacing", () => {
   );
   assert.match(
     classMakeupWorkspace,
-    /value=\{reasonNote\}[\s\S]*?"mt-1\.5 block h-16/,
+    /value=\{note\}[\s\S]*?"mt-1\.5 block h-16/,
   );
   assert.match(
     classFormDialog,

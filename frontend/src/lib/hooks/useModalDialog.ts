@@ -59,7 +59,7 @@ export function useModalDialog({
     document.body.style.overflow = "hidden";
     const frame = window.requestAnimationFrame(() => {
       if (focusContainerInitially) {
-        dialogRef.current?.focus();
+        dialogRef.current?.focus({ preventScroll: true });
         clearDocumentTextSelection();
         return;
       }
@@ -70,7 +70,7 @@ export function useModalDialog({
             ),
           ).find(isFocusableVisible) ?? getFocusableElements(dialogRef.current)[0]
         : undefined;
-      initialTarget?.focus();
+      initialTarget?.focus({ preventScroll: true });
       clearDocumentTextSelection();
     });
 
@@ -78,7 +78,7 @@ export function useModalDialog({
       window.cancelAnimationFrame(frame);
       document.body.style.overflow = previousBodyOverflow;
       clearDocumentTextSelection();
-      restoreFocusRef.current?.focus?.();
+      restoreFocusRef.current?.focus?.({ preventScroll: true });
       clearDocumentTextSelection();
     };
   }, [focusContainerInitially]);

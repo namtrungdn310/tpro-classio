@@ -24,6 +24,8 @@ test("studentMembershipPreviewResponseSchema parses backend preview response cor
       ends_on: "2026-04-30",
       mutable_fee_count: 2,
       protected_fee_count: 0,
+      collect_final_cycle: true,
+      waivable_final_cycle_count: 1,
     },
     targets: [
       {

@@ -5,6 +5,7 @@ import {
   comparableManualDate,
   displayToIsoDate,
   formatManualDateInput,
+  getManualDateGuide,
   isValidIsoDate,
 } from "../src/components/ui/manual-date-input";
 
@@ -35,6 +36,16 @@ test("manual dates remove separators after the final digit is deleted", () => {
   assert.equal(formatManualDateInput("//"), "");
 });
 
+test("date guide never appends year hints after deleting the day or month", () => {
+  for (const value of ["/08/2026", "1/08/2026", "01//2026", "01/8/2026", "//2026"]) {
+    assert.equal(getManualDateGuide(value), "", value);
+  }
+  assert.equal(getManualDateGuide(""), "dd/mm/yyyy");
+  assert.equal(getManualDateGuide("01/08/20"), "yy");
+  assert.equal(getManualDateGuide("01/08/2026"), "");
+  assert.equal(getManualDateGuide("01/"), "mm/yyyy");
+});
+
 test("manual dates emit ISO only for real calendar dates", () => {
   assert.equal(displayToIsoDate("01/09/2026"), "2026-09-01");
   assert.equal(displayToIsoDate("31/02/2026"), null);
@@ -55,6 +66,8 @@ test("manual dates preserve the exact single control presentation with flexible 
   assert.match(componentSource, /inputMode="numeric"/);
   assert.match(componentSource, /maxLength=\{10\}/);
   assert.match(componentSource, /privacyToggle/);
+  assert.match(componentSource, /placeholder=\{DATE_GUIDE\}/);
+  assert.match(componentSource, /inputValue \? getManualDateGuide\(inputValue\) : ""/);
   assert.match(componentSource, /collapseSelectionOnKeyboardFocus/);
   assert.match(componentSource, /setSelectionRange/);
 });

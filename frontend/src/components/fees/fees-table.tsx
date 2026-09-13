@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   RiCheckLine as Check,
+  RiCalendarLine as Calendar,
   RiEyeOffLine as EyeOff,
   RiFileList3Line as FileList,
   RiLoader4Line as LoaderCircle,
@@ -55,6 +56,7 @@ type FeesTableProps = {
   onRefund: (group: StudentFeeGroup) => void;
   onUnpay: (group: StudentFeeGroup) => void;
   onUnnotify: (group: StudentFeeGroup) => void;
+  onDeadline?: (group: StudentFeeGroup) => void;
   getCopyMessage: (group: StudentFeeGroup) => string | null;
   loadCopyMessage?: (group: StudentFeeGroup) => Promise<string>;
   refundPanel: (closeWorkspace: () => void) => React.ReactNode;
@@ -76,6 +78,7 @@ type FeeActionsProps = Pick<
   | "onRefund"
   | "onUnpay"
   | "onUnnotify"
+  | "onDeadline"
   | "isMessageUnavailable"
   | "canCreatePaymentRequest"
 > & {
@@ -89,6 +92,7 @@ type FeeActionsProps = Pick<
 
 type FeeWorkspaceMode =
   | "overview"
+  | "deadline"
   | "copy"
   | "notify"
   | "qr"
@@ -117,6 +121,7 @@ export function FeesTable({
   onRefund,
   onUnpay,
   onUnnotify,
+  onDeadline,
   getCopyMessage,
   loadCopyMessage,
   refundPanel,
@@ -391,6 +396,7 @@ export function FeesTable({
           onRefund={onRefund}
           onUnpay={onUnpay}
           onUnnotify={onUnnotify}
+          onDeadline={onDeadline}
         />
       ) : null}
     </div>
@@ -634,6 +640,9 @@ function FeeActionWorkspace({
   }
 
   if (isUnpaid) {
+    if (actionProps.onDeadline) items.push({ mode: "deadline", label: "Đổi hạn thu", title: "Đổi hạn thu",
+      description: "Điều chỉnh riêng hạn thanh toán, không đổi kỳ học.", icon: <Calendar className="h-[18px] w-[18px]" aria-hidden="true" />,
+      disabled: actionProps.disabled });
     items.push({
       mode: "qr",
       label: "Tạo QR",
@@ -737,6 +746,7 @@ function FeeActionWorkspace({
   const selectMode = (nextMode: FeeWorkspaceMode) => {
     const nextItem = items.find((item) => item.mode === nextMode);
     if (!nextItem?.disabled) {
+      if (nextMode === "deadline") { actionProps.onDeadline?.(group); onClose(); return; }
       if (nextMode === "copy") {
         setCopyDraft(copyPreview ?? "");
         setCopyBase(copyPreview ?? "");

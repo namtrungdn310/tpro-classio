@@ -238,7 +238,7 @@ export function ManualDateInput({
       >
         <span className="select-none text-transparent">{inputValue}</span>
         <span className="select-none font-normal text-gray-300">
-          {DATE_GUIDE.slice(inputValue.length)}
+          {inputValue ? getManualDateGuide(inputValue) : ""}
         </span>
       </div>
       <input
@@ -247,6 +247,7 @@ export function ManualDateInput({
         type="text"
         inputMode="numeric"
         maxLength={10}
+        placeholder={DATE_GUIDE}
         value={inputValue}
         disabled={disabled}
         aria-label={ariaLabel}
@@ -261,7 +262,7 @@ export function ManualDateInput({
         data-row={dataRow}
         data-col={dataCol}
         data-private-hidden={isContentHidden}
-        className="form-input-text relative z-10 h-full w-full select-text bg-transparent text-left text-gray-900 outline-none caret-gray-900 disabled:cursor-not-allowed"
+        className="form-input-text relative z-10 h-full w-full select-text bg-transparent text-left text-gray-900 outline-none caret-gray-900 placeholder:font-normal placeholder:text-gray-300 disabled:cursor-not-allowed"
       />
       {privacyToggle ? (
         <div className="absolute inset-y-0 right-1 z-20 flex items-center">
@@ -295,6 +296,12 @@ export function formatManualDateInput(raw: string) {
   return [clean.slice(0, 2), clean.slice(2, 4), clean.slice(4, 8)]
     .filter(Boolean)
     .join("/");
+}
+
+/** Only append a guide to a left-to-right prefix, never to a date with holes. */
+export function getManualDateGuide(value: string) {
+  const isPrefix = /^(?:\d{0,2}|\d{2}\/\d{0,2}|\d{2}\/\d{2}\/\d{0,4})$/.test(value);
+  return isPrefix ? DATE_GUIDE.slice(value.length) : "";
 }
 
 export function displayToIsoDate(value: string) {

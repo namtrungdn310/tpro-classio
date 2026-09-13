@@ -135,8 +135,8 @@ test("StudentStartDateDialog enforces zero icons, native thin caret, and no redu
   // No redundant close button in header (since footer already has Hủy bỏ)
   assert.doesNotMatch(startDateDialogSource, /aria-label="Đóng"/);
   assert.doesNotMatch(startDateDialogSource, />Đóng<\/button>/);
-  // Textarea uses font-normal, text-[15px] and caret-gray-900 for thin browser caret
-  assert.match(startDateDialogSource, /caret-gray-900/);
+  // Textarea uses native browser caret contract with font-normal and text-[15px]
+  assert.doesNotMatch(startDateDialogSource, /caret-gray-900/);
   assert.match(startDateDialogSource, /font-normal/);
   assert.match(startDateDialogSource, /text-\[15px\]/);
 });

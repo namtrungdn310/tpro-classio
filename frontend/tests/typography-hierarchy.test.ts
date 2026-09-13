@@ -38,6 +38,12 @@ const classHistory = source(
 const earlyPaymentPanel = source(
   "../src/components/fees/early-payment-panel.tsx",
 );
+const billingScheduleDialog = source(
+  "../src/components/students/billing-schedule-dialog.tsx",
+);
+const billingDateField = source(
+  "../src/components/students/billing-date-field.tsx",
+);
 
 test("field labels stay subordinate to entered values while group labels remain prominent", () => {
   assert.match(
@@ -91,6 +97,8 @@ test("dense financial and audit views keep meaningful metadata readable", () => 
     dashboardSidebar,
     classHistory,
     earlyPaymentPanel,
+    billingScheduleDialog,
+    billingDateField,
   ]) {
     assert.doesNotMatch(readableContent, /text-\[(?:10|11)px\]/);
   }

@@ -304,6 +304,11 @@ export type PostponementCreateResponse = {
 export type SuspensionMemberSummary = {
   enrollment_id: string;
   overlap_days: number;
+  student_name: string | null;
+  target_coverage_start: string | null;
+  old_due_date: string | null;
+  new_due_date: string | null;
+  pending_days: number;
 };
 
 export type SuspensionPreviewResponse = {
@@ -314,6 +319,10 @@ export type SuspensionPreviewResponse = {
   member_summary: SuspensionMemberSummary[];
   target_cycle_count: number;
   protected_case_count: number;
+  fingerprint: string;
+  adjustment_id: string | null;
+  occurrence_count: number;
+  blocked_reasons: string[];
 };
 
 export type SuspensionCreateRequest = {
@@ -322,6 +331,7 @@ export type SuspensionCreateRequest = {
   reason_code?: MakeupReasonCode;
   reason_note?: string | null;
   request_id: string;
+  expected_fingerprint: string;
 };
 
 export type MakeupScheduleRequest = {
@@ -659,6 +669,13 @@ type StudentClassInfo = {
 
 export type StudentEnrollmentInfo = {
   id: string;
+  billing_anchor_date?: string | null;
+  billing_anchor_version?: number;
+  current_period?: string | null;
+  current_fee_status?: "PAID" | "UNPAID" | null;
+  next_period?: string | null;
+  next_due_date?: string | null;
+  admission_version?: number;
   class_id: string;
   class_name: string;
   class_category: ClassCategory | null;
@@ -745,6 +762,8 @@ export type StudentMembershipSourceImpact = {
   ends_on?: string | null;
   mutable_fee_count: number;
   protected_fee_count: number;
+  collect_final_cycle: boolean;
+  waivable_final_cycle_count: number;
 };
 
 export type StudentMembershipPreviewWarning = {
@@ -755,6 +774,7 @@ export type StudentMembershipPreviewWarning = {
 
 export type StudentEnrollmentPatchItem = {
   enrollment_id: string;
+  expected_admission_version?: number;
   custom_fee?: number | null;
   enrollment_date?: string | null;
   selected_slot_ids?: string[] | null;
@@ -770,7 +790,8 @@ export type StudentMembershipPreviewRequest = {
   enrollment_updates?: StudentEnrollmentPatchItem[];
   mode: "supplement" | "transfer";
   source_enrollment_id?: string | null;
-  contract_version?: 1 | 2 | 3;
+  collect_source_final_cycle?: boolean;
+  contract_version?: 1 | 2 | 3 | 4;
 };
 
 export type StudentMembershipPreviewResponse = {
@@ -786,7 +807,7 @@ export type StudentMembershipPreviewResponse = {
 
 export type StudentMembershipCommand = {
   request_id: string;
-  contract_version?: 1 | 2 | 3;
+  contract_version?: 1 | 2 | 3 | 4;
   expected_preview_fingerprint?: string | null;
   expected_updated_at: string;
   profile: StudentUpdate;
@@ -794,6 +815,7 @@ export type StudentMembershipCommand = {
   targets: StudentMembershipTarget[];
   mode: "supplement" | "transfer";
   source_enrollment_id?: string | null;
+  collect_source_final_cycle?: boolean;
   billing_change_reason?: string | null;
 };
 
@@ -1049,7 +1071,8 @@ export type BillingReview = {
   student_code: string | null;
   class_id: string;
   class_name: string;
-  change_kind: "ENROLLMENT_DATE_CHANGE" | "PACKAGE_DURATION_CHANGE" | "CLASS_START_DATE_CHANGE";
+  change_kind: string;
+  context_token?: string | null;
   class_billing_cycle_revision_id: string | null;
   previous_date: string | null;
   next_date: string;
@@ -1392,6 +1415,7 @@ export type FeeOperationAction =
   | "supersede"
   | "anchor_recalculation"
   | "billing_cycle_change"
+  | "due_date_change"
   | "template_update";
 
 export type FeeOperationItem = {

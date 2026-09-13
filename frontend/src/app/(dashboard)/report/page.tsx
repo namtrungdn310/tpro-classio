@@ -18,6 +18,7 @@ import { PaidReceiptTable } from "@/components/reports/paid-receipt-table";
 import { PaidReportSummaryBand } from "@/components/reports/paid-report-summary";
 import { FeeOperationPanel } from "@/components/reports/fee-operation-panel";
 import { PaymentReconciliationPanel } from "@/components/reports/payment-reconciliation-panel";
+import { BillingScheduleReport } from "@/components/reports/billing-schedule-report";
 import { ReportPageSkeleton } from "@/components/reports/report-skeleton";
 import {
   DataSectionEmpty,
@@ -83,7 +84,7 @@ const OPERATION_OPTIONS = [
   { value: "sync", label: "Đồng bộ" },
 ];
 
-type ReportView = "receipts" | "operations" | "reconciliation";
+type ReportView = "receipts" | "operations" | "reconciliation" | "billing";
 
 const DETAIL_STALE_MS = 2 * 60 * 1000;
 
@@ -95,7 +96,7 @@ export default function ReportPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const requestedView = searchParams.get("view");
-  const routeView: ReportView = requestedView === "operations" || requestedView === "reconciliation" ? requestedView : "receipts";
+  const routeView: ReportView = requestedView === "operations" || requestedView === "reconciliation" || requestedView === "billing" ? requestedView : "receipts";
   const [view, setLocalView] = useState<ReportView>(routeView);
   const [isNavigationPending, startNavigationTransition] = useTransition();
   const debouncedSearch = useDebouncedValue(search, 250);
@@ -162,7 +163,7 @@ export default function ReportPage() {
   const periodsQuery = useQuery({
     queryKey: ["fee-periods"],
     queryFn: getFeePeriods,
-    enabled: Boolean(user) && view !== "reconciliation",
+    enabled: Boolean(user) && (view === "receipts" || view === "operations"),
     staleTime: 5 * 60 * 1000,
   });
 
@@ -301,7 +302,7 @@ export default function ReportPage() {
   }, [period, range]);
 
   async function handleExport() {
-    if (isExporting || view === "reconciliation") return;
+    if (isExporting || view === "reconciliation" || view === "billing") return;
     setIsExporting(true);
     try {
       const count = view === "receipts"
@@ -331,7 +332,7 @@ export default function ReportPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
-      {view !== "reconciliation" ? (
+      {view === "receipts" || view === "operations" ? (
         <HeaderControlsPortal>
           <div className="flex min-w-0 items-center gap-3">
             <HeaderFilterControls
@@ -356,15 +357,16 @@ export default function ReportPage() {
       <div
         role="tablist"
         aria-label="Nội dung báo cáo học phí"
-        className="grid shrink-0 grid-cols-3 gap-1 rounded-xl border border-gray-200 bg-white p-1.5"
+        className="grid shrink-0 grid-cols-2 gap-1 rounded-xl border border-gray-200 bg-white p-1.5 md:grid-cols-4"
       >
         <ReportTab label="Sổ thu" active={view === "receipts"} onClick={() => setView("receipts")} />
         <ReportTab label="Nhật ký học phí" active={view === "operations"} onClick={() => setView("operations")} />
+        <ReportTab label="Khoản thu & mốc thu" active={view === "billing"} onClick={() => setView("billing")} />
         <ReportTab label="Giao dịch cần kiểm tra" active={view === "reconciliation"} onClick={() => setView("reconciliation")} />
       </div>
 
       <section className="flex h-full min-h-[calc(100dvh-9.5rem)] flex-col overflow-hidden rounded-xl border border-gray-200 bg-white md:min-h-0">
-        {isPeriodOptionsInitialLoading ? (
+        {view === "billing" ? <BillingScheduleReport /> : isPeriodOptionsInitialLoading ? (
           <ReportPageSkeleton />
         ) : view === "receipts" ? (
           isInitialLoading ? <ReportPageSkeleton /> : isInitialError ? (

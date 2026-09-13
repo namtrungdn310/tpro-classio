@@ -44,6 +44,9 @@ test("student response validation matches the backend privacy and enrollment con
           effective_fee: enrollment.effective_fee,
           enrollment_date: enrollment.enrollment_date,
           status: enrollment.status,
+          current_period: "2026-07",
+          current_fee_status: "UNPAID",
+          next_period: "2026-08",
         },
       ],
       created_at: "2026-07-01T08:00:00+07:00",
@@ -52,6 +55,9 @@ test("student response validation matches the backend privacy and enrollment con
   ]);
 
   assert.equal(students[0]?.active_enrollments[0]?.effective_fee, 750_000);
+  assert.equal(students[0]?.active_enrollments[0]?.current_period, "2026-07");
+  assert.equal(students[0]?.active_enrollments[0]?.current_fee_status, "UNPAID");
+  assert.equal(students[0]?.active_enrollments[0]?.next_period, "2026-08");
   assert.equal("parent_contact_hidden" in (students[0] ?? {}), false);
 });
 

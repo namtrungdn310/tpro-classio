@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ClassMakeupWorkspace } from "@/components/classes/class-makeup-workspace";
 import { classQueryKeys } from "@/lib/classes/query-keys";
+import { AuthProvider } from "@/lib/hooks/useAuth";
 import type { ClassResponse } from "@/lib/types";
 
 function daysFromNow(days: number): string {
@@ -64,7 +65,7 @@ function Harness() {
   // today + 14 days, so seed the exact date-range query key that follows.
   const from = daysFromNow(0);
   const to = daysFromNow(14);
-  queryClient.setQueryData(classQueryKeys.occurrences(mockClass.id, { from, to }), {
+  queryClient.setQueryData(classQueryKeys.occurrences(mockClass.id, { from, to: daysFromNow(13) }), {
     class_id: mockClass.id,
     occurrences: [
       {
@@ -107,10 +108,10 @@ function Harness() {
     resume_on: to,
     credit_days: 14,
     member_summary: [
-      { enrollment_id: "55555555-5555-4555-8555-555555555555", overlap_days: 14 },
+      { enrollment_id: "55555555-5555-4555-8555-555555555555", overlap_days: 14, student_name: "Học viên thử", old_due_date: daysFromNow(20), new_due_date: daysFromNow(34), target_coverage_start: daysFromNow(20), pending_days: 0 },
     ],
     target_cycle_count: 1,
-    protected_case_count: 0,
+    protected_case_count: 0, fingerprint: "a".repeat(64), adjustment_id: null, occurrence_count: 1, blocked_reasons: [],
   });
   if (!open) {
     return null;
@@ -119,11 +120,14 @@ function Harness() {
   return (
     <StrictMode>
       <QueryClientProvider client={queryClient}>
+        <AuthProvider initialUser={{ id: "90000000-0000-4000-8000-000000000001", workspace_id: "90000000-0000-4000-8000-000000000002",
+          email: "suspension@example.test", role: "admin", username: "test", full_name: "TPRO test", avatar_url: null, is_owner: true }}>
         <ClassMakeupWorkspace
           class_={mockClass}
           isSaving={false}
           onClose={() => setOpen(false)}
         />
+        </AuthProvider>
       </QueryClientProvider>
     </StrictMode>
   );

@@ -44,6 +44,9 @@ export const enrollmentResponseSchema = z.object({
 
 const studentEnrollmentInfoSchema = z.object({
   id: z.string().uuid(),
+  billing_anchor_date: nullableDateSchema.optional(),
+  billing_anchor_version: z.number().int().nonnegative().optional(),
+  admission_version: z.number().int().nonnegative().optional(),
   class_id: z.string().uuid(),
   class_name: z.string().min(1).max(120),
   class_category: z.enum(["GENERAL", "SPECIALIZED", "IELTS", "CUSTOM"]).nullable().default(null),
@@ -54,6 +57,10 @@ const studentEnrollmentInfoSchema = z.object({
   custom_fee: moneySchema.nullable(),
   effective_fee: moneySchema,
   enrollment_date: nullableDateSchema,
+  current_period: z.string().nullable().optional(),
+  current_fee_status: z.enum(["PAID", "UNPAID"]).nullable().optional(),
+  next_period: z.string().nullable().optional(),
+  next_due_date: nullableDateSchema.optional(),
   status: z.enum(["active", "dropped", "completed", "cancelled"]),
   selected_slot_ids: z.array(z.string().uuid()).default([]),
 });
@@ -167,6 +174,8 @@ export const studentMembershipSourceImpactSchema = z.object({
   ends_on: nullableDateSchema,
   mutable_fee_count: z.number().int().nonnegative(),
   protected_fee_count: z.number().int().nonnegative(),
+  collect_final_cycle: z.boolean(),
+  waivable_final_cycle_count: z.number().int().nonnegative(),
 });
 
 export const studentMembershipPreviewWarningSchema = z.object({

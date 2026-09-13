@@ -343,6 +343,7 @@ export default function ClassesPage() {
           setPendingStartDateChange(null);
           setWorkspace(null);
           invalidateClassScopeData();
+          void invalidateDomainQueries(queryClient, { students: true });
         }}
         onClose={() => setPendingStartDateChange(null)}
       />

@@ -49,6 +49,7 @@ export async function resolveBillingReview(
   reviewId: string,
   payload: {
     decision: "CONFIRM" | "WAIVE_CHARGE";
+    expected_context_token?: string;
     fee_record_ids?: string[];
     reason?: string;
   },

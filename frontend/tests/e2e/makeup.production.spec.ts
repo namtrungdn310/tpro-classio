@@ -199,10 +199,10 @@ const installApiMocks = (page: Page) => {
           resume_on: body.resume_on,
           credit_days: 14,
           member_summary: [
-            { enrollment_id: "55555555-5555-4555-8555-555555555555", overlap_days: 14 },
+            { enrollment_id: "55555555-5555-4555-8555-555555555555", overlap_days: 14, student_name: "Học viên thử", old_due_date: daysFromNow(20), new_due_date: daysFromNow(34), target_coverage_start: daysFromNow(20), pending_days: 0 },
           ],
           target_cycle_count: 1,
-          protected_case_count: 0,
+          protected_case_count: 0, fingerprint: "a".repeat(64), adjustment_id: null, occurrence_count: 2, blocked_reasons: [],
         });
         return;
       }
@@ -213,10 +213,10 @@ const installApiMocks = (page: Page) => {
         resume_on: body.resume_on,
         credit_days: 14,
         member_summary: [
-          { enrollment_id: "55555555-5555-4555-8555-555555555555", overlap_days: 14 },
+          { enrollment_id: "55555555-5555-4555-8555-555555555555", overlap_days: 14, student_name: "Học viên thử", old_due_date: daysFromNow(20), new_due_date: daysFromNow(34), target_coverage_start: daysFromNow(20), pending_days: 0 },
         ],
         target_cycle_count: 1,
-        protected_case_count: 0,
+        protected_case_count: 0, fingerprint: "a".repeat(64), adjustment_id: null, occurrence_count: 2, blocked_reasons: [],
       });
       return;
     }
@@ -231,7 +231,7 @@ const openMakeupMode = async (page: Page) => {
   await page.getByText("Lớp 6A1").first().click();
   await page.getByRole("heading", { name: "Sửa lớp học" }).waitFor();
   await page.getByRole("tab", { name: "Hoãn lớp" }).click();
-  await page.getByRole("heading", { name: "Hoãn buổi học — Lớp 6A1" }).waitFor();
+  await page.getByRole("heading", { name: "Hoãn lớp — Lớp 6A1" }).waitFor();
 };
 
 const chooseEndDate = async (page: Page) => {
@@ -252,11 +252,11 @@ test.beforeEach(async ({ page }) => {
 test("T-E2E-PROD-MK-001: date range postpones every eligible occurrence and keeps the template untouched", async ({ page }) => {
   await openMakeupMode(page);
   await chooseEndDate(page);
-  await expect(page.locator('[data-workspace-mode="makeup"] input[type="checkbox"]')).toHaveCount(0);
-  const autoSelectionSummary = page.getByText(/Hệ thống sẽ tự động hoãn/);
+  await page.getByRole("checkbox").check();
+  const autoSelectionSummary = page.getByText(/Hoãn 2 buổi;/);
   await expect(autoSelectionSummary).toBeVisible();
   await expect(autoSelectionSummary).toContainText("2 buổi");
-  await page.getByRole("button", { name: /Hoãn \(2\)/ }).click();
+  await page.getByRole("button", { name: /Xác nhận hoãn lớp/ }).click();
   await expect
     .poll(() => postponePayloads.length, { timeout: 5_000 })
     .toBe(1);
@@ -272,6 +272,7 @@ test("T-E2E-PROD-MK-001: date range postpones every eligible occurrence and keep
   expect(payload.resume_on).toBe(daysFromNow(14));
   expect(payload.reason_code).toBe("TEACHER_UNAVAILABLE");
   expect(payload.request_id).toBeTruthy();
+  expect((postponePayloads[0] as { expected_fingerprint: string }).expected_fingerprint).toBe("a".repeat(64));
   await expect(page.getByText("Đã hoãn buổi học.")).toBeVisible();
 });
 
@@ -279,11 +280,11 @@ test("T-E2E-PROD-MK-002: workspace does not expose legacy make-up scheduling", a
   await openMakeupMode(page);
   await chooseEndDate(page);
   await expect(page.getByRole("button", { name: /Xếp lịch bù|Xếp bù ngay|Xếp sau/ })).toHaveCount(0);
-  await expect(page.getByText(/Ngày thu sẽ dời theo số ngày hoãn thực tế/)).toBeVisible();
+  await expect(page.getByText(/Bảo lưu ngày nghỉ cho học viên và dời lịch thu tương ứng/)).toBeVisible();
 });
 
 test("T-E2E-PROD-MK-003: preview keeps the suspension flow authoritative", async ({ page }) => {
   await openMakeupMode(page);
-  await expect(page.getByText(/Chọn khoảng ngày để xem các buổi học/)).toBeVisible();
+  await expect(page.getByText(/Bảo lưu ngày nghỉ cho học viên và dời lịch thu tương ứng/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Đóng", exact: true }).last()).toBeVisible();
 });

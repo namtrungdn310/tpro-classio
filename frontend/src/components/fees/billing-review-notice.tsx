@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/form-dialog-shell";
 import { PendingActionButton } from "@/components/ui/pending-action-button";
 import type { BillingReview, BillingReviewFee } from "@/lib/types";
+import { billingReviewSource } from "@/lib/billing/review-source";
 
 type Props = {
   reviews: BillingReview[];
@@ -42,6 +43,13 @@ export function BillingReviewNotice({
   const [waiveFee, setWaiveFee] = useState<BillingReviewFee | null>(null);
   const [reason, setReason] = useState("");
   const selected = reviews.find((review) => review.id === selectedId) ?? reviews[0];
+
+  useEffect(() => {
+    if (waiveFee && !selected?.fees.some(f => f.id === waiveFee.id && f.cancellable)) {
+      setWaiveFee(null);
+      setReason("");
+    }
+  }, [selected, waiveFee]);
 
   useEffect(() => {
     if (reviews.length === 0) {
@@ -114,11 +122,7 @@ export function BillingReviewNotice({
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                    {selected.change_kind === "PACKAGE_DURATION_CHANGE"
-                      ? "Thời lượng gói"
-                      : selected.change_kind === "CLASS_START_DATE_CHANGE"
-                      ? "Dời ngày bắt đầu lớp"
-                      : "Ngày bắt đầu học"}
+                    {billingReviewSource(selected.change_kind)}
                   </p>
                   <p className="mt-1 text-base font-semibold tabular-nums text-gray-900">
                     {selected.change_kind === "PACKAGE_DURATION_CHANGE"
@@ -127,7 +131,7 @@ export function BillingReviewNotice({
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Hạn cần xử lý</p>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Hạn thu kỳ tiếp theo</p>
                   <p className="mt-1 text-base font-semibold tabular-nums text-gray-900">
                     {formatDate(selected.next_due_date)}
                   </p>
@@ -136,12 +140,14 @@ export function BillingReviewNotice({
               <p className="mt-3 border-t border-gray-100 pt-3 text-sm leading-5 text-gray-600">
                 Lý do: {selected.reason}
               </p>
+              <p className="mt-2 text-sm text-gray-600">Tạo lúc: {new Date(selected.created_at).toLocaleString("vi-VN")}. Nếu mốc đang sai, hãy đổi mốc trong thông tin học viên; không cần xác nhận lịch sai trước.</p>
             </section>
 
             <section aria-labelledby="review-fees-title" className="space-y-2">
               <h3 id="review-fees-title" className="text-sm font-semibold text-gray-800">
-                Khoản thu được tính lại
+                Khoản thu còn hiệu lực của lịch đang chờ
               </h3>
+              {selected.fees.length === 0 && <p className="text-sm text-gray-600">Không còn khoản thu cần xử lý. Xác nhận bên dưới chỉ xác nhận lịch cho các kỳ tiếp theo, không tạo khoản truy thu.</p>}
               {selected.fees.map((fee) => (
                 <div key={fee.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-200 px-3 py-3">
                   <div className="min-w-0">
@@ -186,7 +192,7 @@ export function BillingReviewNotice({
                   className="mt-2 w-full resize-none rounded-md border border-gray-200 px-3 py-2 text-sm outline-none focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary/20"
                 />
                 <p className="mt-1 text-xs text-gray-500">
-                  Chỉ hủy khoản này; lịch thu của các kỳ tiếp theo vẫn được giữ.
+                  Chỉ hủy khoản này. Các khoản khác và lịch cho các kỳ tiếp theo vẫn chờ bạn xác nhận riêng.
                 </p>
                 <div className="mt-3 flex justify-end gap-2">
                   <Button type="button" variant="outline" onClick={() => setWaiveFee(null)}>
@@ -207,16 +213,17 @@ export function BillingReviewNotice({
             ) : null}
           </FormDialogBody>
           <FormDialogFooter
-            left={<span className="text-xs text-gray-500">Khoản này chưa thể báo hoặc thu trước khi xác nhận.</span>}
+            left={<span className="text-xs text-gray-500">Xác nhận lịch thu và toàn bộ {selected.fees.length} khoản còn hiệu lực hiển thị ở trên. Không phải xác nhận đã nhận tiền.</span>}
             right={
               <PendingActionButton
                 type="button"
                 isPending={isResolving}
                 pendingLabel="Đang xác nhận"
+                disabled={Boolean(waiveFee)}
                 onClick={() => onConfirm(selected)}
               >
                 <RiCheckLine aria-hidden="true" className="mr-1.5 h-4 w-4" />
-                Xác nhận đúng
+                Xác nhận lịch và các khoản giữ lại
               </PendingActionButton>
             }
           />

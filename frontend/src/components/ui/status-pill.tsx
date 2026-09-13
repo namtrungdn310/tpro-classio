@@ -8,8 +8,8 @@ const TONE_CLASS: Record<StatusPillTone, string> = {
   amber: "border-amber-200 bg-amber-50 text-amber-800",
   neutral: "border-gray-200 bg-gray-50 text-gray-700",
   gray: "border-gray-200 bg-gray-50 text-gray-700",
-  success: "border-emerald-200 bg-emerald-50 text-emerald-800",
-  emerald: "border-emerald-200 bg-emerald-50 text-emerald-800",
+  success: "border-transparent bg-emerald-50 text-emerald-700 font-semibold",
+  emerald: "border-transparent bg-emerald-50 text-emerald-700 font-semibold",
 };
 
 type StatusPillProps = {
@@ -29,7 +29,7 @@ export function StatusPill({
   tone = "primary",
 }: StatusPillProps) {
   const classes = cn(
-    "inline-flex h-5 shrink-0 items-center rounded-full border px-1.5 text-[11px] font-medium leading-none",
+    "inline-flex h-5 shrink-0 items-center rounded-md border px-1.5 text-[11px] font-medium leading-none",
     TONE_CLASS[tone],
     onClick &&
       "cursor-pointer transition-colors hover:border-primary/30 hover:bg-primary-soft/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",

@@ -115,7 +115,7 @@ test("future enrollment dates have a compact textual status in every roster layo
     (studentPage.match(/<StudentEnrollmentDate currentClassId=\{currentClassId\} student=\{student\} \/>/g) ?? []).length,
     2,
   );
-  assert.match(studentPage, />\s*Sắp học\s*<\/StatusPill>/);
+  assert.match(studentPage, />\s*Chờ vào lớp\s*<\/StatusPill>/);
   assert.match(studentPage, /title="Ngày bắt đầu trong tương lai"/);
   assert.match(studentPage, /<StatusPill className="text-xs font-semibold" title="Ngày bắt đầu trong tương lai">/);
   assert.match(statusPill, /border-primary\/20 bg-primary-soft/);

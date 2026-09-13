@@ -1,8 +1,25 @@
 "use client";
 
 import { createPortal } from "react-dom";
-import { useCallback, useId, useState, type ComponentPropsWithoutRef, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ComponentPropsWithoutRef,
+  type ReactNode,
+} from "react";
+import {
+  getSlideBackdropStyle,
+  getSlidePanelStyle,
+  getSlidePanelUnmountDelay,
+  useSlidePanelMotion,
+} from "@/lib/ui/slide-panel-motion";
 
+import { Button } from "@/components/ui/button";
 import { ConfirmationDialog } from "@/components/ui/confirmation-dialog";
 import { FormDialogHeader } from "@/components/ui/form-dialog-header";
 import { useModalDialog } from "@/lib/hooks/useModalDialog";
@@ -29,13 +46,53 @@ export const createEntityDialogFrameClassName =
 export const editEntityDialogFrameClassName =
   "sm:h-[min(680px,calc(100dvh-2rem))]";
 
+export const FormDialogCloseContext = createContext<() => void>(() => {});
+export const useFormDialogClose = () => useContext(FormDialogCloseContext);
+
+export function FormDialogCloseButton({
+  children = "Đóng",
+  className = "h-8 rounded-md px-4 text-sm font-medium",
+  variant = "outline",
+  disabled = false,
+  onClick,
+}: {
+  children?: ReactNode;
+  className?: string;
+  variant?: "outline" | "default" | "ghost";
+  disabled?: boolean;
+  onClick?: () => void;
+}) {
+  const requestClose = useFormDialogClose();
+  return (
+    <Button
+      type="button"
+      variant={variant}
+      className={className}
+      disabled={disabled}
+      onClick={() => {
+        if (onClick) onClick();
+        else requestClose();
+      }}
+    >
+      {children}
+    </Button>
+  );
+}
+
 type FormDialogShellProps = {
   title: ReactNode;
   subtitle?: ReactNode;
   width?: FormDialogWidth;
+  placement?: "center" | "right";
   isBusy?: boolean;
   /** True while the form has unsaved changes; closing asks for confirmation. */
   dirty?: boolean;
+  /** Custom title for discard confirmation dialog */
+  confirmTitle?: string;
+  /** Custom description for discard confirmation dialog */
+  confirmDescription?: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
   /** Extra overlay content rendered above the frame, e.g. picker slides. */
   overlayExtra?: ReactNode;
   onClose: () => void;
@@ -58,8 +115,13 @@ export function FormDialogShell({
   title,
   subtitle,
   width = "md",
+  placement = "center",
   isBusy = false,
   dirty = false,
+  confirmTitle,
+  confirmDescription,
+  confirmLabel,
+  cancelLabel,
   overlayExtra,
   onClose,
   headerRight,
@@ -69,38 +131,142 @@ export function FormDialogShell({
 }: FormDialogShellProps) {
   const titleId = useId();
   const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
+  const [revealed, setRevealed] = useState(placement !== "right");
+  const [isClosing, setIsClosing] = useState(false);
+  const isClosingRef = useRef(false);
+  const motionDurationRef = useRef(290);
+  const closeTimerRef = useRef<number | null>(null);
 
-  const requestClose = useCallback(() => {
-    if (dirty && !isBusy) {
-      setConfirmDiscardOpen(true);
-      return;
-    }
-    onClose();
-  }, [dirty, isBusy, onClose]);
+  useEffect(() => {
+    return () => {
+      if (closeTimerRef.current !== null) {
+        window.clearTimeout(closeTimerRef.current);
+      }
+    };
+  }, []);
 
-  const { backdropPointerDownRef, dialogRef, requestClose: requestShellClose } =
+  const performClose = useCallback(
+    (force = false) => {
+      if (isClosingRef.current) return;
+
+      if (!force && dirty && !isBusy) {
+        setConfirmDiscardOpen(true);
+        return;
+      }
+
+      if (placement !== "right") {
+        onClose();
+        return;
+      }
+
+      isClosingRef.current = true;
+      setIsClosing(true);
+      setRevealed(false);
+
+      const prefersReducedMotion =
+        typeof window !== "undefined" &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const delay = getSlidePanelUnmountDelay(
+        motionDurationRef.current,
+        prefersReducedMotion,
+      );
+
+      closeTimerRef.current = window.setTimeout(() => {
+        onClose();
+      }, delay);
+    },
+    [dirty, isBusy, onClose, placement],
+  );
+
+  const requestShellClose = useCallback(() => {
+    performClose(false);
+  }, [performClose]);
+
+  const { backdropPointerDownRef, dialogRef, requestClose: modalRequestClose } =
     useModalDialog({
       isBusy,
-      onClose: requestClose,
+      onClose: requestShellClose,
       suspended: suspended || confirmDiscardOpen,
     });
+  const motion = useSlidePanelMotion(dialogRef, placement === "right");
+
+  useEffect(() => {
+    motionDurationRef.current = motion.durationMs;
+  }, [motion.durationMs]);
+
+  useEffect(() => {
+    if (placement !== "right" || !motion.isReady) return;
+    let innerFrame: number | null = null;
+    const frame = window.requestAnimationFrame(() => {
+      innerFrame = window.requestAnimationFrame(() => {
+        setRevealed(true);
+      });
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      if (innerFrame !== null) {
+        window.cancelAnimationFrame(innerFrame);
+      }
+    };
+  }, [placement, motion.isReady]);
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-stretch justify-center bg-black/30 p-0 sm:items-center sm:p-4"
-      onPointerDown={(event) => {
-        backdropPointerDownRef.current = event.target === event.currentTarget;
-      }}
-      onPointerUp={(event) => {
-        if (backdropPointerDownRef.current && event.target === event.currentTarget) {
-          requestShellClose();
-        }
-        backdropPointerDownRef.current = false;
-      }}
-      onPointerCancel={() => {
-        backdropPointerDownRef.current = false;
-      }}
+      className={cn(
+        "fixed inset-0 z-50 flex",
+        placement === "right"
+          ? "items-stretch justify-end overflow-hidden"
+          : "items-stretch justify-center p-0 sm:items-center sm:p-4 bg-black/30",
+        isClosing && "pointer-events-none",
+      )}
+      {...(placement !== "right"
+        ? {
+            onPointerDown: (event) => {
+              backdropPointerDownRef.current =
+                event.target === event.currentTarget;
+            },
+            onPointerUp: (event) => {
+              if (
+                backdropPointerDownRef.current &&
+                event.target === event.currentTarget
+              ) {
+                modalRequestClose();
+              }
+              backdropPointerDownRef.current = false;
+            },
+            onPointerCancel: () => {
+              backdropPointerDownRef.current = false;
+            },
+          }
+        : {})}
     >
+      {placement === "right" ? (
+        <div
+          aria-hidden="true"
+          style={getSlideBackdropStyle(motion.durationMs)}
+          className={cn(
+            "absolute inset-0 bg-black/30 transition-opacity motion-reduce:transition-none",
+            revealed ? "opacity-100" : "opacity-0 pointer-events-none",
+          )}
+          onPointerDown={(event) => {
+            backdropPointerDownRef.current =
+              event.target === event.currentTarget;
+          }}
+          onPointerUp={(event) => {
+            if (
+              backdropPointerDownRef.current &&
+              event.target === event.currentTarget
+            ) {
+              modalRequestClose();
+            }
+            backdropPointerDownRef.current = false;
+          }}
+          onPointerCancel={() => {
+            backdropPointerDownRef.current = false;
+          }}
+        />
+      ) : null}
+
       <div
         ref={dialogRef}
         role="dialog"
@@ -113,32 +279,46 @@ export function FormDialogShell({
           "flex h-full min-h-0 w-full flex-col overflow-hidden bg-white shadow-xl outline-none sm:h-auto sm:max-h-[calc(100dvh-2rem)] sm:rounded-xl",
           DIALOG_WIDTH_CLASS[width],
           frameProps?.className,
+          placement === "right" &&
+            "relative z-10 sm:h-full sm:max-h-full sm:rounded-none transition-transform motion-reduce:transition-none",
+          placement === "right" &&
+            (revealed ? "translate-x-0" : "translate-x-full"),
         )}
+        style={
+          placement === "right"
+            ? { ...getSlidePanelStyle(motion.durationMs), ...frameProps?.style }
+            : frameProps?.style
+        }
       >
         <FormDialogHeader
           title={title}
           subtitle={subtitle}
           titleId={titleId}
-          onClose={requestShellClose}
+          onClose={modalRequestClose}
           closeDisabled={isBusy}
           right={headerRight}
         />
-        {children}
+        <FormDialogCloseContext.Provider value={requestShellClose}>
+          {children}
+        </FormDialogCloseContext.Provider>
       </div>
       {overlayExtra}
       {confirmDiscardOpen ? (
         <ConfirmationDialog
           open
-          title="Thay đổi chưa được lưu"
-          description="Nếu rời khỏi, các thay đổi trong biểu mẫu sẽ bị mất."
-          confirmLabel="Rời khỏi"
-          cancelLabel="Tiếp tục chỉnh sửa"
+          title={confirmTitle ?? "Thay đổi chưa được lưu"}
+          description={
+            confirmDescription ??
+            "Nếu rời khỏi, các thay đổi trong biểu mẫu sẽ bị mất."
+          }
+          confirmLabel={confirmLabel ?? "Rời khỏi"}
+          cancelLabel={cancelLabel ?? "Tiếp tục chỉnh sửa"}
           tone="danger"
           isPending={isBusy}
           onCancel={() => setConfirmDiscardOpen(false)}
           onConfirm={() => {
             setConfirmDiscardOpen(false);
-            onClose();
+            performClose(true);
           }}
         />
       ) : null}

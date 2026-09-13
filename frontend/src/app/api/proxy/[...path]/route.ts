@@ -195,6 +195,9 @@ function upstreamTimeoutFor(path: string, method: string): number {
   ) {
     return LONG_STUDENT_MUTATION_TIMEOUT_MS;
   }
+  if (/^enrollments\/[0-9a-f-]+\/billing-schedule/i.test(path)) {
+    return LONG_STUDENT_MUTATION_TIMEOUT_MS;
+  }
   return DEFAULT_UPSTREAM_TIMEOUT_MS;
 }
 

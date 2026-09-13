@@ -81,7 +81,7 @@ test("smart money input also collapses selection on keyboard focus", () => {
 
 test("invalid controls keep the destructive focus treatment while editing", () => {
   assert.match(formTextControlSource, /focus:!border-destructive/);
-  assert.match(formTextControlSource, /focus:!ring-destructive\/15/);
+  assert.match(formTextControlSource, /focus:!ring-\[color:color-mix\(in_srgb,var\(--destructive\)_15%,transparent\)\]/);
   assert.match(studentPageSource, /focus-within:!border-destructive/);
   assert.match(studentPageSource, /focus-within:!ring-destructive\/15/);
   assert.match(segmentedControlSource, /focus-visible:!ring-destructive\/30/);
@@ -90,7 +90,8 @@ test("invalid controls keep the destructive focus treatment while editing", () =
 });
 
 test("form controls use a thin focus ring consistently", () => {
-  assert.match(formTextControlSource, /focus:ring-1 focus:ring-primary\/15/);
+  assert.match(formTextControlSource, /focus:ring-1 focus:ring-\[color:color-mix\(in_srgb,var\(--primary\)_15%,transparent\)\]/);
+  assert.match(formTextControlSource, /focus-within:!ring-\[color:color-mix\(in_srgb,var\(--destructive\)_15%,transparent\)\]/);
   assert.match(authFieldSource, /focus:ring-1 focus:ring-gray-200/);
   assert.match(otpInputSource, /focus:ring-1 focus:ring-gray-200/);
   assert.match(studentPageSource, /focus-within:ring-1/);

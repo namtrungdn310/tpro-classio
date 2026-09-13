@@ -9,14 +9,16 @@ import { FormDialogHeader } from "@/components/ui/form-dialog-header";
 import { PendingActionButton } from "@/components/ui/pending-action-button";
 import { UnsavedChangesNotice } from "@/components/ui/unsaved-changes-notice";
 import { StudentLearningHistory } from "@/components/students/student-learning-history";
+import { EnrollmentSuspensionPanel } from "@/components/students/enrollment-suspension-panel";
 import { getStudentEnrollments } from "@/lib/api/students";
 import { formatStudentCode } from "@/lib/students/student-code";
 import { studentQueryKeys } from "@/lib/students/query-keys";
 import { useModalDialog } from "@/lib/hooks/useModalDialog";
 import type { ClassResponse, StudentResponse } from "@/lib/types";
+import { formatDate } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 
-export type StudentWorkspaceMode = "edit" | "history" | "remove" | "archive" | "restore";
+export type StudentWorkspaceMode = "edit" | "history" | "suspension" | "remove" | "archive" | "restore";
 
 type StudentWorkspaceDialogProps = {
   student: StudentResponse | null;
@@ -40,6 +42,7 @@ type StudentWorkspaceDialogProps = {
 const MODE_HEADERS: Record<StudentWorkspaceMode, string> = {
   edit: "Chỉnh sửa học viên",
   history: "Lịch sử học tập",
+  suspension: "Tạm nghỉ học",
   remove: "Rời lớp",
   archive: "Ngừng học",
   restore: "Học lại tại trung tâm",
@@ -63,6 +66,12 @@ export function StudentWorkspaceDialog({
   const [leaving, setLeaving] = useState(false);
   const [animateIn, setAnimateIn] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [suspensionDirty, setSuspensionDirty] = useState(false);
+  const [suspensionBusy, setSuspensionBusy] = useState(false);
+  const [suspensionVisited, setSuspensionVisited] = useState(initialMode === "suspension");
+  const suspensionEnrollmentId = student?.active_enrollments.find(
+    e => e.class_id === selectedClass?.id,
+  )?.id;
   const [nestedOverlayOpen, setNestedOverlayOpen] = useState(false);
   const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -96,21 +105,24 @@ export function StudentWorkspaceDialog({
   }, []);
 
   const requestClose = useCallback(() => {
-    if (dirty && !isSaving && !isDeleting && !isLifecyclePending) {
+    if (suspensionBusy) return;
+    if ((dirty || suspensionDirty) && !isSaving && !isDeleting && !isLifecyclePending) {
       setConfirmDiscardOpen(true);
       return;
     }
     onClose();
-  }, [dirty, isSaving, isDeleting, isLifecyclePending, onClose]);
+  }, [dirty, suspensionDirty, suspensionBusy, isSaving, isDeleting, isLifecyclePending, onClose]);
 
   const { backdropPointerDownRef, dialogRef, requestClose: requestShellClose } =
     useModalDialog({
-      isBusy: isSaving || isDeleting || isLifecyclePending,
+      isBusy: isSaving || isDeleting || isLifecyclePending || suspensionBusy,
       onClose: requestClose,
       suspended: nestedOverlayOpen || confirmDiscardOpen,
     });
 
   function changeMode(next: StudentWorkspaceMode) {
+    if (suspensionBusy) return;
+    if (next === "suspension") setSuspensionVisited(true);
     if (!student) {
       return;
     }
@@ -173,11 +185,15 @@ export function StudentWorkspaceDialog({
     return null;
   }
 
-  const headerSubtitle = `${student.full_name}${student.student_code ? ` · Mã: ${formatStudentCode(student.student_code)}` : ""}${selectedClass ? ` · ${selectedClass.name}` : ""}`;
+  const classSubtitle = selectedClass
+    ? ` · ${selectedClass.name}${selectedClass.start_date ? ` (${formatDate(selectedClass.start_date)})` : ""}`
+    : "";
+  const headerSubtitle = `${student.full_name}${student.student_code ? ` · Mã: ${formatStudentCode(student.student_code)}` : ""}${classSubtitle}`;
 
   const rail = (
     <StudentWorkspaceRail
       canRemove={Boolean(selectedClass)}
+      canSuspend={Boolean(suspensionEnrollmentId)}
       isArchived={student.status === "archived"}
       mode={mode}
       dirty={dirty}
@@ -214,7 +230,7 @@ export function StudentWorkspaceDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="student-workspace-title"
-        aria-busy={isSaving || isDeleting || isLifecyclePending || undefined}
+        aria-busy={isSaving || isDeleting || isLifecyclePending || suspensionBusy || undefined}
         tabIndex={-1}
         inert={nestedOverlayOpen || confirmDiscardOpen ? true : undefined}
         data-workspace-dismiss-surface="true"
@@ -227,10 +243,11 @@ export function StudentWorkspaceDialog({
               subtitle={headerSubtitle}
               titleId="student-workspace-title"
               onClose={requestShellClose}
-              closeDisabled={isSaving || isDeleting || isLifecyclePending}
+              closeDisabled={isSaving || isDeleting || isLifecyclePending || suspensionBusy}
             />
             <MobileStudentRail
               canRemove={Boolean(selectedClass)}
+              canSuspend={Boolean(suspensionEnrollmentId)}
               isArchived={student.status === "archived"}
               mode={mode}
               dirty={dirty}
@@ -282,6 +299,15 @@ export function StudentWorkspaceDialog({
                   error={enrollmentsQuery.error}
                   onRetry={() => void enrollmentsQuery.refetch()}
                 />
+              </div>
+
+              <div
+                data-workspace-mode="suspension"
+                className={cn("absolute inset-0 flex min-h-0 flex-col", displayMode === "suspension" ? "z-10 opacity-100" : "pointer-events-none invisible z-0 opacity-0")}
+                aria-hidden={displayMode !== "suspension"}
+                inert={displayMode !== "suspension" ? true : undefined}
+              >
+                {suspensionVisited && suspensionEnrollmentId ? <EnrollmentSuspensionPanel key={suspensionEnrollmentId} enrollmentId={suspensionEnrollmentId} onBusyChange={setSuspensionBusy} onDirtyChange={setSuspensionDirty} onNestedOverlayChange={setNestedOverlayOpen} /> : null}
               </div>
 
               <div
@@ -358,12 +384,14 @@ export function StudentWorkspaceDialog({
 
 function StudentWorkspaceRail({
   canRemove,
+  canSuspend,
   isArchived,
   mode,
   dirty,
   onSelect,
 }: {
   canRemove: boolean;
+  canSuspend: boolean;
   isArchived: boolean;
   mode: StudentWorkspaceMode;
   dirty: boolean;
@@ -382,6 +410,7 @@ function StudentWorkspaceRail({
       mode: "history",
       label: "Lịch sử học tập",
     },
+    ...(!isArchived && canSuspend ? [{ mode: "suspension", label: "Tạm nghỉ học" } as const] : []),
     ...(canRemove ? [{
       mode: "remove",
       label: "Rời lớp",
@@ -432,12 +461,14 @@ function StudentWorkspaceRail({
 
 function MobileStudentRail({
   canRemove,
+  canSuspend,
   isArchived,
   mode,
   dirty,
   onSelect,
 }: {
   canRemove: boolean;
+  canSuspend: boolean;
   isArchived: boolean;
   mode: StudentWorkspaceMode;
   dirty: boolean;
@@ -456,6 +487,7 @@ function MobileStudentRail({
       mode: "history",
       label: "Lịch sử lớp",
     },
+    ...(!isArchived && canSuspend ? [{ mode: "suspension", label: "Tạm nghỉ học" } as const] : []),
     ...(canRemove ? [{
       mode: "remove",
       label: "Rời lớp",

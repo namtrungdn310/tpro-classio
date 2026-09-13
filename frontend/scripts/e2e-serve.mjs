@@ -32,9 +32,11 @@ await build({
     join(ROOT, "src/app/globals.css"),
     join(ROOT, "tests/e2e/schedule-harness.tsx"),
     join(ROOT, "tests/e2e/form-dialog-harness.tsx"),
+    join(ROOT, "tests/e2e/billing-dates-harness.tsx"),
     join(ROOT, "tests/e2e/class-form-billing-harness.tsx"),
     join(ROOT, "tests/e2e/class-workspace-harness.tsx"),
     join(ROOT, "tests/e2e/makeup-workspace-harness.tsx"),
+    join(ROOT, "tests/e2e/suspensions-harness.tsx"),
   ],
   bundle: true,
   format: "esm",
@@ -63,6 +65,8 @@ const htmlPage = (title, script) => `<!doctype html>
 </html>`;
 
 await writeFile(join(dir, "index.html"), htmlPage("Schedule E2E", "/bundles/schedule-harness.js"));
+await writeFile(join(dir, "billing-dates.html"), htmlPage("Billing Dates E2E", "/bundles/billing-dates-harness.js"));
+await writeFile(join(dir, "suspensions.html"), htmlPage("Suspensions E2E", "/bundles/suspensions-harness.js"));
 
 await writeFile(
   join(dir, "form-dialog.html"),
@@ -86,6 +90,22 @@ await writeFile(
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", `http://${HOST}:${PORT}`);
+  // Opt-in real backend mode. Only an isolated loopback test server is allowed.
+  if (process.env.TPRO_E2E_REAL_API && url.pathname.startsWith("/api/proxy/")) {
+    if (process.env.TPRO_E2E_REAL_API !== "http://127.0.0.1:8019") throw new Error("Unsafe E2E backend");
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const upstream = await fetch(`http://127.0.0.1:3100${url.pathname}${url.search}`, {
+      method: req.method,
+      headers: { "Content-Type": "application/json", Origin: "http://127.0.0.1:3100",
+        Cookie: `tpro_access_token=${process.env.TPRO_E2E_TOKEN}; tpro_device_id=isolated-browser-device-12345`,
+        "X-TPRO-Device-Id": "isolated-browser-device-12345" },
+      body: req.method === "GET" || req.method === "HEAD" ? undefined : Buffer.concat(chunks),
+    });
+    res.writeHead(upstream.status, { "Content-Type": "application/json" });
+    res.end(Buffer.from(await upstream.arrayBuffer()));
+    return;
+  }
 
   // API stubs cho make-up workspace harness (không cần backend thật).
   const apiPath = url.pathname.replace(/^\/api\/proxy/, "");
@@ -197,3 +217,11 @@ process.on("exit", () => {
 server.listen(PORT, HOST, () => {
   console.log(`E2E harness served at http://${HOST}:${PORT}`);
 });
+
+// Optional bounded lifetime for isolated local probes. Only this newly created
+// server and its own mkdtemp directory are closed; no external process is killed.
+if (process.env.E2E_AUTO_CLOSE_MS) {
+  const lifetime = Number(process.env.E2E_AUTO_CLOSE_MS);
+  if (!Number.isFinite(lifetime) || lifetime < 60_000 || lifetime > 600_000) throw new Error("Invalid harness lifetime");
+  setTimeout(() => void cleanup(0), lifetime).unref();
+}

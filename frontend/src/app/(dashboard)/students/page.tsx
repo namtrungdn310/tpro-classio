@@ -38,7 +38,6 @@ import { SmartMoneyInput } from "@/components/ui/smart-money-input";
 import { comparableManualDate, ManualDateInput, isValidIsoDate } from "@/components/ui/manual-date-input";
 import { ConfirmationDialog } from "@/components/ui/confirmation-dialog";
 import { SplitTextField } from "@/components/ui/split-text-field";
-import { FormNotice } from "@/components/ui/form-notice";
 import { StatusPill } from "@/components/ui/status-pill";
 import {
   shouldShowUnsavedChanges,
@@ -51,6 +50,10 @@ import { ClassSelectionView } from "@/components/students/class-selection-view";
 import { StudentReactivationSlide } from "@/components/students/student-reactivation-slide";
 import { StudentStartDateDialog, DECISION_STRATEGIES } from "@/components/students/student-start-date-dialog";
 import { StudentWorkspaceDialog } from "@/components/students/student-workspace-dialog";
+import { BillingScheduleDialog } from "@/components/students/billing-schedule-dialog";
+import { BillingDateField, formatCyclePeriod, type BillingDateSelection } from "@/components/students/billing-date-field";
+import { useIndependentDates } from "@/lib/hooks/use-independent-dates";
+import { buildAcademicUpdates } from "@/lib/students/academic-update-payload";
 import {
   StudentClassDetailSkeleton,
   StudentClassSelectionSkeleton,
@@ -164,6 +167,7 @@ type EnrollmentTargetConfig = {
   selected_slot_ids: string[];
 };
 type ActionPlanPreviewMeta = {
+  contractVersion?: 4;
   previewFingerprint: string;
   previewExpiresAt: string;
   previewDraftKey: string;
@@ -173,6 +177,7 @@ type EnrollmentActionPlan = {
   mode: EnrollmentActionMode;
   targetClassIds: string[];
   targetConfigs: Record<string, EnrollmentTargetConfig>;
+  collectSourceFinalCycle: boolean;
   previewMeta?: ActionPlanPreviewMeta | null;
   enrollmentDateDecisions?: Record<string, string> | null;
   billingChangeReason?: string | null;
@@ -195,6 +200,8 @@ const STUDENT_VIEWS: Array<{
   { value: "unassigned", label: "Học viên chưa xếp lớp", state: "UNASSIGNED", countKey: "unassigned" },
   { value: "stopped", label: "Học viên ngừng học trung tâm", state: "STOPPED", countKey: "stopped" },
 ];
+
+const EMPTY_CLASSES: ClassResponse[] = [];
 
 const STUDENT_FEEDBACK_FIELDS = [
   "full_name",
@@ -379,6 +386,62 @@ const defaultStudentValues: StudentFormValues = {
   enrollment_date: getTodayInputValue(),
 };
 
+function getEnrollmentInitialSlotIds(
+  enrollment: StudentEnrollmentInfo,
+  classes: ClassResponse[],
+): string[] {
+  const enrollmentClass = classes.find((c) => c.id === enrollment.class_id);
+  const classSlotIds =
+    enrollmentClass?.schedule?.slots?.flatMap((slot) => (slot.id ? [slot.id] : [])) ?? [];
+  return enrollment.selected_slot_ids?.length
+    ? enrollment.selected_slot_ids
+    : classSlotIds;
+}
+
+function getStudentInitialEnrollmentFees(
+  student: StudentResponse | null,
+  classes: ClassResponse[],
+): EnrollmentFeeValues {
+  if (!student) return {};
+  return Object.fromEntries(
+    student.active_enrollments.map((enrollment) => [
+      enrollment.id,
+      {
+        custom_fee: enrollment.custom_fee,
+        enrollment_date: enrollment.enrollment_date,
+        selected_slot_ids: enrollment.selected_slot_ids?.length
+          ? enrollment.selected_slot_ids
+          : getEnrollmentInitialSlotIds(enrollment, classes),
+      },
+    ]),
+  );
+}
+
+function getStudentInitialFormValues(
+  student: StudentResponse | null,
+  currentClass: ClassResponse | null,
+): StudentFormValues {
+  if (student) {
+    return {
+      full_name: student.full_name,
+      birth_date: student.birth_date,
+      school: student.school ?? "",
+      student_zalo: student.student_zalo ?? "",
+      student_phone: student.student_phone ?? "",
+      parent_phone: student.parent_phone ?? "",
+      parent_zalo: student.parent_zalo ?? "",
+      notes: student.notes ?? "",
+      hidden_fields: normalizeStudentHiddenFields(student.hidden_fields),
+      custom_fee: null,
+      enrollment_date: getDefaultEnrollmentDate(currentClass),
+    };
+  }
+  return {
+    ...defaultStudentValues,
+    enrollment_date: getDefaultEnrollmentDate(currentClass),
+  };
+}
+
 export default function StudentsPage() {
   return (
     <Suspense fallback={<StudentsRouteSkeleton />}>
@@ -393,6 +456,7 @@ function StudentsContent() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const isAdmin = isManagementUser(user);
+  useIndependentDates(isAdmin);
   const [search, setSearch] = usePersistentState("tpro:students:selected-class-search", "");
   const [classSearch, setClassSearch] = usePersistentState("tpro:students:class-search", "");
   const deferredSearch = useDebouncedValue(search, 200);
@@ -629,7 +693,9 @@ function StudentsContent() {
     }) => {
       const activeEnrollments = workspaceStudent?.active_enrollments ?? [];
       const dateDecisions = enrollmentActionPlan.enrollmentDateDecisions ?? {};
-      const enrollmentUpdates = activeEnrollments.flatMap((enrollment) => {
+      const enrollmentUpdates = enrollmentActionPlan.previewMeta?.contractVersion === 4
+        ? buildAcademicUpdates(activeEnrollments, enrollmentFees, enrollmentActionPlan.billingChangeReason || undefined, classes)
+        : activeEnrollments.flatMap((enrollment) => {
         const billingValues = enrollmentFees[enrollment.id];
         if (!billingValues) {
           return [];
@@ -646,7 +712,8 @@ function StudentsContent() {
             payload.decision_code = dateDecisions[enrollment.id];
           }
         }
-        const previousSlots = [...enrollment.selected_slot_ids].sort();
+        const initialSlots = getEnrollmentInitialSlotIds(enrollment, classes);
+        const previousSlots = [...initialSlots].sort();
         const nextSlots = [...billingValues.selected_slot_ids].sort();
         if (previousSlots.length !== nextSlots.length || previousSlots.some((slotId, index) => slotId !== nextSlots[index])) {
           payload.selected_slot_ids = billingValues.selected_slot_ids;
@@ -668,7 +735,7 @@ function StudentsContent() {
       }));
 
       const hasDateChange = enrollmentUpdates.some((item) => "enrollment_date" in item && Boolean(item.enrollment_date));
-      const contractVersion = (hasTargets || hasDateChange) ? 3 : 1;
+      const contractVersion = enrollmentActionPlan.previewMeta?.contractVersion === 4 ? 4 : (hasTargets || hasDateChange) ? 3 : 1;
 
       // Quản lý request_id ổn định theo payload thực tế cho retry/timeout
       const rawPayload = {
@@ -679,6 +746,10 @@ function StudentsContent() {
         targets,
         mode: enrollmentActionPlan.mode,
         source_enrollment_id: sourceEnrollment?.id ?? null,
+        collect_source_final_cycle:
+          enrollmentActionPlan.mode === "transfer"
+            ? enrollmentActionPlan.collectSourceFinalCycle
+            : true,
         contract_version: contractVersion,
         expected_preview_fingerprint: enrollmentActionPlan.previewMeta?.previewFingerprint ?? null,
       };
@@ -700,6 +771,10 @@ function StudentsContent() {
         targets,
         mode: enrollmentActionPlan.mode,
         source_enrollment_id: sourceEnrollment?.id ?? null,
+        collect_source_final_cycle:
+          enrollmentActionPlan.mode === "transfer"
+            ? enrollmentActionPlan.collectSourceFinalCycle
+            : true,
         billing_change_reason: enrollmentUpdates.some((item) => "enrollment_date" in item)
           ? enrollmentActionPlan.billingChangeReason || "Điều chỉnh ngày bắt đầu theo hồ sơ học viên"
           : null,
@@ -952,7 +1027,7 @@ function StudentsContent() {
   // either direction. This prevents a clear action from flashing the base
   // empty-state message before the unfiltered response arrives.
   const hasSearch = Boolean(search.trim() || deferredSearch.trim());
-  const classes = useMemo(() => classesQuery.data ?? [], [classesQuery.data]);
+  const classes = classesQuery.data ?? EMPTY_CLASSES;
   const selectedClass = classes.find((class_) => class_.id === classId) ?? null;
   const isResolvingSelectedClass = Boolean(classId) && classesQuery.isLoading && !selectedClass;
   const isStudentFormSaving =
@@ -1264,6 +1339,7 @@ function StudentsContent() {
 
       {workspaceStudent && isAdmin ? (
         <StudentWorkspaceDialog
+          key={workspaceStudent.id}
           student={workspaceStudent}
           initialMode={workspaceStudent.status === "archived" ? "restore" : "edit"}
           selectedClass={view === "class" ? selectedClass : null}
@@ -1847,6 +1923,14 @@ function SelectedClassBar({
           <span className="whitespace-nowrap text-sm font-medium text-gray-700">
             {formatCurrencyVnd(class_.base_fee)} <span className="text-gray-500">/ {getClassBillingDurationLabel(class_)}</span>
           </span>
+          {class_.start_date ? (
+            <>
+              <span className="hidden h-4 w-px bg-gray-200 sm:block" aria-hidden="true" />
+              <span className="whitespace-nowrap text-sm font-medium text-gray-700">
+                Bắt đầu: <span className="font-semibold text-gray-900 tabular-nums">{formatDate(class_.start_date)}</span>
+              </span>
+            </>
+          ) : null}
         </div>
 
         <div className="flex shrink-0 items-center gap-1.5">
@@ -1972,14 +2056,14 @@ function formatContactCell(
   }
 
   return (
-    <div className="min-w-0 space-y-0.5 text-[15px] leading-5 text-gray-700">
-      <p className="text-selection-scope break-words" data-text-selection-scope="true">
+    <div className="min-w-0 space-y-0.5 text-[14px] leading-5 text-gray-700">
+      <p className="text-selection-scope truncate" data-text-selection-scope="true" title={contact.zalo}>
         <span className="select-none text-gray-500">Zalo:</span>{" "}
-        <span className="text-selection-value" data-text-selection-value="true">{contact.zalo}</span>
+        <span className="text-selection-value font-medium text-gray-800 tabular-nums" data-text-selection-value="true">{contact.zalo}</span>
       </p>
-      <p className="text-selection-scope break-all" data-text-selection-scope="true">
+      <p className="text-selection-scope whitespace-nowrap" data-text-selection-scope="true">
         <span className="select-none text-gray-500">SĐT:</span>{" "}
-        <span className="text-selection-value" data-text-selection-value="true">{contact.phone}</span>
+        <span className="text-selection-value font-medium text-gray-800 tabular-nums" data-text-selection-value="true">{contact.phone}</span>
       </p>
     </div>
   );
@@ -2268,19 +2352,20 @@ function StudentsTable({
       >
         <div role="rowgroup" className="shrink-0 border-b border-gray-200 bg-gray-100">
           <div role="row" className={`${tableGridClass} table-heading-text text-left text-gray-800`}>
-            <div role="columnheader" className="whitespace-nowrap px-2.5 py-3">Mã HV</div>
-            <div role="columnheader" className="whitespace-nowrap px-2.5 py-3">Họ tên</div>
-            <div role="columnheader" className="whitespace-nowrap px-2.5 py-3">Ngày sinh</div>
-            <div role="columnheader" className="whitespace-nowrap px-2.5 py-3">Trường</div>
-            <div role="columnheader" className="whitespace-nowrap px-2.5 py-3">Ngày bắt đầu</div>
-            <div role="columnheader" className="whitespace-nowrap py-3 pl-4 pr-2.5">Thông tin học viên</div>
-            <div role="columnheader" className="whitespace-nowrap px-2.5 py-3">Thông tin phụ huynh</div>
-            <div role="columnheader" className="whitespace-nowrap px-2.5 py-3">Ghi chú</div>
+            <div role="columnheader" className="whitespace-nowrap px-2 py-3">Mã HV</div>
+            <div role="columnheader" className="whitespace-nowrap px-2 py-3">Họ tên</div>
+            <div role="columnheader" className="whitespace-nowrap px-2 py-3">Ngày sinh</div>
+            <div role="columnheader" className="whitespace-nowrap px-2 py-3">Trường</div>
+            <div role="columnheader" className="whitespace-nowrap px-2 py-3">Ngày ghi danh</div>
+            <div role="columnheader" className="whitespace-nowrap px-2 py-3">Kỳ thu</div>
+            <div role="columnheader" className="whitespace-nowrap px-2 py-3">Thông tin học viên</div>
+            <div role="columnheader" className="whitespace-nowrap px-2 py-3">Thông tin phụ huynh</div>
+            <div role="columnheader" className="whitespace-nowrap pl-4 pr-2 py-3">Ghi chú</div>
           </div>
         </div>
 
         <div role="rowgroup" className="scrollbar-hidden min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain bg-white">
-          <div role="presentation" className="divide-y divide-gray-200 text-[15px] font-medium leading-5">
+          <div role="presentation" className="divide-y divide-gray-200 text-[14px] font-medium leading-5">
             {students.map((student) => (
               <StudentTableRow key={student.id} currentClassId={currentClassId} isAdmin={isAdmin} student={student} onRowClick={onRowClick} tableGridClass={tableGridClass} />
             ))}
@@ -2326,16 +2411,22 @@ function StudentCard({
             </p>
           ) : null}
           <StudentCustomFeeLine classId={currentClassId} student={student} />
-          <p className="mt-1 break-words text-[15px] font-medium text-gray-600">
+          <p className="mt-1 break-words text-[14px] font-medium text-gray-600">
             <SelectableStudentValue {...getStudentCardSummary(student)} />
           </p>
         </div>
       </div>
-      <dl className="mt-4 grid grid-cols-2 gap-x-3 gap-y-3 text-[15px] font-medium">
+      <dl className="mt-4 grid grid-cols-2 gap-x-3 gap-y-3 text-[13.5px] font-medium">
         <div className="min-w-0">
-          <dt className="text-xs font-medium uppercase text-gray-500">Ngày bắt đầu</dt>
+          <dt className="text-xs font-medium uppercase text-gray-500">Ngày ghi danh</dt>
           <dd className="mt-1 text-gray-800">
             <StudentEnrollmentDate currentClassId={currentClassId} student={student} />
+          </dd>
+        </div>
+        <div className="min-w-0">
+          <dt className="text-xs font-medium uppercase text-gray-500">Kỳ thu học phí</dt>
+          <dd className="mt-1 min-w-0 text-gray-800">
+            <StudentBillingCyclesCell currentClassId={currentClassId} student={student} />
           </dd>
         </div>
         <div className="min-w-0">
@@ -2394,27 +2485,30 @@ function StudentTableRow({
       }}
       className={`${tableGridClass} cv-auto items-start ${isAdmin ? "cursor-pointer hover:bg-gray-100/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/30" : ""}`}
     >
-      <div role="cell" className="min-w-0 whitespace-nowrap px-2.5 py-3 font-semibold tabular-nums text-primary">
+      <div role="cell" className="min-w-0 whitespace-nowrap px-2 py-3 text-[14px] font-semibold tabular-nums text-primary">
         <SelectableStudentValue value={formatStudentCode(student.student_code)} />
       </div>
-      <div role="cell" className="min-w-0 break-words px-2.5 py-3 font-medium text-gray-900">
+      <div role="cell" className="min-w-0 break-words px-2 py-3 text-[14px] font-semibold text-gray-900">
         <SelectableStudentValue value={student.full_name} />
         <StudentCustomFeeLine classId={currentClassId} student={student} />
       </div>
-      <div role="cell" className="min-w-0 whitespace-nowrap px-2.5 py-3 text-gray-700">
+      <div role="cell" className="min-w-0 whitespace-nowrap px-2 py-3 text-[14px] tabular-nums text-gray-700">
         {isStudentFieldHidden(student, "birth_date")
           ? <HiddenStudentValue />
           : <SelectableStudentValue value={formatDate(student.birth_date)} />}
       </div>
-      <div role="cell" className="min-w-0 break-words px-2.5 py-3 text-gray-700">
+      <div role="cell" className="min-w-0 break-words px-2 py-3 text-[14px] text-gray-700">
         {isStudentFieldHidden(student, "school") ? <HiddenStudentValue /> : <SelectableStudentValue value={student.school} />}
       </div>
-      <div role="cell" className="min-w-0 whitespace-nowrap px-2.5 py-3 text-gray-700">
+      <div role="cell" className="min-w-0 whitespace-nowrap px-2 py-3 text-[14px] tabular-nums text-gray-700">
         <StudentEnrollmentDate currentClassId={currentClassId} student={student} />
       </div>
-      <div role="cell" className="min-w-0 py-3 pl-4 pr-2.5">{formatContactCell(student, "student_contact", student.student_zalo, student.student_phone)}</div>
-      <div role="cell" className="min-w-0 px-2.5 py-3">{formatContactCell(student, "parent_contact", student.parent_zalo, student.parent_phone)}</div>
-      <div role="cell" className="min-w-0 break-words px-2.5 py-3 text-gray-700">
+      <div role="cell" className="min-w-0 px-2 py-3 text-[14px] text-gray-800">
+        <StudentBillingCyclesCell currentClassId={currentClassId} student={student} />
+      </div>
+      <div role="cell" className="min-w-0 px-2 py-3 text-[14px]">{formatContactCell(student, "student_contact", student.student_zalo, student.student_phone)}</div>
+      <div role="cell" className="min-w-0 px-2 py-3 text-[14px]">{formatContactCell(student, "parent_contact", student.parent_zalo, student.parent_phone)}</div>
+      <div role="cell" className="min-w-0 break-words pl-4 pr-2 py-3 text-[14px] text-gray-700">
         {isStudentFieldHidden(student, "notes") ? <HiddenStudentValue /> : <SelectableStudentValue value={student.notes} />}
       </div>
     </div>
@@ -2432,13 +2526,53 @@ function StudentEnrollmentDate({
   const isUpcoming = Boolean(enrollmentDate && enrollmentDate > getTodayInputValue());
 
   return (
-    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+    <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-[14px]">
       <SelectableStudentValue value={formatDate(enrollmentDate)} />
       {isUpcoming ? (
         <StatusPill className="text-xs font-semibold" title="Ngày bắt đầu trong tương lai">
-          Sắp học
+          Chờ vào lớp
         </StatusPill>
       ) : null}
+    </div>
+  );
+}
+
+function StudentBillingCyclesCell({
+  currentClassId,
+  student,
+}: {
+  currentClassId: string;
+  student: StudentResponse;
+}) {
+  const enrollment = getEnrollmentForClass(student, currentClassId);
+  if (!enrollment) return <span className="select-none text-gray-400">—</span>;
+
+  const anchorDate = enrollment.billing_anchor_date || enrollment.enrollment_date;
+  const currentPeriod = formatCyclePeriod(enrollment.current_period, anchorDate);
+  const nextPeriod = formatCyclePeriod(enrollment.next_period, anchorDate);
+  const isPaid = enrollment.current_fee_status === "PAID";
+
+  return (
+    <div className="min-w-0 space-y-0.5 text-[14px] leading-5 text-gray-700">
+      <p className="text-selection-scope whitespace-nowrap" data-text-selection-scope="true">
+        <span className="select-none text-gray-500">Hiện tại:</span>{" "}
+        <span
+          className={cn(
+            "text-selection-value font-medium tabular-nums",
+            isPaid ? "font-semibold text-emerald-700" : "text-gray-800"
+          )}
+          data-text-selection-value="true"
+          title={isPaid ? "Đã thu học phí kỳ này" : undefined}
+        >
+          {currentPeriod || "—"}
+        </span>
+      </p>
+      <p className="text-selection-scope whitespace-nowrap" data-text-selection-scope="true">
+        <span className="select-none text-gray-500">Kế tiếp:</span>{" "}
+        <span className="text-selection-value font-medium text-gray-800 tabular-nums" data-text-selection-value="true">
+          {nextPeriod || "—"}
+        </span>
+      </p>
     </div>
   );
 }
@@ -2473,7 +2607,28 @@ function StudentFormDialog({
 }) {
   const notify = useToast();
   const [mounted, setMounted] = useState(false);
-  const [enrollmentFees, setEnrollmentFees] = useState<EnrollmentFeeValues>({});
+  const [enrollmentFees, setEnrollmentFees] = useState<EnrollmentFeeValues>(() =>
+    getStudentInitialEnrollmentFees(student, classes),
+  );
+  const capabilities = useIndependentDates();
+  const hasEnrollmentAnchor = student?.active_enrollments.some(
+    (e) => e.billing_anchor_date !== undefined || e.billing_anchor_version !== undefined,
+  );
+  const independentDates =
+    capabilities.data?.independent_billing_dates ??
+    (hasEnrollmentAnchor || true);
+  const [billingEnrollment, setBillingEnrollment] = useState<StudentEnrollmentInfo | null>(null);
+  const [billingSelection, setBillingSelection] = useState<BillingDateSelection | undefined>();
+  const [pendingBillingDates, setPendingBillingDates] = useState<Set<string>>(new Set());
+  const onBillingPendingChange = useCallback((id: string, pending: boolean) => {
+    setPendingBillingDates((current) => {
+      if (current.has(id) === pending) return current;
+      const next = new Set(current);
+      if (pending) next.add(id); else next.delete(id);
+      return next;
+    });
+  }, []);
+  const billingQueryClient = useQueryClient();
   const [blurredEnrollmentDateIds, setBlurredEnrollmentDateIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -2483,6 +2638,8 @@ function StudentFormDialog({
   const [transferTargetClassIds, setTransferTargetClassIds] = useState<string[]>([]);
   const [draftEnrollmentActionMode, setDraftEnrollmentActionMode] =
     useState<EnrollmentActionMode>("supplement");
+  const [collectSourceFinalCycle, setCollectSourceFinalCycle] = useState(true);
+  const [draftCollectSourceFinalCycle, setDraftCollectSourceFinalCycle] = useState(true);
   const [draftTransferTargetClassIds, setDraftTransferTargetClassIds] = useState<string[]>([]);
   const [targetEnrollmentConfigs, setTargetEnrollmentConfigs] = useState<Record<string, EnrollmentTargetConfig>>({});
   const [draftTargetEnrollmentConfigs, setDraftTargetEnrollmentConfigs] = useState<Record<string, EnrollmentTargetConfig>>({});
@@ -2549,7 +2706,7 @@ function StudentFormDialog({
     resolver: zodResolver(student ? studentSchema : currentClass ? studentCreateSchema : studentProfileCreateSchema),
     mode: "onChange",
     shouldFocusError: true,
-    defaultValues: defaultStudentValues,
+    defaultValues: getStudentInitialFormValues(student, currentClass),
   });
   const {
     markBlur,
@@ -2560,21 +2717,7 @@ function StudentFormDialog({
   } = useFormFieldFeedback(STUDENT_FEEDBACK_FIELDS);
 
   useEffect(() => {
-    const nextValues: StudentFormValues = student
-      ? {
-          full_name: student.full_name,
-          birth_date: student.birth_date,
-          school: student.school ?? "",
-          student_zalo: student.student_zalo ?? "",
-          student_phone: student.student_phone ?? "",
-          parent_phone: student.parent_phone ?? "",
-          parent_zalo: student.parent_zalo ?? "",
-          notes: student.notes ?? "",
-          hidden_fields: normalizeStudentHiddenFields(student.hidden_fields),
-          custom_fee: null,
-          enrollment_date: getDefaultEnrollmentDate(currentClass),
-        }
-      : { ...defaultStudentValues, enrollment_date: getDefaultEnrollmentDate(currentClass) };
+    const nextValues: StudentFormValues = getStudentInitialFormValues(student, currentClass);
 
     if (!student) {
       initialCreateFormKeyRef.current = normalizedStudentCreateFormKey(nextValues);
@@ -2593,41 +2736,29 @@ function StudentFormDialog({
       setEnrollmentActionMode("supplement");
       setTransferTargetClassIds([]);
       setDraftEnrollmentActionMode("supplement");
+      setCollectSourceFinalCycle(true);
+      setDraftCollectSourceFinalCycle(true);
       setDraftTransferTargetClassIds([]);
       setTargetEnrollmentConfigs({});
       setDraftTargetEnrollmentConfigs({});
       setTransferError("");
       setIsEnrollmentTransferOpen(false);
+      setPendingBillingDates(new Set());
       return;
     }
 
-    setEnrollmentFees(
-      Object.fromEntries(
-        student.active_enrollments.map((enrollment) => {
-          const enrollmentClass = classes.find((c) => c.id === enrollment.class_id);
-          const classSlotIds =
-            enrollmentClass?.schedule?.slots?.flatMap((slot) => (slot.id ? [slot.id] : [])) ?? [];
-          return [
-            enrollment.id,
-            {
-              custom_fee: enrollment.custom_fee,
-              enrollment_date: enrollment.enrollment_date,
-              selected_slot_ids: enrollment.selected_slot_ids?.length
-                ? enrollment.selected_slot_ids
-                : classSlotIds,
-            },
-          ];
-        }),
-      ),
-    );
+    setEnrollmentFees(getStudentInitialEnrollmentFees(student, classes));
     setEnrollmentActionMode("supplement");
     setTransferTargetClassIds([]);
     setDraftEnrollmentActionMode("supplement");
+    setCollectSourceFinalCycle(true);
+    setDraftCollectSourceFinalCycle(true);
     setDraftTransferTargetClassIds([]);
     setTargetEnrollmentConfigs({});
     setDraftTargetEnrollmentConfigs({});
     setTransferError("");
     setIsEnrollmentTransferOpen(false);
+    setPendingBillingDates(new Set());
     lastCheckedDateMapRef.current = {};
     setDateReviewImpacts({});
     setChosenDateDecisions({});
@@ -2660,7 +2791,9 @@ function StudentFormDialog({
     ? activeEnrollments.some((enrollment) => {
         const enrollmentClass = classes.find((class_) => class_.id === enrollment.class_id);
         const slotCount = enrollmentClass?.schedule?.slots?.filter((slot) => slot.id).length ?? 0;
-        const selected = enrollmentFees[enrollment.id]?.selected_slot_ids ?? enrollment.selected_slot_ids;
+        const selected =
+          enrollmentFees[enrollment.id]?.selected_slot_ids ??
+          getEnrollmentInitialSlotIds(enrollment, classes);
         return slotCount > 0 && selected.length === 0;
       })
     : Boolean(
@@ -2673,12 +2806,13 @@ function StudentFormDialog({
     : "";
   const hasEnrollmentFeeChanges = activeEnrollments.some((enrollment) => {
     const draft = enrollmentFees[enrollment.id];
+    if (!draft) return false;
+    const initialSlotIds = getEnrollmentInitialSlotIds(enrollment, classes);
     return Boolean(
-      draft &&
-      ((draft.custom_fee ?? null) !== (enrollment.custom_fee ?? null) ||
+      (draft.custom_fee ?? null) !== (enrollment.custom_fee ?? null) ||
         comparableManualDate(draft.enrollment_date, enrollment.enrollment_date) !==
           (enrollment.enrollment_date ?? null) ||
-        [...draft.selected_slot_ids].sort().join("|") !== [...enrollment.selected_slot_ids].sort().join("|")),
+        [...draft.selected_slot_ids].sort().join("|") !== [...initialSlotIds].sort().join("|"),
     );
   });
   const invalidEnrollmentDateDraftIds = new Set(
@@ -2696,6 +2830,7 @@ function StudentFormDialog({
   );
 
   const checkDateImpact = useCallback(async (enrollmentId: string, inputDate: string | null) => {
+    if (independentDates) return;
     if (!student) return;
     const orig = activeEnrollments.find((e) => e.id === enrollmentId);
     if (!orig) return;
@@ -2775,7 +2910,7 @@ function StudentFormDialog({
         [enrollmentId]: { isLoading: false, hasProtectedFees: false },
       }));
     }
-  }, [student, activeEnrollments, enrollmentActionMode, enrollmentFees]);
+  }, [student, activeEnrollments, enrollmentActionMode, enrollmentFees, independentDates]);
 
   const openDateReviewForEnrollment = useCallback(async (enrollmentId: string, fromRow = true) => {
     if (!student) return;
@@ -2862,7 +2997,7 @@ function StudentFormDialog({
           custom_fee: null,
           enrollment_date: getTodayInputValue(),
         }) ||
-        hasEnrollmentFeeChanges ||
+        hasEnrollmentFeeChanges || pendingBillingDates.size > 0 ||
         transferTargetClassIds.length > 0
     : normalizedStudentCreateFormKey(comparableWatchedStudentValues) !== initialCreateFormKeyRef.current ||
       (currentClass !== null &&
@@ -3041,6 +3176,7 @@ function StudentFormDialog({
 
   function openEnrollmentTransfer() {
     setDraftEnrollmentActionMode(enrollmentActionMode);
+    setDraftCollectSourceFinalCycle(collectSourceFinalCycle);
     setDraftTransferTargetClassIds([...transferTargetClassIds]);
     setDraftTargetEnrollmentConfigs(structuredClone(targetEnrollmentConfigs));
     setTransferError("");
@@ -3057,13 +3193,31 @@ function StudentFormDialog({
   }, [hasUnsavedChanges, onDirtyChange]);
 
   useEffect(() => {
-    onNestedOverlayChange?.(isEnrollmentTransferOpen || Boolean(pendingDateReview));
-  }, [isEnrollmentTransferOpen, onNestedOverlayChange, pendingDateReview]);
+    onNestedOverlayChange?.(isEnrollmentTransferOpen || Boolean(pendingDateReview) || Boolean(billingEnrollment));
+  }, [isEnrollmentTransferOpen, onNestedOverlayChange, pendingDateReview, billingEnrollment]);
 
   if (!mounted) return null;
 
   const overlayExtra = (
     <>
+      {billingEnrollment && (
+        <BillingScheduleDialog
+          enrollmentId={billingEnrollment.id}
+          className={billingEnrollment.class_name}
+          studentName={student?.full_name || watch("full_name") || undefined}
+          selection={billingSelection}
+          onClose={() => setBillingEnrollment(null)}
+          onApplied={() => {
+          setBillingEnrollment(null);
+          setActionPlanPreviewMeta(null);
+          void billingQueryClient.invalidateQueries({ queryKey: ["billing-schedule", billingEnrollment.id] });
+          void billingQueryClient.invalidateQueries({ queryKey: ["fees"], refetchType: "none" });
+          void billingQueryClient.invalidateQueries({ queryKey: ["dashboard"], refetchType: "none" });
+          void billingQueryClient.invalidateQueries({ queryKey: ["reports"], refetchType: "none" });
+          void billingQueryClient.invalidateQueries({ queryKey: studentQueryKeys.lists() });
+          notify.success("Đã cập nhật lịch thu học phí.");
+        }} />
+      )}
       {student && pendingDateReview ? (
         <StudentStartDateDialog
           student={student}
@@ -3097,6 +3251,7 @@ function StudentFormDialog({
                 mode: enrollmentActionMode,
                 targetClassIds: transferTargetClassIds,
                 targetConfigs: targetEnrollmentConfigs,
+                collectSourceFinalCycle,
                 previewMeta: {
                   previewFingerprint: currentPending.preview.preview_fingerprint,
                   previewExpiresAt: currentPending.preview.expires_at,
@@ -3120,11 +3275,11 @@ function StudentFormDialog({
       {student ? (
         <EnrollmentTransferSlide
           availableClasses={availableTransferClasses}
-          currentClassId={currentClassId}
           isInitialAssignment={isUnassignedStudent}
           transferError={transferError}
           isOpen={isEnrollmentTransferOpen}
           mode={draftEnrollmentActionMode}
+          collectSourceFinalCycle={draftCollectSourceFinalCycle}
           selectedClasses={draftSelectedTransferClasses}
           targetConfigs={draftTargetEnrollmentConfigs}
           studentId={student.id}
@@ -3146,18 +3301,13 @@ function StudentFormDialog({
               selected_slot_ids: slotIds,
             };
 
-            if (draftEnrollmentActionMode === "transfer") {
-              setDraftTransferTargetClassIds([classId]);
-              setDraftTargetEnrollmentConfigs({ [classId]: newConfig });
-            } else {
-              setDraftTransferTargetClassIds((current) =>
-                current.includes(classId) ? current : [...current, classId],
-              );
-              setDraftTargetEnrollmentConfigs((current) => ({
-                ...current,
-                [classId]: current[classId] ?? newConfig,
-              }));
-            }
+            setDraftTransferTargetClassIds((current) =>
+              current.includes(classId) ? current : [...current, classId],
+            );
+            setDraftTargetEnrollmentConfigs((current) => ({
+              ...current,
+              [classId]: current[classId] ?? newConfig,
+            }));
           }}
           onClose={closeEnrollmentTransfer}
           onConfirm={(meta) => {
@@ -3182,6 +3332,7 @@ function StudentFormDialog({
               return;
             }
             setEnrollmentActionMode(draftEnrollmentActionMode);
+            setCollectSourceFinalCycle(draftCollectSourceFinalCycle);
             setTransferTargetClassIds([...draftTransferTargetClassIds]);
             setTargetEnrollmentConfigs(structuredClone(draftTargetEnrollmentConfigs));
             setActionPlanPreviewMeta(meta ?? null);
@@ -3191,18 +3342,8 @@ function StudentFormDialog({
           onModeChange={(mode) => {
             setTransferError("");
             setDraftEnrollmentActionMode(mode);
-            if (mode === "transfer" && draftTransferTargetClassIds.length > 1) {
-              const firstClassId = draftTransferTargetClassIds[0];
-              setDraftTransferTargetClassIds([firstClassId]);
-              setDraftTargetEnrollmentConfigs((current) => {
-                const next: Record<string, EnrollmentTargetConfig> = {};
-                if (current[firstClassId]) {
-                  next[firstClassId] = current[firstClassId];
-                }
-                return next;
-              });
-            }
           }}
+          onCollectSourceFinalCycleChange={setDraftCollectSourceFinalCycle}
           onRemoveClass={(classId) =>
             setDraftTransferTargetClassIds((current) => current.filter((id) => id !== classId))
           }
@@ -3269,6 +3410,10 @@ function StudentFormDialog({
           return;
         }
         void handleSubmit(async (values) => {
+          if (pendingBillingDates.size > 0) {
+            notify.error("Vui lòng chọn Xử lý thay đổi mốc thu học phí để xác nhận, hoặc nhập lại ngày cũ trước khi lưu hồ sơ.");
+            return;
+          }
           let previewMeta = actionPlanPreviewMeta;
 
           if (student && transferTargetClassIds.length > 0) {
@@ -3276,6 +3421,7 @@ function StudentFormDialog({
               enrollmentActionMode,
               primaryEnrollment?.id ?? null,
               transferTargetClassIds.map((cid) => targetEnrollmentConfigs[cid]).filter(Boolean),
+              collectSourceFinalCycle,
             );
             const isExpired = previewMeta?.previewExpiresAt
               ? new Date() >= new Date(previewMeta.previewExpiresAt)
@@ -3289,6 +3435,8 @@ function StudentFormDialog({
                   mode: enrollmentActionMode,
                   source_enrollment_id:
                     enrollmentActionMode === "transfer" && primaryEnrollment ? primaryEnrollment.id : null,
+                  collect_source_final_cycle:
+                    enrollmentActionMode === "transfer" ? collectSourceFinalCycle : true,
                   targets: transferTargetClassIds.map((cid) => ({
                     class_id: cid,
                     enrollment_date: targetEnrollmentConfigs[cid]?.enrollment_date ?? null,
@@ -3316,6 +3464,7 @@ function StudentFormDialog({
             mode: enrollmentActionMode,
             targetClassIds: transferTargetClassIds,
             targetConfigs: targetEnrollmentConfigs,
+            collectSourceFinalCycle,
             previewMeta,
           };
 
@@ -3336,7 +3485,37 @@ function StudentFormDialog({
           });
 
           // If there are date changes and no decision has been made yet, call preview and show review dialog
-          if (student && enrollmentDateChanges.length > 0 && !pendingDateReview) {
+          if (student && independentDates && enrollmentDateChanges.length > 0) {
+            setIsDateReviewLoading(true);
+            try {
+              const datePreview = await previewStudentMembership(student.id, {
+                contract_version: 4, expected_updated_at: student.updated_at,
+                mode: enrollmentActionPlan.mode,
+                source_enrollment_id: enrollmentActionPlan.mode === "transfer"
+                  ? activeEnrollments.find((enrollment) => enrollment.class_id === currentClassId)?.id ?? null : null,
+                collect_source_final_cycle: enrollmentActionPlan.mode === "transfer" ? collectSourceFinalCycle : true,
+                targets: enrollmentActionPlan.targetClassIds.map((cid) => ({ class_id: cid,
+                  enrollment_date: targetEnrollmentConfigs[cid]?.enrollment_date ?? null,
+                  custom_fee: targetEnrollmentConfigs[cid]?.custom_fee ?? null,
+                  selected_slot_ids: targetEnrollmentConfigs[cid]?.selected_slot_ids ?? null })),
+                enrollment_updates: buildAcademicUpdates(activeEnrollments, enrollmentFees, undefined, classes),
+              });
+              if (!datePreview.can_apply) { notify.error("Vui lòng kiểm tra lại ngày ghi danh."); return; }
+              if (enrollmentActionPlan.targetClassIds.length > 0 && JSON.stringify({ targets: datePreview.targets, source: datePreview.source }) !==
+                JSON.stringify({ targets: enrollmentActionPlan.previewMeta?.previewResponse.targets, source: enrollmentActionPlan.previewMeta?.previewResponse.source })) {
+                setActionPlanPreviewMeta(null);
+                notify.error("Tác động học phí đã thay đổi. Vui lòng mở Thiết lập để xem lại trước khi lưu.");
+                return;
+              }
+              enrollmentActionPlan.previewMeta = {
+                contractVersion: 4, previewFingerprint: datePreview.preview_fingerprint,
+                previewExpiresAt: datePreview.expires_at, previewDraftKey: "academic-date-review", previewResponse: datePreview,
+              };
+            } catch (err) {
+              notify.error(getApiErrorMessage(err, "Không thể kiểm tra ngày ghi danh.")); return;
+            } finally { setIsDateReviewLoading(false); }
+          }
+          if (student && !independentDates && enrollmentDateChanges.length > 0 && !pendingDateReview) {
             // Check if any enrollment has protected fees and user has NOT chosen yet
             const unchosenProtected = enrollmentDateChanges.find((enr) => {
               const impact = dateReviewImpacts[enr.id];
@@ -3415,7 +3594,7 @@ function StudentFormDialog({
           }
 
           // Attach decisions
-          if (enrollmentDateChanges.length > 0) {
+          if (!independentDates && enrollmentDateChanges.length > 0) {
             const decisionsMap: Record<string, string> = {};
             for (const enr of enrollmentDateChanges) {
               decisionsMap[enr.id] = chosenDateDecisions[enr.id]?.decisionCode || "REANCHOR_CURRENT_CYCLE";
@@ -3638,6 +3817,9 @@ function StudentFormDialog({
 
             {student ? (
               <EnrollmentFeeSection
+                independentDates={independentDates}
+                onBillingScheduleOpen={(enrollment, selection) => { setBillingSelection(selection); setBillingEnrollment(enrollment); }}
+                onBillingPendingChange={onBillingPendingChange}
                 classes={classes}
                 currentClassId={currentClassId}
                 enrollments={activeEnrollments}
@@ -3754,10 +3936,10 @@ function StudentFormDialog({
       isBusy={isSaving || isDateReviewLoading}
       dirty={hasUnsavedChanges}
       onClose={smartRequestClose}
-      suspended={isEnrollmentTransferOpen || Boolean(pendingDateReview)}
+      suspended={isEnrollmentTransferOpen || Boolean(pendingDateReview) || Boolean(billingEnrollment)}
       frameProps={{
         className: student ? undefined : createEntityDialogFrameClassName,
-        inert: isEnrollmentTransferOpen || Boolean(pendingDateReview),
+        inert: isEnrollmentTransferOpen || Boolean(pendingDateReview) || Boolean(billingEnrollment),
       }}
       overlayExtra={overlayExtra}
     >
@@ -3944,11 +4126,11 @@ function SessionSelector({
 
 function EnrollmentTransferSlide({
   availableClasses,
-  currentClassId,
   isInitialAssignment,
   transferError,
   isOpen,
   mode,
+  collectSourceFinalCycle,
   selectedClasses,
   targetConfigs,
   studentId,
@@ -3958,15 +4140,16 @@ function EnrollmentTransferSlide({
   onClose,
   onConfirm,
   onModeChange,
+  onCollectSourceFinalCycleChange,
   onRemoveClass,
   onUpdateTarget,
 }: {
   availableClasses: ClassResponse[];
-  currentClassId: string | null;
   isInitialAssignment: boolean;
   transferError: string;
   isOpen: boolean;
   mode: EnrollmentActionMode;
+  collectSourceFinalCycle: boolean;
   selectedClasses: ClassResponse[];
   targetConfigs: Record<string, EnrollmentTargetConfig>;
   studentId?: string;
@@ -3976,6 +4159,7 @@ function EnrollmentTransferSlide({
   onClose: () => void;
   onConfirm: (previewMeta?: ActionPlanPreviewMeta) => void;
   onModeChange: (mode: EnrollmentActionMode) => void;
+  onCollectSourceFinalCycleChange: (collect: boolean) => void;
   onRemoveClass: (classId: string) => void;
   onUpdateTarget: (config: EnrollmentTargetConfig) => void;
 }) {
@@ -4017,8 +4201,9 @@ function EnrollmentTransferSlide({
       mode,
       sourceEnrollmentId ?? null,
       selectedClasses.map((c) => targetConfigs[c.id]).filter(Boolean),
+      collectSourceFinalCycle,
     );
-  }, [mode, selectedClasses, sourceEnrollmentId, targetConfigs]);
+  }, [collectSourceFinalCycle, mode, selectedClasses, sourceEnrollmentId, targetConfigs]);
 
   const businessToday = useMemo(() => getBusinessTodayInVietnam(), []);
 
@@ -4172,6 +4357,7 @@ function EnrollmentTransferSlide({
             expected_updated_at: expectedUpdatedAt ?? "",
             mode,
             source_enrollment_id: mode === "transfer" ? (sourceEnrollmentId ?? null) : null,
+            collect_source_final_cycle: mode === "transfer" ? collectSourceFinalCycle : true,
             targets: configs.map((cfg) => ({
               class_id: cfg.class_id,
               enrollment_date: cfg.enrollment_date,
@@ -4209,6 +4395,7 @@ function EnrollmentTransferSlide({
     };
   }, [
     currentDraftKey,
+    collectSourceFinalCycle,
     expectedUpdatedAt,
     isOpen,
     mode,
@@ -4244,6 +4431,8 @@ function EnrollmentTransferSlide({
     isDraftKeyMatching &&
     isPreviewFingerprintValid &&
     !isPreviewExpired;
+  const generalPreviewWarnings =
+    previewResponse?.warnings.filter((warning) => warning.code !== "PROTECTED_FEE_OVERLAP") ?? [];
 
   function attemptClose() {
     if (!isOpen) return;
@@ -4473,7 +4662,7 @@ function EnrollmentTransferSlide({
                                 Ngày bắt đầu <span className="text-destructive">*</span>
                               </label>
                               {isFuture ? (
-                                <StatusPill tone="primary" title="Ngày bắt đầu trong tương lai">Sắp học</StatusPill>
+                                <StatusPill tone="primary" title="Ngày bắt đầu trong tương lai">Chờ vào lớp</StatusPill>
                               ) : null}
                             </div>
                             <ManualDateInput
@@ -4525,11 +4714,11 @@ function EnrollmentTransferSlide({
                     </div>
                   ) : null}
 
-                  {previewResponse?.warnings && previewResponse.warnings.length > 0 ? (
+                  {generalPreviewWarnings.length > 0 ? (
                     <div className="space-y-1.5 rounded-md border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-900">
                       <p className="font-semibold">Lưu ý khi áp dụng:</p>
                       <ul className="list-disc pl-4 space-y-0.5">
-                        {previewResponse.warnings.map((w, idx) => (
+                        {generalPreviewWarnings.map((w, idx) => (
                           <li key={idx}>{w.message}</li>
                         ))}
                       </ul>
@@ -4537,19 +4726,97 @@ function EnrollmentTransferSlide({
                   ) : null}
 
                   {previewResponse?.source ? (
-                    <div className="rounded-md border border-gray-200 bg-white p-3 text-xs text-gray-600">
-                      <p>
-                        Lớp nguồn: <span className="font-semibold text-gray-900">{previewResponse.source.class_name}</span> kết thúc ngày{" "}
-                        <span className="font-semibold text-gray-900">{formatDate(previewResponse.source.ends_on ?? "")}</span>.
-                        {" "}Cập nhật {previewResponse.source.mutable_fee_count} khoản phí.
-                      </p>
-                    </div>
-                  ) : null}
+                    <section
+                      aria-labelledby="transfer-impact-title"
+                      className="space-y-3 rounded-lg border border-primary/25 bg-white p-3.5 shadow-2xs"
+                    >
+                      <h4 id="transfer-impact-title" className="text-sm font-semibold text-primary">
+                        Xem trước đổi lớp
+                      </h4>
 
-                  {mode === "transfer" && currentClassId ? (
-                    <FormNotice>
-                      Lưu xong, học viên sẽ rời lớp hiện tại.
-                    </FormNotice>
+                      {/* Transition Date Summary */}
+                      <div className="flex items-center justify-between rounded-lg border border-primary/20 bg-primary-soft/30 px-3.5 py-2.5 text-sm">
+                        <div className="min-w-0">
+                          <span className="block text-xs font-normal text-gray-500">Lớp hiện tại</span>
+                          <span className="block truncate font-semibold text-gray-900">
+                            {previewResponse.source.class_name}
+                          </span>
+                        </div>
+                        <div className="shrink-0 text-right">
+                          <span className="block text-xs font-normal text-gray-500">Ngày rời lớp</span>
+                          <span className="block font-semibold tabular-nums text-primary">
+                            {formatDate(previewResponse.source.ends_on ?? "")}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Decision Option Cards */}
+                      <div className="space-y-2">
+                        <div className="form-label-text select-none text-gray-800">
+                          Xử lý kỳ học phí cuối:
+                        </div>
+
+                        <div className="space-y-2.5">
+                          {/* Option 1: Thu kỳ cuối */}
+                          <label
+                            className={`block w-full cursor-pointer select-none rounded-lg border p-3.5 text-left transition focus-within:outline-none focus-within:ring-1 focus-within:ring-primary/25 ${
+                              collectSourceFinalCycle
+                                ? "border-primary bg-primary-soft/15 ring-1 ring-primary/30"
+                                : "border-primary/25 bg-white hover:border-primary/50 hover:bg-primary-soft/10"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="block text-sm font-medium leading-normal text-gray-900">
+                                Thu kỳ cuối
+                              </span>
+                              <input
+                                type="radio"
+                                name="source-final-cycle-policy"
+                                value="collect"
+                                checked={collectSourceFinalCycle}
+                                onChange={() => onCollectSourceFinalCycleChange(true)}
+                                className="sr-only"
+                              />
+                            </div>
+                            <p className="mt-1 text-xs leading-5 text-gray-600">
+                              Thu nốt kỳ học phí của lớp {previewResponse.source.class_name} chứa ngày {formatDate(previewResponse.source.ends_on ?? "")}.
+                            </p>
+                          </label>
+
+                          {/* Option 2: Không thu kỳ cuối */}
+                          <label
+                            className={`block w-full cursor-pointer select-none rounded-lg border p-3.5 text-left transition focus-within:outline-none focus-within:ring-1 focus-within:ring-primary/25 ${
+                              !collectSourceFinalCycle
+                                ? "border-primary bg-primary-soft/15 ring-1 ring-primary/30"
+                                : "border-primary/25 bg-white hover:border-primary/50 hover:bg-primary-soft/10"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="block text-sm font-medium leading-normal text-gray-900">
+                                Không thu kỳ cuối
+                              </span>
+                              <input
+                                type="radio"
+                                name="source-final-cycle-policy"
+                                value="waive"
+                                checked={!collectSourceFinalCycle}
+                                onChange={() => onCollectSourceFinalCycleChange(false)}
+                                className="sr-only"
+                              />
+                            </div>
+                            <p className="mt-1 text-xs leading-5 text-gray-600">
+                              Không thu kỳ học phí của lớp {previewResponse.source.class_name} chứa ngày {formatDate(previewResponse.source.ends_on ?? "")}.
+                            </p>
+                          </label>
+                        </div>
+
+                        {previewResponse.source.protected_fee_count > 0 ? (
+                          <p className="mt-2 text-xs text-amber-700">
+                            {previewResponse.source.protected_fee_count} khoản đã báo hoặc đã thanh toán vẫn được giữ nguyên.
+                          </p>
+                        ) : null}
+                      </div>
+                    </section>
                   ) : null}
 
                   {transferError ? (
@@ -4655,6 +4922,9 @@ function EnrollmentTransferSlide({
 }
 
 function EnrollmentFeeSection({
+  independentDates = true,
+  onBillingScheduleOpen,
+  onBillingPendingChange,
   classes,
   currentClassId,
   enrollmentActionMode,
@@ -4674,6 +4944,9 @@ function EnrollmentFeeSection({
   chosenDateDecisions,
   onOpenStartDateReview,
 }: {
+  independentDates?: boolean;
+  onBillingScheduleOpen?: (enrollment: StudentEnrollmentInfo, selection?: BillingDateSelection) => void;
+  onBillingPendingChange?: (id: string, pending: boolean) => void;
   classes: ClassResponse[];
   currentClassId: string | null;
   enrollmentActionMode: EnrollmentActionMode;
@@ -4792,7 +5065,7 @@ function EnrollmentFeeSection({
               <Button
                 type="button"
                 variant="outline"
-                className="ml-auto h-7 shrink-0 rounded-md bg-white px-2.5 text-[13px] font-medium"
+                className="ml-auto h-7 shrink-0 rounded-md bg-white px-2.5 text-[13px] font-medium text-primary hover:bg-gray-50 hover:text-primary"
                 onClick={onTransferOpen}
                 aria-label={isInitialAssignment ? "Xếp lớp lần đầu cho học viên" : "Thiết lập lớp đang học"}
                 aria-haspopup="dialog"
@@ -4852,12 +5125,14 @@ function EnrollmentFeeSection({
                   newCycleStr = `${formatDate(value)} → ${formatDate(dEnd.toISOString().slice(0, 10))}`;
                 }
 
+                const dateLabel = independentDates ? "Ngày ghi danh" : "Ngày bắt đầu";
+
                 return (
                   <div key={enrollment.id} className="rounded-md border border-gray-200 bg-white p-2.5 pb-3.5">
                     <FormField
-                      label="Ngày bắt đầu"
+                      label={dateLabel}
                       labelId={`enrollment-date-${enrollment.id}-label`}
-                      error={invalidEnrollmentDateIds.has(enrollment.id) ? "Ngày bắt đầu không hợp lệ. Vui lòng nhập theo định dạng dd/mm/yyyy." : undefined}
+                      error={invalidEnrollmentDateIds.has(enrollment.id) ? `${dateLabel} không hợp lệ. Vui lòng nhập theo định dạng dd/mm/yyyy.` : undefined}
                       errorId={`enrollment-date-${enrollment.id}-error`}
                     >
                       <div className="space-y-1.5">
@@ -4868,12 +5143,13 @@ function EnrollmentFeeSection({
                               value={value}
                               onChange={(nextValue) => onEnrollmentDateChange(enrollment.id, nextValue)}
                               onBlur={() => onEnrollmentDateBlur(enrollment.id)}
-                              ariaLabel={`Ngày bắt đầu lớp ${enrollment.class_name}`}
+                              ariaLabel={`${dateLabel} lớp ${enrollment.class_name}`}
                               ariaDescribedBy={invalidEnrollmentDateIds.has(enrollment.id) ? `enrollment-date-${enrollment.id}-error` : undefined}
                               error={invalidEnrollmentDateIds.has(enrollment.id)}
                             />
 
-                            {isDateChanged && !isLoadingImpact ? (
+                            {independentDates && isDateChanged ? <p className="helper-text text-gray-500">Lịch thu học phí giữ nguyên.</p> : null}
+                            {!independentDates && isDateChanged && !isLoadingImpact ? (
                               !hasProtectedFees ? (
                                 <p className="helper-text text-gray-600">
                                   {oldCycleStr && newCycleStr
@@ -4902,7 +5178,7 @@ function EnrollmentFeeSection({
                             ) : null}
                           </div>
 
-                          {isDateChanged ? (
+                          {!independentDates && isDateChanged ? (
                             isLoadingImpact ? (
                               <span className="form-input-text inline-flex h-8 shrink-0 select-none items-center justify-center rounded-md border border-gray-200 bg-white px-2.5 text-sm font-medium text-gray-500">
                                 <LoadingLabel label="Đang kiểm tra" />
@@ -4928,9 +5204,19 @@ function EnrollmentFeeSection({
                         </div>
                       </div>
                     </FormField>
+                    {independentDates && <BillingDateField enrollmentId={enrollment.id}
+                      initialAnchor={enrollment.billing_anchor_date} initialVersion={enrollment.billing_anchor_version}
+                      currentPeriod={enrollment.current_period}
+                      nextPeriod={enrollment.next_period}
+                      currentFeeStatus={enrollment.current_fee_status}
+                      onPendingChange={onBillingPendingChange}
+                      onReview={(selection) => onBillingScheduleOpen?.(enrollment, selection)} />}
                     <SessionSelector
                       class_={class_}
-                      selectedSlotIds={enrollmentFees[enrollment.id]?.selected_slot_ids ?? enrollment.selected_slot_ids}
+                      selectedSlotIds={
+                        enrollmentFees[enrollment.id]?.selected_slot_ids ??
+                        getEnrollmentInitialSlotIds(enrollment, classes)
+                      }
                       onChange={(slotIds) => onEnrollmentSlotsChange(enrollment.id, slotIds)}
                       customFee={enrollmentFees[enrollment.id]?.custom_fee ?? null}
                       onApplySuggestedFee={(fee) => onEnrollmentCustomFeeChange(enrollment.id, fee)}
@@ -5080,6 +5366,10 @@ function isValidVietnamMobilePhone(value: string) {
   return /^0(?:3|5|7|8|9)\d{8}$/.test(normalized);
 }
 
+function getEnrollmentForClass(student: StudentResponse, classId: string) {
+  return student.active_enrollments.find((enrollment) => enrollment.class_id === classId) ?? null;
+}
+
 function getEnrollmentDateForClass(student: StudentResponse, classId: string) {
   return (
     student.active_enrollments.find((enrollment) => enrollment.class_id === classId)?.enrollment_date ?? null
@@ -5112,6 +5402,7 @@ async function exportStudents(students: StudentResponse[], selectedClass: ClassR
   const rows = students.map((student) => {
     const studentContact = getCompleteContactPair(student.student_zalo, student.student_phone);
     const parentContact = getCompleteContactPair(student.parent_zalo, student.parent_phone);
+    const enrollment = getEnrollmentForClass(student, selectedClass.id);
 
     return {
       "Mã học viên": formatStudentCode(student.student_code),
@@ -5122,7 +5413,10 @@ async function exportStudents(students: StudentResponse[], selectedClass: ClassR
         student.birth_date ? formatDate(student.birth_date) : "",
       ),
       Trường: getStudentExportValue(student, "school", student.school ?? ""),
-      "Ngày bắt đầu": formatDate(getEnrollmentDateForClass(student, selectedClass.id)),
+      "Ngày ghi danh": formatDate(getEnrollmentDateForClass(student, selectedClass.id)),
+      "Kỳ hiện tại": formatCyclePeriod(enrollment?.current_period, enrollment?.billing_anchor_date || enrollment?.enrollment_date) ?? "",
+      "Kỳ tiếp theo": formatCyclePeriod(enrollment?.next_period, enrollment?.billing_anchor_date || enrollment?.enrollment_date) ?? "",
+      "Hạn nộp tiếp theo": enrollment?.next_due_date ? formatDate(enrollment.next_due_date) : "",
       "Học phí riêng": getEnrollmentCustomFeeForClass(student, selectedClass.id) ?? "",
       "Lớp khác": getOtherClassesText(student, selectedClass.id) ?? "",
       "Zalo học sinh": getStudentExportValue(student, "student_contact", studentContact?.zalo ?? ""),

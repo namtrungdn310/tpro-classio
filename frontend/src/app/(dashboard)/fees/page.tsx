@@ -15,6 +15,8 @@ import {
 import { FeeMessageTemplateDialog } from "@/components/fees/fee-message-template-dialog";
 import { FeeRefundPanel } from "@/components/fees/fee-refund-dialog";
 import { FeePaymentRequestDialog } from "@/components/fees/fee-payment-request-dialog";
+import { FeeDeadlineDialog } from "@/components/fees/fee-deadline-dialog";
+import { useIndependentDates } from "@/lib/hooks/use-independent-dates";
 import { FeeReportPanel } from "@/components/fees/fee-report-panel";
 import { EarlyPaymentPanel } from "@/components/fees/early-payment-panel";
 import { FeesPageSkeleton } from "@/components/fees/fees-skeleton";
@@ -116,6 +118,8 @@ export default function FeesPage() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const isAdmin = isManagementUser(user);
+  const independentDates = useIndependentDates(Boolean(isAdmin)).data?.independent_billing_dates === true;
+  const [deadlineGroup, setDeadlineGroup] = useState<StudentFeeGroup | null>(null);
   const [search, setSearch] = usePersistentState("tpro:fees:search", "");
   const deferredSearch = useDeferredValue(search);
   const [period, setPeriod] = usePersistentState("tpro:fees:period", getCurrentFeePeriod());
@@ -221,20 +225,26 @@ export default function FeesPage() {
     }) =>
       resolveBillingReview(reviewId, {
         decision,
+        expected_context_token: billingReviewsQuery.data?.reviews.find(r => r.id === reviewId)?.context_token ?? undefined,
         fee_record_ids: feeRecordIds,
         reason,
       }),
     onSuccess: (_result, variables) => {
       void queryClient.invalidateQueries({ queryKey: ["fees"] });
       void queryClient.invalidateQueries({ queryKey: ["reports"] });
+      void queryClient.invalidateQueries({ queryKey: ["billing-schedule"] });
+      void queryClient.invalidateQueries({ queryKey: ["students"] });
+      void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       notify.success(
         variables.decision === "CONFIRM"
           ? "Đã xác nhận lịch thu mới. Khoản học phí có thể được báo và thu."
           : "Đã hủy khoản thu. Hệ thống sẽ không tự tạo lại khoản này.",
       );
     },
-    onError: (error) =>
-      notify.error(getApiErrorMessage(error, "Không thể xử lý thay đổi học phí.")),
+    onError: (error) => {
+      void queryClient.invalidateQueries({ queryKey: ["fees", "billing-reviews"] });
+      notify.error(getApiErrorMessage(error, "Không thể xử lý thay đổi học phí."));
+    },
   });
 
   const [periodYear, periodMonth] = period.split("-");
@@ -1128,6 +1138,7 @@ export default function FeesPage() {
                       setConfirmationTarget({ action: "unpay", group });
                     }}
                     onUnnotify={(group) => setConfirmationTarget({ action: "unnotify", group })}
+                    onDeadline={isAdmin && independentDates ? setDeadlineGroup : undefined}
                     getCopyMessage={(group) => {
                       const templates = messageTemplatesQuery.data;
                       if (!templates) return null;
@@ -1357,6 +1368,14 @@ export default function FeesPage() {
         }}
       />
 
+      {deadlineGroup && <FeeDeadlineDialog group={deadlineGroup} onClose={() => setDeadlineGroup(null)} onApplied={() => {
+        setDeadlineGroup(null);
+        void queryClient.invalidateQueries({ queryKey: ["fees"] });
+        void queryClient.invalidateQueries({ queryKey: ["billing-schedule"], refetchType: "none" });
+        void queryClient.invalidateQueries({ queryKey: ["reports"], refetchType: "none" });
+        void queryClient.invalidateQueries({ queryKey: ["dashboard"], refetchType: "none" });
+        notify.success("Đã cập nhật hạn thu. Lịch thu các kỳ sau giữ nguyên.");
+      }} />}
       <FeePaymentRequestDialog
         group={paymentRequestTarget}
         existingRequest={paymentRequestsQuery.data?.requests.find(

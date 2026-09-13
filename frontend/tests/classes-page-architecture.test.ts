@@ -94,10 +94,12 @@ test("modal focus scope includes fixed rail controls and excludes hidden panels"
 test("workspace guards close with an unsaved-changes confirmation", () => {
   assert.match(
     workspaceSource,
-    /if \(dirty && !isSaving && !isDeleting && !isContinuing\) \{\s*setConfirmDiscardOpen\(true\);/,
+    /if \(\(dirty \|\| suspensionDirty\) && !isSaving && !isDeleting && !isContinuing\) \{\s*setConfirmDiscardOpen\(true\);/,
   );
   assert.match(workspaceSource, /<ConfirmationDialog/);
   assert.match(workspaceSource, /confirmLabel="Rời khỏi"/);
+  assert.match(workspaceSource, /onDirtyChange=\{setSuspensionDirty\}/);
+  assert.match(workspaceSource, /isBusy: isSaving \|\| isDeleting \|\| isContinuing \|\| suspensionBusy/);
 });
 
 test("workspace closes only when a complete pointer gesture occurs outside the frame", () => {

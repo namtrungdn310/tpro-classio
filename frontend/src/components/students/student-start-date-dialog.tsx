@@ -6,9 +6,11 @@ import { createPortal } from "react-dom";
 import { FormField } from "@/components/ui/form-field";
 import { LoadingLabel } from "@/components/ui/loading-label";
 import {
+  canRevealSlidePanel,
   getSlideBackdropStyle,
   getSlidePanelStyle,
-  useSlidePanelDuration,
+  getSlidePanelUnmountDelay,
+  useSlidePanelMotion,
 } from "@/lib/ui/slide-panel-motion";
 import type {
   AffectedEnrollmentImpact,
@@ -52,9 +54,9 @@ export function StudentStartDateDialog({
   onClose,
 }: StudentStartDateDialogProps) {
   const [mounted, setMounted] = useState(false);
-  const [isOpen, setIsOpen] = useState(false);
+  const [isVisible, setIsVisible] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
-  const transitionDuration = useSlidePanelDuration(panelRef);
+  const { durationMs, isReady } = useSlidePanelMotion(panelRef, mounted);
 
   const [decisions, setDecisions] = useState<Record<string, string>>(() => {
     const initial: Record<string, string> = {};
@@ -72,9 +74,19 @@ export function StudentStartDateDialog({
 
   useEffect(() => {
     setMounted(true);
-    const timer = window.requestAnimationFrame(() => setIsOpen(true));
-    return () => window.cancelAnimationFrame(timer);
   }, []);
+
+  useEffect(() => {
+    if (!canRevealSlidePanel({ isOpen: true, isReady, isRendered: mounted })) return;
+    let revealFrame = 0;
+    const mountFrame = window.requestAnimationFrame(() => {
+      revealFrame = window.requestAnimationFrame(() => setIsVisible(true));
+    });
+    return () => {
+      window.cancelAnimationFrame(mountFrame);
+      window.cancelAnimationFrame(revealFrame);
+    };
+  }, [isReady, mounted]);
 
   useEffect(() => {
     setDecisions((current) => {
@@ -94,8 +106,12 @@ export function StudentStartDateDialog({
 
   function handleClose() {
     if (isApplying) return;
-    setIsOpen(false);
-    window.setTimeout(onClose, transitionDuration);
+    setIsVisible(false);
+    const delay = getSlidePanelUnmountDelay(
+      durationMs,
+      typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+    );
+    window.setTimeout(onClose, delay);
   }
 
   function handleFormSubmit(e: React.FormEvent) {
@@ -115,10 +131,10 @@ export function StudentStartDateDialog({
     >
       {/* Backdrop */}
       <div
-        style={getSlideBackdropStyle(transitionDuration)}
+        style={getSlideBackdropStyle(durationMs)}
         className={cn(
-          "absolute inset-0 bg-black/40 backdrop-blur-xs transition-opacity duration-300",
-          isOpen ? "opacity-100" : "opacity-0 pointer-events-none",
+          "absolute inset-0 bg-black/40 backdrop-blur-xs transition-opacity motion-reduce:transition-none",
+          isVisible ? "opacity-100" : "opacity-0 pointer-events-none",
         )}
         onClick={handleClose}
       />
@@ -126,10 +142,10 @@ export function StudentStartDateDialog({
       {/* Slide Panel from Right */}
       <div
         ref={panelRef}
-        style={getSlidePanelStyle(transitionDuration)}
+        style={getSlidePanelStyle(durationMs)}
         className={cn(
-          "relative z-10 flex h-full w-full max-w-[500px] flex-col bg-white shadow-2xl transition-transform duration-300",
-          isOpen ? "translate-x-0" : "translate-x-full",
+          "relative z-10 flex h-full w-full max-w-[500px] flex-col bg-white shadow-2xl transition-transform motion-reduce:transition-none",
+          isVisible ? "translate-x-0" : "translate-x-full",
         )}
       >
         {/* Header - Synchronized typography, zero redundant close button */}
@@ -363,7 +379,7 @@ export function StudentStartDateDialog({
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
                 placeholder="Điều chỉnh ngày bắt đầu theo hồ sơ học viên"
-                className="min-h-24 w-full resize-none rounded-md border border-gray-200 bg-white px-3 py-2 text-[15px] leading-5 font-normal text-gray-900 outline-none transition placeholder:font-normal placeholder:text-gray-400 focus:border-primary/60 focus:ring-1 focus:ring-primary/15 caret-gray-900"
+                className="min-h-24 w-full resize-none rounded-md border border-gray-200 bg-white px-3 py-2 text-[15px] leading-5 font-normal text-gray-900 outline-none transition placeholder:font-normal placeholder:text-gray-400 focus:border-primary/60 focus:ring-1 focus:ring-primary/15"
               />
             </FormField>
           </div>

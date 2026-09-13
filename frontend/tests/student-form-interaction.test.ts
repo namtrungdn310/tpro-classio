@@ -19,15 +19,30 @@ const classSelectionSource = readFileSync(
   "utf8",
 );
 
-test("class cards reserve a full-width line for the complete academic year", () => {
+test("suspended class cards remain accessible for viewing without disabling navigation", () => {
+  assert.match(classSelectionSource, /onClick=\{onSelect\}/);
+  assert.doesNotMatch(classSelectionSource, /disabled=\{Boolean\(class_\.active_suspension\)\}/);
+  assert.doesNotMatch(classSelectionSource, /if \(!class_\.active_suspension\) onSelect/);
+  assert.match(classSelectionSource, /Đang hoãn · học lại/);
+});
+
+test("class cards wrap the complete academic year when space is limited", () => {
   assert.match(
     classSelectionSource,
-    /mt-0\.5 whitespace-nowrap text-xs font-medium leading-4 tracking-\[-0\.01em\] text-gray-500/,
+    /mt-0\.5 whitespace-normal break-words text-xs font-medium leading-4 tracking-\[-0\.01em\] text-gray-500/,
   );
   assert.doesNotMatch(
     classSelectionSource,
     /mt-0\.5 truncate text-xs font-medium text-gray-500/,
   );
+});
+
+test("suspension labels consistently describe the resumption date", () => {
+  const table = readFileSync(new URL("../src/components/classes/classes-table.tsx", import.meta.url), "utf8");
+  for (const source of [table, classSelectionSource]) {
+    assert.match(source, /Đang hoãn · học lại/);
+    assert.doesNotMatch(source, /Đang hoãn · đến/);
+  }
 });
 
 test("student enrollment dates use the same manual date control as birth date", () => {

@@ -131,7 +131,7 @@ export function ClassesTable({
                   <ClassStatus status={class_.effective_status} />
                   {class_.active_suspension ? (
                     <StatusPill tone="amber">
-                      Đang hoãn · đến {formatDate(class_.active_suspension.resume_on)}
+                      Đang hoãn · học lại {formatDate(class_.active_suspension.resume_on)}
                     </StatusPill>
                   ) : null}
                   {totalDurationLabel ? (

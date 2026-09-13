@@ -268,11 +268,8 @@ function ClassSelectionCard({
       onMouseEnter={scheduleHoverPrefetch}
       onMouseLeave={cancelHoverPrefetch}
       onTouchStart={onPrefetch}
-      disabled={Boolean(class_.active_suspension)}
-      onClick={() => {
-        if (!class_.active_suspension) onSelect();
-      }}
-      className="group relative flex min-h-[128px] flex-col overflow-hidden rounded-lg border px-4 py-3.5 text-left shadow-[0_1px_2px_rgba(15,23,42,0.035)] transition-shadow duration-150 hover:shadow-[0_3px_10px_rgba(15,23,42,0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:shadow-[0_1px_2px_rgba(15,23,42,0.035)]"
+      onClick={onSelect}
+      className="group relative flex min-h-[128px] flex-col overflow-hidden rounded-lg border px-4 py-3.5 text-left shadow-[0_1px_2px_rgba(15,23,42,0.035)] transition-shadow duration-150 hover:shadow-[0_3px_10px_rgba(15,23,42,0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/30"
       style={{
         backgroundColor: group.color.background,
         borderColor: group.color.border,
@@ -292,7 +289,7 @@ function ClassSelectionCard({
           </span>
         </div>
         {class_.secondary_label && (class_.grade_level || class_.academic_year_start) ? (
-          <p className="mt-0.5 whitespace-nowrap text-xs font-medium leading-4 tracking-[-0.01em] text-gray-500">
+          <p className="mt-0.5 whitespace-normal break-words text-xs font-medium leading-4 tracking-[-0.01em] text-gray-500">
             {class_.secondary_label}
           </p>
         ) : null}

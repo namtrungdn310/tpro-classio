@@ -1,5 +1,11 @@
 import { z } from "zod";
 
+export const classSuspensionCreateCommandSchema = z.object({
+  suspended_from: z.iso.date(), resume_on: z.iso.date(),
+  reason_code: z.enum(["TEACHER_UNAVAILABLE", "CENTER_OPERATION", "OTHER"]),
+  reason_note: z.string().nullable(), request_id: z.uuid(), expected_fingerprint: z.string().length(64),
+});
+
 const classDaySchema = z.enum([
   "Thứ 2",
   "Thứ 3",
@@ -560,10 +566,19 @@ export const suspensionPreviewSchema = z.object({
     z.object({
       enrollment_id: z.string().uuid(),
       overlap_days: z.number().int().nonnegative(),
+      student_name: z.string().nullable(),
+      target_coverage_start: z.string().nullable(),
+      old_due_date: z.string().nullable(),
+      new_due_date: z.string().nullable(),
+      pending_days: z.number().int().nonnegative(),
     }),
   ),
   target_cycle_count: z.number().int().nonnegative(),
   protected_case_count: z.number().int().nonnegative(),
+  fingerprint: z.string().length(64),
+  adjustment_id: z.string().uuid().nullable(),
+  occurrence_count: z.number().int().nonnegative(),
+  blocked_reasons: z.array(z.string()),
 });
 
 export const makeupSchedulePreviewSchema = z.object({

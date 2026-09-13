@@ -115,6 +115,8 @@ export async function updateClass(id: string, data: ClassUpdate): Promise<ClassR
 export async function previewClassStartDate(
   id: string,
   data: {
+    contract_version?: 1 | 2;
+    admission_dates?: Record<string, string>;
     start_date: string;
     expected_version: number;
     default_decision?: string;
@@ -132,6 +134,8 @@ export async function previewClassStartDate(
 export async function updateClassStartDate(
   id: string,
   data: {
+    contract_version?: 1 | 2;
+    admission_dates?: Record<string, string>;
     start_date: string;
     reason: string;
     expected_version: number;
@@ -330,6 +334,7 @@ export async function createClassSuspension(
     reason_code: MakeupReasonCode;
     reason_note?: string | null;
     request_id: string;
+    expected_fingerprint: string;
   },
 ) {
   const response = await apiClient.post(
