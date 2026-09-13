@@ -204,7 +204,10 @@ async def test_start_date_impact_evaluates_billing_decisions_for_affected_studen
 
 
 @pytest.mark.asyncio
-async def test_update_class_start_date_idempotency() -> None:
+async def test_update_class_start_date_idempotency(monkeypatch) -> None:
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "independent_billing_dates_enabled", False)
     mock_class = _mock_class(start_date=date(2026, 6, 1))
     req_id = uuid4()
 
@@ -236,7 +239,10 @@ async def test_update_class_start_date_idempotency() -> None:
 
 
 @pytest.mark.asyncio
-async def test_update_class_start_date_stale_fingerprint_rejected() -> None:
+async def test_update_class_start_date_stale_fingerprint_rejected(monkeypatch) -> None:
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "independent_billing_dates_enabled", False)
     mock_class = _mock_class(start_date=date(2026, 6, 1), version=1)
 
     mock_db = MagicMock()

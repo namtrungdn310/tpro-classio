@@ -4,6 +4,7 @@ import hmac
 import json
 from uuid import UUID, uuid4
 
+from fastapi import HTTPException
 from sqlalchemy import and_, case, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -438,6 +439,8 @@ async def _load_next_fee_due_map(
     db: AsyncSession,
     classes: list[Class],
     today: date,
+    *,
+    enrollment_ids_filter: list[str] | None = None,
 ) -> dict[str, tuple[date | None, str]]:
     """One batched query set cho toàn bộ class_id, tránh N+1 theo số lớp.
 
@@ -465,6 +468,11 @@ async def _load_next_fee_due_map(
             BillingAnchorRevision.anchor_date,
             BillingAnchorRevision.billing_type_snapshot,
             BillingAnchorRevision.billing_cycle_weeks_snapshot,
+            BillingAnchorRevision.first_anchor_cycle_no,
+            BillingAnchorRevision.state.label("revision_state"),
+            BillingAnchorRevision.scheduled_segments,
+            BillingAnchorRevision.waived_intervals,
+            Enrollment.ended_on,
         )
         .outerjoin(
             BillingAnchorRevision,
@@ -473,6 +481,9 @@ async def _load_next_fee_due_map(
         .where(
             Enrollment.class_id.in_(class_ids),
             Enrollment.status == "active",
+            Enrollment.id.in_(enrollment_ids_filter)
+            if enrollment_ids_filter is not None
+            else True,
         )
     )
     enrollments = [
@@ -486,6 +497,11 @@ async def _load_next_fee_due_map(
             getattr(row, "anchor_date", None),
             getattr(row, "billing_type_snapshot", None),
             getattr(row, "billing_cycle_weeks_snapshot", None),
+            getattr(row, "first_anchor_cycle_no", 0),
+            getattr(row, "revision_state", None),
+            getattr(row, "scheduled_segments", None),
+            getattr(row, "waived_intervals", None),
+            getattr(row, "ended_on", None),
         )
         for row in enrollment_result.all()
     ]
@@ -500,15 +516,29 @@ async def _load_next_fee_due_map(
             func.max(
                 case(
                     (
-                        FeeRecord.billing_revision_id
-                        == Enrollment.current_billing_revision_id,
+                        (
+                            FeeRecord.billing_revision_id
+                            == Enrollment.current_billing_revision_id
+                        )
+                        & (FeeRecord.status != "SUPERSEDED"),
                         FeeRecord.anchor_cycle_no,
                     ),
                     else_=None,
                 )
             ).label("max_anchor_cycle"),
             func.max(
-                func.greatest(0, FeeRecord.adjusted_due_date - FeeRecord.base_due_date)
+                case(
+                    (
+                        FeeRecord.status.notin_(("VOID", "SUPERSEDED")),
+                        func.greatest(
+                            0,
+                            FeeRecord.adjusted_due_date
+                            - FeeRecord.base_due_date
+                            - FeeRecord.collection_due_offset_days,
+                        ),
+                    ),
+                    else_=0,
+                )
             ).label("max_deferral"),
         )
         .join(Enrollment, Enrollment.id == FeeRecord.enrollment_id)
@@ -550,6 +580,11 @@ async def _load_next_fee_due_map(
         anchor_date,
         billing_type_snapshot,
         billing_cycle_weeks_snapshot,
+        first_anchor_cycle_no,
+        revision_state,
+        scheduled_segments,
+        waived_intervals,
+        ended_on,
     ) in enrollments:
         max_cycle, max_anchor_cycle, max_deferral = aggregates.get(
             enrollment_id, (None, None, None)
@@ -608,7 +643,41 @@ async def _load_next_fee_due_map(
                 else None
             ),
         )
+        projected.id = enrollment_id
+        projected.ended_on = ended_on
+        if projected.current_billing_revision:
+            projected.current_billing_revision.first_anchor_cycle_no = (
+                first_anchor_cycle_no or 0
+            )
+            projected.current_billing_revision.state = revision_state
+            projected.current_billing_revision.scheduled_segments = scheduled_segments
+            projected.current_billing_revision.waived_intervals = waived_intervals
         enrollments_by_class.setdefault(class_id, []).append(projected)
+
+    projections = [e for entries in enrollments_by_class.values() for e in entries]
+    from app.services.billing_projection_context import attach_deferral_context
+
+    await attach_deferral_context(db, projections)
+    segment_ids = [
+        e.id
+        for e in projections
+        if getattr(e.current_billing_revision, "scheduled_segments", None)
+    ]
+    if segment_ids:
+        # Segment materialization needs the paid/void coverage union as well.
+        segment_records = (
+            await db.scalars(
+                select(FeeRecord).where(
+                    FeeRecord.enrollment_id.in_(segment_ids),
+                    FeeRecord.status != "SUPERSEDED",
+                )
+            )
+        ).all()
+        for projection in projections:
+            if projection.id in segment_ids:
+                projection.fee_records = [
+                    r for r in segment_records if str(r.enrollment_id) == projection.id
+                ]
 
     for class_id, projected_enrollments in enrollments_by_class.items():
         due_map[class_id] = get_class_next_fee_due(
@@ -654,6 +723,9 @@ class _ProjectedEnrollment:
     """Minimal enrollment view exposing exactly the fields the fee-due logic reads."""
 
     __slots__ = (
+        "id",
+        "ended_on",
+        "billing_deferral_windows",
         "status",
         "class_",
         "enrollment_date",
@@ -682,6 +754,10 @@ class _ProjectedEnrollment:
 
 class _ProjectedBillingRevision:
     __slots__ = (
+        "first_anchor_cycle_no",
+        "state",
+        "scheduled_segments",
+        "waived_intervals",
         "anchor_date",
         "billing_type_snapshot",
         "billing_cycle_weeks_snapshot",
@@ -1267,6 +1343,7 @@ async def get_classes(
                 .where(
                     ClassScheduleAdjustment.class_id.in_(class_ids),
                     ClassScheduleAdjustment.status == "OPEN",
+                    ClassScheduleAdjustment.adjustment_kind != "OCCURRENCE",
                     ClassScheduleAdjustment.affected_from <= today,
                     ClassScheduleAdjustment.affected_through >= today,
                 )
@@ -1449,7 +1526,7 @@ async def get_class_response(db: AsyncSession, id: UUID) -> ClassResponse | None
     class_, student_count, unresolved_count = row
     due_map = await _load_next_fee_due_map(db, [class_], business_today())
     today = business_today()
-    active_adjustment = await db.scalar(
+    active_adjustment_result = await db.execute(
         select(
             ClassScheduleAdjustment.id,
             ClassScheduleAdjustment.affected_from,
@@ -1459,12 +1536,14 @@ async def get_class_response(db: AsyncSession, id: UUID) -> ClassResponse | None
         .where(
             ClassScheduleAdjustment.class_id == str(class_.id),
             ClassScheduleAdjustment.status == "OPEN",
+            ClassScheduleAdjustment.adjustment_kind != "OCCURRENCE",
             ClassScheduleAdjustment.affected_from <= today,
             ClassScheduleAdjustment.affected_through >= today,
         )
         .order_by(ClassScheduleAdjustment.created_at.desc())
         .limit(1)
     )
+    active_adjustment = active_adjustment_result.first()
     active_suspension = (
         ClassActiveSuspension(
             id=active_adjustment.id,
@@ -1748,6 +1827,8 @@ def classify_fee_record_for_end_date_change(
         return "VALID"
     if (
         record.status == "PAID"
+        or record.paid_date is not None
+        or (record.paid_amount is not None and record.paid_amount > 0)
         or record.notified_at is not None
         or (record.refunded_amount is not None and record.refunded_amount > 0)
     ):
@@ -2411,6 +2492,7 @@ async def update_class(
     data: ClassUpdate,
     *,
     actor_user_id: str | None = None,
+    commit: bool = True,
 ) -> Class | None:
     class_ = await get_class(db, id, for_update=True)
     if class_ is None:
@@ -2662,9 +2744,12 @@ async def update_class(
             actor_user_id=actor_user_id,
         )
 
-    await _commit_class_changes(db)
-    await db.refresh(class_)
-    _clear_dependent_caches()
+    if commit:
+        await _commit_class_changes(db)
+        await db.refresh(class_)
+        _clear_dependent_caches()
+    else:
+        await db.flush()
     return class_
 
 
@@ -2903,6 +2988,16 @@ def _start_date_preview_fingerprint(
                 "enrollment_id": str(item.get("enrollment_id")),
                 "new_enrollment_date": str(item.get("new_enrollment_date")),
                 "recommended_decision": str(item.get("recommended_decision")),
+                **(
+                    {
+                        "old_enrollment_date": str(item.get("old_enrollment_date")),
+                        "admission_version": item.get("admission_version"),
+                        "billing_revision_id": item.get("billing_revision_id"),
+                        "finance_unchanged": True,
+                    }
+                    if item.get("finance_unchanged")
+                    else {}
+                ),
             }
             for item in (affected_enrollments or [])
         ],
@@ -2919,6 +3014,8 @@ async def _start_date_impact(
     *,
     default_decision: str | None = None,
     enrollment_decisions: dict[UUID, str] | None = None,
+    academic_only: bool = False,
+    admission_dates: dict[UUID, date] | None = None,
 ) -> dict[str, object]:
     from app.models.staff_attendance import StaffAttendanceEntry
     from app.services.billing_decision_service import (
@@ -2936,14 +3033,19 @@ async def _start_date_impact(
             .where(
                 StaffAttendanceEntry.occurrence_class_id == class_.id,
                 StaffAttendanceEntry.reversed_at.is_(None),
-                func.date(StaffAttendanceEntry.occurrence_start_at) < next_start_date,
+                func.date(
+                    func.timezone(
+                        "Asia/Ho_Chi_Minh", StaffAttendanceEntry.occurrence_start_at
+                    )
+                )
+                < next_start_date,
             )
             .order_by(StaffAttendanceEntry.occurrence_start_at.asc())
             .limit(1)
         )
         if att_entry is not None:
             can_apply = False
-            att_date = att_entry.occurrence_start_at.date()
+            att_date = business_today(att_entry.occurrence_start_at)
             earliest_historical_activity_date = att_date
             blocking_reason = (
                 f"Không thể dời ngày bắt đầu lớp về {next_start_date.strftime('%d/%m/%Y')} "
@@ -3000,6 +3102,66 @@ async def _start_date_impact(
     for enr in enrollments:
         enr_date = enr.enrollment_date
         must_change = enr_date is not None and enr_date < next_start_date
+        if academic_only:
+            if not must_change:
+                continue
+            new_enr_date = (admission_dates or {}).get(
+                UUID(str(enr.id)), next_start_date
+            )
+            if enr.status != "active":
+                can_apply = False
+                blocking_reason = "Ngày mới đi qua lịch sử học viên đã kết thúc; không thể tự dời lịch sử."
+            elif new_enr_date < next_start_date:
+                can_apply = False
+                blocking_reason = "Ngày ghi danh phải từ ngày bắt đầu lớp."
+            else:
+                from app.services.admission_date_service import (
+                    validate_admission_date_change,
+                )
+                from app.services.enrollment_service import realign_open_slot_selections
+
+                try:
+                    await validate_admission_date_change(
+                        db,
+                        enr,
+                        next_date=new_enr_date,
+                        expected_version=int(enr.admission_version or 0),
+                    )
+                    await realign_open_slot_selections(
+                        db,
+                        enr,
+                        class_,
+                        previous_start=enr_date,
+                        next_start=new_enr_date,
+                        validate_only=True,
+                    )
+                except HTTPException as exc:
+                    can_apply = False
+                    blocking_reason = (
+                        exc.detail.get("message", str(exc.detail))
+                        if isinstance(exc.detail, dict)
+                        else str(exc.detail)
+                    )
+            affected_impacts.append(
+                {
+                    "enrollment_id": str(enr.id),
+                    "student_id": str(enr.student_id),
+                    "student_name": enr.student.full_name if enr.student else "",
+                    "class_id": str(class_.id),
+                    "class_name": class_.name,
+                    "old_enrollment_date": enr_date.isoformat(),
+                    "new_enrollment_date": new_enr_date.isoformat(),
+                    "admission_version": int(enr.admission_version or 0),
+                    "billing_revision_id": enr.current_billing_revision_id,
+                    "must_change": True,
+                    "finance_unchanged": True,
+                    "decisions": [],
+                    "recommended_decision": "KEEP_EXISTING_SCHEDULE",
+                    "protected_fee_count": 0,
+                    "mutable_fee_count": 0,
+                }
+            )
+            continue
         if must_change or (
             next_start_date < class_.start_date and enr_date == class_.start_date
         ):
@@ -3056,6 +3218,15 @@ async def _start_date_impact(
                 }
             )
 
+    if academic_only:
+        affected_ids = {str(item["enrollment_id"]) for item in affected_impacts}
+        supplied_ids = {str(item) for item in (admission_dates or {})}
+        if supplied_ids != affected_ids:
+            can_apply = False
+            blocking_reason = (
+                blocking_reason
+                or "Vui lòng xác nhận ngày ghi danh cho đúng danh sách học viên bị ảnh hưởng."
+            )
     return {
         "can_apply": can_apply,
         "blocking_reason": blocking_reason,
@@ -3072,6 +3243,9 @@ async def preview_class_start_date(
     id: UUID,
     data: ClassStartDatePreviewRequest,
 ) -> ClassStartDatePreviewResponse | None:
+    from app.services.independent_dates_guard import require_date_contract
+
+    require_date_contract(4 if data.contract_version == 2 else 1, has_date_edit=True)
     class_ = await get_class(db, id)
     if class_ is None:
         return None
@@ -3099,6 +3273,8 @@ async def preview_class_start_date(
         data.start_date,
         default_decision=data.default_decision,
         enrollment_decisions=data.enrollment_decisions,
+        academic_only=data.contract_version == 2,
+        admission_dates=data.admission_dates,
     )
 
     class_patch_hash = None
@@ -3142,6 +3318,15 @@ async def update_class_start_date(
     *,
     actor_user_id: str | None,
 ) -> Class | None:
+    from app.services.independent_dates_guard import require_date_contract
+
+    require_date_contract(4 if data.contract_version == 2 else 1, has_date_edit=True)
+    if data.contract_version == 2:
+        from app.services.class_admission_date_service import apply_class_admission_date
+
+        return await apply_class_admission_date(
+            db, id, data, actor_user_id=actor_user_id
+        )
     class_ = await get_class(db, id, for_update=True)
     if class_ is None:
         return None

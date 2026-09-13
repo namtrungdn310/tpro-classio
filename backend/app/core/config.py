@@ -64,6 +64,9 @@ class Settings(BaseSettings):
     # R6-D13/D16: feature kill-switches — mặc định OFF.
     teacher_access_enabled: bool = False
     staff_payroll_enabled: bool = False
+    # Enable only after the independent-date migration, all writers and UI
+    # contracts have been verified. Never enable by deployment environment alone.
+    independent_billing_dates_enabled: bool = False
     # R6-D17: payment automation — provider-neutral, mặc định OFF.
     payment_provider: str = "disabled"
     # QR creation is deliberately independent from webhook ingestion.  A

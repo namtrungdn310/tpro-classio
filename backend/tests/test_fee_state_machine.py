@@ -915,3 +915,68 @@ async def test_pay_rejects_future_period_without_appending_ledger() -> None:
     db.add.assert_not_called()
     db.commit.assert_not_awaited()
     db.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_pay_rejects_superseded_or_void_record() -> None:
+    superseded_record = make_fee_record(
+        period="2026-07",
+        status="SUPERSEDED",
+    )
+    db = make_db()
+
+    with (
+        patch(
+            "app.services.fee_service._load_locked_fee_records",
+            new=AsyncMock(return_value=[superseded_record]),
+        ),
+        patch(
+            "app.services.fee_service.business_today",
+            return_value=CURRENT_DAY,
+        ),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await mark_fees_paid(
+                db,
+                [UUID(superseded_record.id)],
+                actor_id=str(uuid4()),
+                payment_method="cash",
+            )
+
+    assert exc_info.value.status_code == 409
+    assert "đã được thay thế hoặc đã huỷ" in exc_info.value.detail
+    db.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_notify_rejects_superseded_or_void_record() -> None:
+    from app.services.fee_service import mark_fees_notified
+
+    void_record = make_fee_record(
+        period="2026-07",
+        status="VOID",
+    )
+    db = make_db()
+
+    with (
+        patch(
+            "app.services.fee_service._load_locked_fee_records",
+            new=AsyncMock(return_value=[void_record]),
+        ),
+        patch(
+            "app.services.fee_service.business_today",
+            return_value=CURRENT_DAY,
+        ),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await mark_fees_notified(
+                db,
+                [UUID(void_record.id)],
+                message="test message",
+                channel="zalo_manual",
+                actor_id=str(uuid4()),
+            )
+
+    assert exc_info.value.status_code == 409
+    assert "đã được thay thế hoặc đã huỷ" in exc_info.value.detail
+    db.rollback.assert_awaited_once()

@@ -18,6 +18,7 @@ FeeOperationAction = Literal[
     "template_update",
     "anchor_recalculation",
     "billing_cycle_change",
+    "due_date_change",
 ]
 
 FeePaidPaymentMethod = Literal["bank_transfer", "cash"]

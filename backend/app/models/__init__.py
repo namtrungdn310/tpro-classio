@@ -9,6 +9,7 @@ from app.models.class_schedule_slot import (
 from app.models.class_teacher import ClassTeacher
 from app.models.class_teacher_event import ClassTeacherEvent
 from app.models.enrollment import Enrollment
+from app.models.enrollment_suspension import EnrollmentSuspension, SuspensionCommand
 from app.models.billing_anchor_revision import BillingAnchorRevision
 from app.models.class_billing_cycle_revision import ClassBillingCycleRevision
 from app.models.enrollment_slot_selection import EnrollmentSlotSelection
@@ -83,6 +84,8 @@ __all__ = [
     "ClassSessionStaffSnapshot",
     "ClassSessionStudentSnapshot",
     "Enrollment",
+    "EnrollmentSuspension",
+    "SuspensionCommand",
     "BillingAnchorRevision",
     "ClassBillingCycleRevision",
     "EnrollmentSlotSelection",

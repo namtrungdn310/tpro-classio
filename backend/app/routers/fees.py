@@ -89,12 +89,40 @@ from app.schemas.billing_anchor import (
     BillingReviewResolveRequest,
     BillingReviewResponse,
 )
+from app.schemas.billing_schedule_change import (
+    FeeDueDateApplyRequest,
+    FeeDueDatePreviewRequest,
+)
 from app.services.billing_anchor_service import (
     list_billing_reviews,
     resolve_billing_review,
 )
 
 router = APIRouter(tags=["fees"])
+
+
+@router.post("/{id}/due-date/preview")
+async def preview_fee_due_date_route(
+    id: UUID,
+    payload: FeeDueDatePreviewRequest,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+):
+    from app.services.fee_due_date_service import preview_fee_due_date
+
+    return await preview_fee_due_date(db, id, payload)
+
+
+@router.post("/{id}/due-date/apply")
+async def apply_fee_due_date_route(
+    id: UUID,
+    payload: FeeDueDateApplyRequest,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+):
+    from app.services.fee_due_date_service import apply_fee_due_date
+
+    return await apply_fee_due_date(db, id, payload, actor_user_id=principal.user_id)
 
 
 @router.get("/billing-reviews", response_model=BillingReviewListResponse)

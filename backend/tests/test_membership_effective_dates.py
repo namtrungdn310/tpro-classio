@@ -87,7 +87,7 @@ def test_effective_sql_predicate_uses_half_open_ended_on_boundary() -> None:
     assert "enrollments.ended_on > '2026-09-20'" in compiled
 
 
-def test_transfer_contract_requires_exactly_one_target() -> None:
+def test_transfer_contract_requires_at_least_one_target_and_accepts_many() -> None:
     common = {
         "request_id": uuid4(),
         "expected_updated_at": datetime.now(timezone.utc),
@@ -95,15 +95,60 @@ def test_transfer_contract_requires_exactly_one_target() -> None:
         "mode": "transfer",
         "source_enrollment_id": uuid4(),
     }
-    with pytest.raises(ValidationError, match="đúng một lớp đích"):
+    with pytest.raises(ValidationError, match="ít nhất một lớp đích"):
         StudentMembershipCommand(**common, targets=[])
-    with pytest.raises(ValidationError, match="đúng một lớp đích"):
-        StudentMembershipCommand(
-            **common,
-            targets=[
-                StudentEnrollmentTarget(class_id=uuid4()),
-                StudentEnrollmentTarget(class_id=uuid4()),
-            ],
+    command = StudentMembershipCommand(
+        **common,
+        targets=[
+            StudentEnrollmentTarget(class_id=uuid4()),
+            StudentEnrollmentTarget(class_id=uuid4()),
+        ],
+    )
+    assert len(command.targets) == 2
+
+
+def test_transfer_preview_requires_at_least_one_target_and_accepts_many() -> None:
+    common = {
+        "expected_updated_at": datetime.now(timezone.utc),
+        "mode": "transfer",
+        "source_enrollment_id": uuid4(),
+    }
+    with pytest.raises(ValidationError, match="ít nhất một lớp"):
+        StudentMembershipPreviewRequest(**common, targets=[])
+
+    preview = StudentMembershipPreviewRequest(
+        **common,
+        targets=[
+            StudentEnrollmentTarget(
+                class_id=uuid4(), enrollment_date=date(2026, 10, 1)
+            ),
+            StudentEnrollmentTarget(
+                class_id=uuid4(), enrollment_date=date(2026, 10, 15)
+            ),
+        ],
+    )
+    assert len(preview.targets) == 2
+
+
+def test_final_cycle_choice_is_limited_to_transfer_mode() -> None:
+    target = StudentEnrollmentTarget(
+        class_id=uuid4(), enrollment_date=date(2026, 10, 1)
+    )
+    transfer = StudentMembershipPreviewRequest(
+        expected_updated_at=datetime.now(timezone.utc),
+        mode="transfer",
+        source_enrollment_id=uuid4(),
+        collect_source_final_cycle=False,
+        targets=[target],
+    )
+    assert transfer.collect_source_final_cycle is False
+
+    with pytest.raises(ValidationError, match="chỉ áp dụng khi đổi lớp"):
+        StudentMembershipPreviewRequest(
+            expected_updated_at=datetime.now(timezone.utc),
+            mode="supplement",
+            collect_source_final_cycle=False,
+            targets=[target],
         )
 
 

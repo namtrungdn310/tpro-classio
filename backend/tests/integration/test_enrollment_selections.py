@@ -30,7 +30,9 @@ pytestmark = [
 ]
 
 
-async def _make_operational_class_with_slots(db, slot_count: int = 2) -> str:
+async def _make_operational_class_with_slots(
+    db, slot_count: int = 2, *, class_type="MONTHLY"
+) -> str:
     from datetime import timedelta
 
     from app.schemas.class_ import ClassCreate
@@ -63,7 +65,8 @@ async def _make_operational_class_with_slots(db, slot_count: int = 2) -> str:
         db,
         ClassCreate(
             name=f"SEL CLASS {uuid4().hex[:6]}",
-            type="MONTHLY",
+            type=class_type,
+            billing_cycle_weeks=4 if class_type == "COURSE" else None,
             base_fee=750_000,
             billing_cycle_months=1,
             class_category="GENERAL",

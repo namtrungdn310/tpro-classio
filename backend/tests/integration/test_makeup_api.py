@@ -170,6 +170,11 @@ async def _create_fixture_class() -> dict:
             ),
             {"c": class_id, "t": teacher},
         )
+        from app.models.class_ import Class
+        from app.services.schedule_slot_service import sync_class_slots
+
+        class_ = await db.get(Class, class_id)
+        await sync_class_slots(db, class_, class_.schedule, effective_from=monday)
         await db.commit()
     return {"class": class_id, "teacher": teacher, "monday": monday}
 

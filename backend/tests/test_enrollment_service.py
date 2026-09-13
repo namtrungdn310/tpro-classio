@@ -262,7 +262,13 @@ async def test_closing_membership_keeps_qr_for_protected_outstanding_debt() -> N
 
 
 @pytest.mark.asyncio
-async def test_closing_class_voids_only_mutable_cycles_from_stop_date() -> None:
+@patch(
+    "app.services.suspension_boundary_service.record_closed_preservation",
+    new_callable=AsyncMock,
+)
+async def test_closing_class_voids_only_mutable_cycles_from_stop_date(
+    reconcile_pause,
+) -> None:
     enrollment = make_enrollment()
     current = SimpleNamespace(
         id=str(uuid4()),
@@ -313,6 +319,81 @@ async def test_closing_class_voids_only_mutable_cycles_from_stop_date() -> None:
     assert current.status == "UNPAID"
     assert future.status == "VOID"
     assert revoke.await_args.args[1] == [future.id]
+    reconcile_pause.assert_awaited_once_with(
+        db, enrollment, date(2026, 9, 1), actor_id=None, reason="Ngừng lớp"
+    )
+
+
+@pytest.mark.asyncio
+@patch(
+    "app.services.suspension_boundary_service.record_closed_preservation",
+    new_callable=AsyncMock,
+)
+async def test_waiving_final_cycle_voids_mutable_overlap_but_keeps_protected_fee(
+    reconcile_pause,
+) -> None:
+    enrollment = make_enrollment()
+    mutable_overlap = SimpleNamespace(
+        id=str(uuid4()),
+        status="UNPAID",
+        voided_at=None,
+        coverage_start=date(2026, 8, 5),
+        coverage_end=date(2026, 9, 5),
+        base_due_date=date(2026, 8, 5),
+        due_date=date(2026, 8, 5),
+    )
+    protected_overlap = SimpleNamespace(
+        id=str(uuid4()),
+        status="UNPAID",
+        voided_at=None,
+        coverage_start=date(2026, 8, 5),
+        coverage_end=date(2026, 9, 5),
+        base_due_date=date(2026, 8, 5),
+        due_date=date(2026, 8, 5),
+    )
+    db = SimpleNamespace(
+        scalars=AsyncMock(
+            return_value=AsyncScalarRows([mutable_overlap, protected_overlap])
+        ),
+        flush=AsyncMock(),
+    )
+    with (
+        patch(
+            "app.services.fee_reconciliation.is_fee_record_protected",
+            side_effect=lambda record: record is protected_overlap,
+        ),
+        patch(
+            "app.services.payment_scaffold_service.revoke_open_payment_requests_for_fee_records",
+            new=AsyncMock(),
+        ) as revoke,
+        patch(
+            "app.services.fee_operation_service.snapshot_fee_record",
+            side_effect=lambda record: SimpleNamespace(id=record.id),
+        ),
+        patch(
+            "app.services.fee_operation_service.append_fee_operation",
+            new=AsyncMock(),
+        ),
+    ):
+        await close_enrollment_financial_projection(
+            db,
+            enrollment,
+            actor_user_id=None,
+            reason="Chuyển lớp - không thu kỳ cuối",
+            close_on=date(2026, 9, 5),
+            include_cycle_containing_close_date=True,
+        )
+
+    assert mutable_overlap.status == "VOID"
+    assert protected_overlap.status == "UNPAID"
+    reconcile_pause.assert_awaited_once_with(
+        db,
+        enrollment,
+        date(2026, 9, 5),
+        actor_id=None,
+        reason="Chuyển lớp - không thu kỳ cuối",
+    )
+    assert revoke.await_args.args[1] == [mutable_overlap.id]
 
 
 @pytest.mark.asyncio
@@ -335,7 +416,10 @@ async def test_update_rejects_dropped_enrollment() -> None:
 
 
 @pytest.mark.asyncio
-async def test_update_changes_only_the_selected_enrollment_date() -> None:
+async def test_update_changes_only_the_selected_enrollment_date(monkeypatch) -> None:
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "independent_billing_dates_enabled", False)
     first = make_enrollment()
     second = make_enrollment()
     second.student_id = first.student_id

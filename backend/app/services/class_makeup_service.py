@@ -23,10 +23,6 @@ from app.core.makeup_state import (
 )
 from app.core.occurrence import (
     Occurrence,
-    apply_exceptions,
-    occurrence_key,
-    slot_key,
-    slot_duration_minutes,
 )
 from app.models.class_ import Class
 from app.models.class_teacher import ClassTeacher
@@ -41,7 +37,6 @@ from app.models.makeup import (
 )
 from app.models.staff import StaffMember
 from app.models.student import Student
-from app.schemas.class_ import ClassSchedule
 from app.schemas.makeup import (
     BILLING_IMPACT_NONE,
     AdjustmentStatus,
@@ -71,6 +66,10 @@ from app.services.class_conflict_service import (
     inherited_staff_active,
 )
 from app.services.schedule_slot_service import expand_class_occurrences
+from app.services.effective_occurrence_service import (
+    load_exception_payloads,
+    overlay_occurrences,
+)
 
 NULL_ACTOR_UUID = "00000000-0000-0000-0000-000000000000"
 
@@ -195,7 +194,9 @@ async def _load_exception_with_snapshots(
         )
     )
     if for_update:
-        statement = statement.with_for_update()
+        statement = statement.with_for_update().execution_options(
+            populate_existing=True
+        )
     result = await db.execute(statement)
     return result.scalar_one_or_none()
 
@@ -209,6 +210,7 @@ async def _load_class_for_update(db: AsyncSession, class_id: str) -> Class | Non
             selectinload(Class.enrollments),
         )
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     result = await db.execute(statement)
     return result.scalar_one_or_none()
@@ -265,18 +267,6 @@ async def _load_exceptions_for_adjustment(
     return list(result.scalars().unique().all())
 
 
-def _weekday_name(value: datetime) -> str:
-    return {
-        0: "Thứ 2",
-        1: "Thứ 3",
-        2: "Thứ 4",
-        3: "Thứ 5",
-        4: "Thứ 6",
-        5: "Thứ 7",
-        6: "Chủ Nhật",
-    }[value.weekday()]
-
-
 async def _eligible_students(
     db: AsyncSession,
     class_id: str,
@@ -287,12 +277,22 @@ async def _eligible_students(
     ORIGINAL (local date). Khi occurrence có source_slot_id, chỉ học viên có
     selection hiệu lực cho slot đó mới eligible (R6-D09)."""
     original_local_date = original_start_at.astimezone(BUSINESS_TIMEZONE).date()
+    from app.models.enrollment_suspension import EnrollmentSuspension
+
     statement = (
         select(Enrollment, Student.full_name)
         .join(Student, Student.id == Enrollment.student_id)
         .where(
             Enrollment.class_id == class_id,
             enrollment_effective_predicate(original_local_date),
+            ~select(EnrollmentSuspension.id)
+            .where(
+                EnrollmentSuspension.enrollment_id == Enrollment.id,
+                EnrollmentSuspension.status == "ACTIVE",
+                EnrollmentSuspension.suspended_from <= original_local_date,
+                EnrollmentSuspension.resume_on > original_local_date,
+            )
+            .exists(),
         )
         .order_by(Enrollment.enrollment_date.asc(), Enrollment.created_at.asc())
     )
@@ -526,7 +526,6 @@ async def create_postponement(
     if existing is not None:
         return await _replay_postponement(db, existing, data, today=today)
 
-    schedule = ClassSchedule.model_validate(class_.schedule)
     adjusted_originals = set(
         (
             await db.scalars(
@@ -550,10 +549,19 @@ async def create_postponement(
                 "OCCURRENCE_ALREADY_ADJUSTED",
                 "Một buổi học đã được hoãn không thể hoãn lần nữa",
             )
-        found = _match_template_occurrence(
+        candidates = await expand_class_occurrences(
+            db,
             class_,
-            schedule,
-            original_start_at,
+            range_start=original_start_at,
+            range_end=original_start_at + timedelta(seconds=1),
+        )
+        found = next(
+            (
+                item
+                for item in candidates
+                if item.original_start_at == original_start_at
+            ),
+            None,
         )
         if found is None:
             raise MakeupDomainError(
@@ -568,6 +576,7 @@ async def create_postponement(
     ]
     adjustment = ClassScheduleAdjustment(
         class_id=class_.id,
+        adjustment_kind="OCCURRENCE",
         reason_code=data.reason_code,
         reason_note=(data.reason_note or "").strip() or None,
         affected_from=min(affected_dates),
@@ -603,6 +612,7 @@ async def create_postponement(
             original_end_at=occurrence.original_end_at,
             original_timezone=BUSINESS_TIMEZONE.key,
             status="MAKEUP_PENDING",
+            source_slot_id=occurrence.source_slot_id,
         )
         db.add(exception)
         await db.flush()
@@ -617,6 +627,7 @@ async def create_postponement(
                         staff.full_name if staff is not None else "Nhân sự đã gỡ"
                     ),
                     source_slot_key=occurrence.source_slot_key,
+                    source_slot_id=occurrence.source_slot_id,
                 )
             )
         for staff_id in occurrence.assistant_ids:
@@ -630,6 +641,7 @@ async def create_postponement(
                         staff.full_name if staff is not None else "Nhân sự đã gỡ"
                     ),
                     source_slot_key=occurrence.source_slot_key,
+                    source_slot_id=occurrence.source_slot_id,
                 )
             )
         eligible = await _eligible_students(
@@ -683,32 +695,6 @@ async def create_postponement(
     )
 
 
-def _match_template_occurrence(
-    class_: Class,
-    schedule: ClassSchedule,
-    original_start_at: datetime,
-) -> Occurrence | None:
-    """Tìm đúng occurrence trong weekly template theo (weekday, start time)."""
-    local = original_start_at.astimezone(BUSINESS_TIMEZONE)
-    weekday_name = _weekday_name(local)
-    local_time = local.strftime("%H:%M")
-    for slot in schedule.slots:
-        if slot.day != weekday_name or slot.start != local_time:
-            continue
-        return Occurrence(
-            class_id=class_.id,
-            key=occurrence_key(class_.id, original_start_at),
-            kind="REGULAR",
-            original_start_at=original_start_at,
-            original_end_at=original_start_at
-            + timedelta(minutes=slot_duration_minutes(slot.start, slot.end)),
-            source_slot_key=slot_key(slot.day, slot.start, slot.end),
-            teacher_ids=[str(item) for item in slot.teacher_ids],
-            assistant_ids=[str(item) for item in slot.assistant_ids],
-        )
-    return None
-
-
 async def _find_first_free_candidate(
     db: AsyncSession,
     *,
@@ -728,6 +714,10 @@ async def _find_first_free_candidate(
         candidate_end = candidate_start + duration
         if candidate_start <= now:
             continue
+        try:
+            await _validate_suspension_makeup_target(db, exception, candidate_start)
+        except MakeupDomainError:
+            continue
         conflicts = await check_makeup_conflicts(
             db,
             class_id=class_.id,
@@ -744,6 +734,28 @@ async def _find_first_free_candidate(
         if not conflicts:
             return candidate_start
     return None
+
+
+async def _validate_suspension_makeup_target(db, exception, replacement_start_at):
+    """Keep suggestion, preview and apply on the same service-pause contract."""
+    from app.services.enrollment_guard import get_open_suspension
+
+    if await get_open_suspension(
+        db,
+        exception.class_id,
+        replacement_start_at.astimezone(BUSINESS_TIMEZONE).date(),
+    ):
+        raise MakeupDomainError(
+            "INVALID_TRANSITION",
+            "Buổi bù nằm trong khoảng lớp đang nghỉ. Hãy chọn ngày học lại hoặc ngày sau đó.",
+        )
+    if not exception.source_slot_id or not any(
+        snapshot.role == "TEACHER" for snapshot in exception.staff_snapshots
+    ):
+        raise MakeupDomainError(
+            "INVALID_TRANSITION",
+            "Buổi hoãn cũ thiếu bản ghi lịch hoặc giáo viên gốc. Cần kiểm tra dữ liệu trước khi xếp bù.",
+        )
 
 
 async def _apply_schedule_transition(
@@ -767,6 +779,7 @@ async def _apply_schedule_transition(
         )
     duration = exception.original_end_at - exception.original_start_at
     replacement_end_at = replacement_start_at + duration
+    await _validate_suspension_makeup_target(db, exception, replacement_start_at)
     teacher_ids = [
         snapshot.staff_id
         for snapshot in exception.staff_snapshots
@@ -837,6 +850,7 @@ async def preview_makeup_schedule(
             "INVALID_TRANSITION", "Buổi học này không thể xếp lịch bù"
         )
     replacement_start_at = data.replacement_start_at.astimezone(timezone.utc)
+    await _validate_suspension_makeup_target(db, exception, replacement_start_at)
     duration = exception.original_end_at - exception.original_start_at
     replacement_end_at = replacement_start_at + duration
     if replacement_start_at <= exception.original_start_at:
@@ -1116,6 +1130,17 @@ async def restore_original_session(
             "CLASS_VERSION_CONFLICT",
             "Dữ liệu buổi học vừa được cập nhật. Vui lòng tải lại rồi thử lại",
         )
+    from app.services.enrollment_guard import get_open_suspension
+
+    if await get_open_suspension(
+        db,
+        exception.class_id,
+        exception.original_start_at.astimezone(BUSINESS_TIMEZONE).date(),
+    ):
+        raise MakeupDomainError(
+            "RESTORE_NOT_ALLOWED",
+            "Buổi gốc nằm trong khoảng lớp đang nghỉ. Cần điều chỉnh hoặc hủy hoãn lớp để đối soát ngày bảo lưu trước.",
+        )
     validate_transition(exception.status, "RESTORED")
     now = now or datetime.now(timezone.utc)
     if exception.original_start_at <= now:
@@ -1210,43 +1235,26 @@ async def get_class_effective_occurrences(
     range_end = datetime.combine(
         to_date + timedelta(days=1), datetime.min.time(), tzinfo=BUSINESS_TIMEZONE
     )
-    exceptions = await _load_exceptions_for_class(
+    payloads = await load_exception_payloads(
         db,
-        str(class_id),
-        from_date,
-        to_date + timedelta(days=1),
+        [str(class_id)],
+        range_start=range_start,
+        range_end=range_end,
     )
-    exception_payloads: list[dict] = []
-    for item in exceptions:
-        exception_payloads.append(
-            {
-                "id": item.id,
-                "status": item.status,
-                "original_start_at": item.original_start_at,
-                "original_end_at": item.original_end_at,
-                "replacement_start_at": item.replacement_start_at,
-                "replacement_end_at": item.replacement_end_at,
-                "source_slot_key": (
-                    item.staff_snapshots[0].source_slot_key
-                    if item.staff_snapshots
-                    else ""
-                ),
-                "staff_snapshots": [
-                    {
-                        "staff_id": snapshot.staff_id,
-                        "role": snapshot.role,
-                    }
-                    for snapshot in item.staff_snapshots
-                ],
-            }
-        )
+    exception_payloads = payloads.get(str(class_id), [])
     regular = await expand_class_occurrences(
         db,
         class_,
         range_start=range_start,
         range_end=range_end,
     )
-    effective = apply_exceptions(regular, exception_payloads, class_id=str(class_.id))
+    effective = overlay_occurrences(
+        regular,
+        exception_payloads,
+        class_id=class_.id,
+        range_start=range_start,
+        range_end=range_end,
+    )
     today = business_today()
     return ClassOccurrenceListResponse(
         class_id=class_id,
@@ -1357,57 +1365,29 @@ async def get_effective_occurrences_for_range(
     if not classes:
         return []
 
-    exceptions_result = await db.execute(
-        select(ClassSessionException)
-        .where(
-            ClassSessionException.class_id.in_([class_.id for class_ in classes]),
-            ClassSessionException.original_start_at < range_end,
-            ClassSessionException.original_end_at >= range_start,
-        )
-        .options(
-            selectinload(ClassSessionException.staff_snapshots),
-            selectinload(ClassSessionException.student_snapshots),
-        )
-        .order_by(ClassSessionException.original_start_at.asc())
+    payloads_by_class = await load_exception_payloads(
+        db,
+        [str(c.id) for c in classes],
+        range_start=range_start,
+        range_end=range_end,
     )
-    exceptions_by_class: dict[str, list[ClassSessionException]] = {}
-    for exception in exceptions_result.scalars().unique().all():
-        exceptions_by_class.setdefault(str(exception.class_id), []).append(exception)
 
     today = business_today()
     results: list[ClassOccurrenceListResponse] = []
     for class_ in classes:
-        exception_payloads: list[dict] = []
-        for item in exceptions_by_class.get(class_.id, []):
-            exception_payloads.append(
-                {
-                    "id": item.id,
-                    "status": item.status,
-                    "original_start_at": item.original_start_at,
-                    "original_end_at": item.original_end_at,
-                    "replacement_start_at": item.replacement_start_at,
-                    "replacement_end_at": item.replacement_end_at,
-                    "source_slot_key": (
-                        item.staff_snapshots[0].source_slot_key
-                        if item.staff_snapshots
-                        else ""
-                    ),
-                    "staff_snapshots": [
-                        {
-                            "staff_id": snapshot.staff_id,
-                            "role": snapshot.role,
-                        }
-                        for snapshot in item.staff_snapshots
-                    ],
-                }
-            )
         regular = await expand_class_occurrences(
             db,
             class_,
             range_start=range_start,
             range_end=range_end,
         )
-        effective = apply_exceptions(regular, exception_payloads, class_id=class_.id)
+        effective = overlay_occurrences(
+            regular,
+            payloads_by_class.get(str(class_.id), []),
+            class_id=class_.id,
+            range_start=range_start,
+            range_end=range_end,
+        )
         results.append(
             ClassOccurrenceListResponse(
                 class_id=UUID(str(class_.id)),

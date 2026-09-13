@@ -22,6 +22,7 @@ import httpx
 from fastapi import HTTPException, status
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.auth_credentials import (
     decrypt_credential,
@@ -31,6 +32,7 @@ from app.core.auth_credentials import (
 from app.core.config import settings
 from app.core.workspace import reset_workspace_id, set_workspace_id
 from app.models.banking import WorkspacePaymentAccount, WorkspacePaymentProvider
+from app.models.fee_record import FeeRecord
 from app.models.payment_request import (
     PaymentRequest,
     PaymentRequestEvent,
@@ -397,14 +399,12 @@ async def _match_open_request(
     if len(references) != 1:
         return None
     request_result = await db.execute(
-        select(PaymentRequest)
-        .where(
+        select(PaymentRequest).where(
             PaymentRequest.status == "OPEN",
             PaymentRequest.payment_reference == references[0],
             PaymentRequest.expected_amount == amount,
             PaymentRequest.settlement_account_id == str(account.id),
         )
-        .with_for_update()
     )
     matches = request_result.scalars().all()
     # References are globally unique, but fail closed if database corruption
@@ -633,7 +633,49 @@ async def ingest_pay2s_webhook(
                 item_ids = [
                     UUID(item.fee_record_id) for item in item_result.scalars().all()
                 ]
-                if item_ids:
+                # Same order as anchor changes and manual payments: fee rows
+                # first, then the request; recheck after any concurrent revoke.
+                locked_fees = list(
+                    (
+                        await db.scalars(
+                            select(FeeRecord)
+                            .where(FeeRecord.id.in_([str(id_) for id_ in item_ids]))
+                            .options(selectinload(FeeRecord.payments))
+                            .order_by(FeeRecord.id)
+                            .with_for_update()
+                            .execution_options(populate_existing=True)
+                        )
+                    ).all()
+                )
+                request = await db.scalar(
+                    select(PaymentRequest)
+                    .where(PaymentRequest.id == request.id)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+                if request is None or request.status != "OPEN":
+                    review_reason = "payment_request_no_longer_open"
+                elif request.expires_at and request.expires_at <= datetime.now(
+                    timezone.utc
+                ):
+                    review_reason = "payment_request_expired"
+                elif (
+                    not item_ids
+                    or len(locked_fees) != len(set(item_ids))
+                    or any(
+                        fee.status != "UNPAID"
+                        or fee.review_required
+                        or fee.paid_date
+                        or int(fee.paid_amount or 0)
+                        or int(fee.refunded_amount or 0)
+                        or bool(fee.payments)
+                        for fee in locked_fees
+                    )
+                ):
+                    review_reason = "fee_obligation_changed"
+                elif sum(int(fee.final_amount) for fee in locked_fees) != amount:
+                    review_reason = "payment_snapshot_mismatch"
+                else:
                     from app.services.fee_service import mark_fees_paid
 
                     await mark_fees_paid(
@@ -799,9 +841,7 @@ async def ingest_pay2s_collection_ipn(
             )
         )
         request = await db.scalar(
-            select(PaymentRequest)
-            .where(PaymentRequest.request_id == request_key)
-            .with_for_update()
+            select(PaymentRequest).where(PaymentRequest.request_id == request_key)
         )
         if provider is None or request is None:
             raise HTTPException(
@@ -817,19 +857,46 @@ async def ingest_pay2s_collection_ipn(
                 detail="Chữ ký IPN Pay2S không hợp lệ.",
             )
 
+        # Match the financial writers' lock order: fee rows, then requests.
+        # Authenticate before taking locks. Re-read the request after waiting:
+        # an anchor change may have revoked it in the meantime.
+        item_ids = list(
+            (
+                await db.scalars(
+                    select(PaymentRequestItem.fee_record_id).where(
+                        PaymentRequestItem.payment_request_id == request.id
+                    )
+                )
+            ).all()
+        )
+        if not item_ids and request.fee_record_id:
+            item_ids = [request.fee_record_id]
+        locked_fees = list(
+            (
+                await db.scalars(
+                    select(FeeRecord)
+                    .where(FeeRecord.id.in_(item_ids))
+                    .options(selectinload(FeeRecord.payments))
+                    .order_by(FeeRecord.id)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+            ).all()
+        )
+        request = await db.scalar(
+            select(PaymentRequest)
+            .where(PaymentRequest.request_id == request_key)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if request is None:
+            raise HTTPException(409, "Yêu cầu thanh toán đã thay đổi.")
         collection_link = _as_mapping(
             (request.provider_metadata or {}).get("collection_link")
         )
         if (
-            request.status != "OPEN"
-            or order_key != str(request.request_id)
+            order_key != str(request.request_id)
             or request_key != str(request.request_id)
-            or int(request.expected_amount) != amount
-            or _normalized_content(payload.get("orderInfo"))
-            != _normalized_content(
-                collection_link.get("order_info")
-                or re.sub(r"[^A-Za-z0-9]", "", request.payment_reference)[:32]
-            )
             or collection_link.get("request_id") != request_key
         ):
             raise HTTPException(
@@ -846,16 +913,30 @@ async def ingest_pay2s_collection_ipn(
             text(
                 "select id from public.payment_provider_deliveries "
                 "where provider = 'pay2s' and provider_transaction_id = :transaction_id "
+                "and workspace_id = cast(:workspace_id as uuid) "
+                "and provider_event_id like 'collection-ipn:%' "
                 "limit 1"
             ),
-            {"transaction_id": transaction_id},
+            {"transaction_id": transaction_id, "workspace_id": workspace_id},
         )
         if duplicate is not None:
+            same_event = await db.scalar(
+                text(
+                    "select id from public.payment_provider_deliveries "
+                    "where id = :id and provider_event_id = :event_id"
+                ),
+                {"id": str(duplicate), "event_id": event_id},
+            )
+            if same_event is None:
+                raise HTTPException(
+                    409,
+                    "Mã giao dịch đã được tiếp nhận cho yêu cầu khác; cần đối soát.",
+                )
             await db.commit()
             return str(duplicate)
 
         payload_hash = hashlib.sha256(raw_body).hexdigest()
-        result_code = str(payload.get("resultCode") or "")
+        result_code = str(payload.get("resultCode", ""))
         if result_code != "0":
             delivery_id = await _insert_delivery(
                 db,
@@ -885,26 +966,46 @@ async def ingest_pay2s_collection_ipn(
             await db.commit()
             return delivery_id or event_id
 
-        delivery_status = "QUARANTINED"
-        if settings.payment_auto_post_enabled:
-            item_result = await db.execute(
-                select(PaymentRequestItem)
-                .where(PaymentRequestItem.payment_request_id == request.id)
-                .order_by(PaymentRequestItem.id)
+        review_reason = None
+        if request.status != "OPEN":
+            review_reason = "payment_request_no_longer_open"
+        elif getattr(
+            request, "expires_at", None
+        ) and request.expires_at <= datetime.now(timezone.utc):
+            review_reason = "payment_request_expired"
+        elif int(request.expected_amount) != amount or _normalized_content(
+            payload.get("orderInfo")
+        ) != _normalized_content(
+            collection_link.get("order_info")
+            or re.sub(r"[^A-Za-z0-9]", "", request.payment_reference)[:32]
+        ):
+            review_reason = "payment_snapshot_mismatch"
+        elif (
+            not item_ids
+            or len(locked_fees) != len(set(item_ids))
+            or any(
+                fee.status != "UNPAID"
+                or fee.review_required
+                or fee.paid_date
+                or int(fee.paid_amount or 0)
+                or int(fee.refunded_amount or 0)
+                or bool(fee.payments)
+                for fee in locked_fees
             )
-            item_ids = [
-                UUID(item.fee_record_id) for item in item_result.scalars().all()
-            ]
-            if not item_ids:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Yêu cầu Pay2S không có khoản học phí để ghi nhận.",
-                )
+        ):
+            review_reason = "fee_obligation_changed"
+        elif sum(int(fee.final_amount) for fee in locked_fees) != amount:
+            review_reason = "payment_snapshot_mismatch"
+        elif not settings.payment_auto_post_enabled:
+            review_reason = "auto_post_disabled"
+
+        delivery_status = "QUARANTINED"
+        if review_reason is None:
             from app.services.fee_service import mark_fees_paid
 
             await mark_fees_paid(
                 db,
-                item_ids,
+                [UUID(str(id_)) for id_ in item_ids],
                 actor_id=None,
                 payment_method="bank_transfer",
                 settlement_account_id=(
@@ -949,9 +1050,7 @@ async def ingest_pay2s_collection_ipn(
             delivery_id=delivery_id,
             payment_request_id=str(request.id),
             queue_status=("POSTED" if delivery_status == "PROCESSED" else "REVIEW"),
-            review_reason=(
-                None if delivery_status == "PROCESSED" else "auto_post_disabled"
-            ),
+            review_reason=review_reason,
             transaction_snapshot={
                 "source": "collection_ipn",
                 "provider_transaction_id": transaction_id,

@@ -118,7 +118,12 @@ async def check_in(
     now = datetime.now(timezone.utc)
     from app.services.attendance_occurrence_service import resolve_occurrence_for_staff
 
-    occurrence = await resolve_occurrence_for_staff(db, UUID(occurrence_id), staff_id)
+    occurrence = await resolve_occurrence_for_staff(
+        db,
+        UUID(occurrence_id),
+        staff_id,
+        for_update=True,
+    )
     if occurrence is None:
         raise HTTPException(
             status_code=403,
@@ -236,8 +241,12 @@ async def list_manual_attendance_targets(
         ClassScheduleSlotStaffRevision,
     )
     from app.services.attendance_occurrence_service import attendance_occurrence_id
-    from app.services.schedule_slot_service import load_class_slots_bulk
-    from app.core.occurrence import expand_weekly_occurrences
+    from app.services.schedule_slot_service import expand_class_occurrences_bulk
+    from app.models.makeup import ClassSessionException, ClassSessionStaffSnapshot
+    from app.services.effective_occurrence_service import (
+        load_exception_payloads,
+        overlay_occurrences,
+    )
 
     staff = await db.get(StaffMember, str(staff_id))
     if staff is None or not staff.is_active:
@@ -279,9 +288,9 @@ async def list_manual_attendance_targets(
             Class.is_active.is_(True),
             Class.cancelled_at.is_(None),
             Class.stopped_at.is_(None),
-            ClassScheduleSlot.effective_from <= today,
+            ClassScheduleSlot.effective_from <= range_end.date(),
             (ClassScheduleSlot.effective_until.is_(None))
-            | (ClassScheduleSlot.effective_until > today),
+            | (ClassScheduleSlot.effective_until > range_start.date()),
         )
     )
 
@@ -303,21 +312,53 @@ async def list_manual_attendance_targets(
             (role, assignment_from, assignment_until)
         )
 
+    # A makeup keeps its original staff entitlement, even when that staff is
+    # no longer in today's weekly assignment. Include those classes explicitly.
+    makeup_classes = await db.execute(
+        select(Class.id, Class.name, Class.start_date, Class.stopped_on)
+        .join(ClassSessionException, ClassSessionException.class_id == Class.id)
+        .join(
+            ClassSessionStaffSnapshot,
+            ClassSessionStaffSnapshot.exception_id == ClassSessionException.id,
+        )
+        .where(
+            ClassSessionStaffSnapshot.staff_id == str(staff_id),
+            ClassSessionException.status.in_(("MAKEUP_SCHEDULED", "MAKEUP_COMPLETED")),
+            ClassSessionException.replacement_start_at < range_end,
+            ClassSessionException.replacement_end_at > range_start,
+            Class.is_active.is_(True),
+            Class.cancelled_at.is_(None),
+        )
+        .distinct()
+    )
+    for cid, name, start, stop in makeup_classes.all():
+        class_meta[str(cid)] = (name, start, stop)
+
     if not class_meta:
         return []
 
     class_ids = list(class_meta)
-    slots_by_class = await load_class_slots_bulk(
+    occurrences_by_class = await expand_class_occurrences_bulk(
+        db, class_ids, range_start=range_start, range_end=range_end
+    )
+    payloads = await load_exception_payloads(
         db,
         class_ids,
-        effective_at=today,
+        range_start=range_start,
+        range_end=range_end,
     )
     slot_ids = [
-        str(slot["slot_id"])
-        for slots in slots_by_class.values()
-        for slot in slots
-        if slot.get("slot_id")
+        str(o.source_slot_id)
+        for occurrences in occurrences_by_class.values()
+        for o in occurrences
+        if o.source_slot_id
     ]
+    slot_ids.extend(
+        str(p["source_slot_id"])
+        for entries in payloads.values()
+        for p in entries
+        if p.get("source_slot_id")
+    )
     if not slot_ids:
         return []
 
@@ -350,33 +391,39 @@ async def list_manual_attendance_targets(
 
     targets: list[ManualAttendanceTarget] = []
     for class_id, (class_name, start_date, end_date) in class_meta.items():
-        schedule_slots = slots_by_class.get(class_id, [])
-        if not schedule_slots:
-            continue
-        expanded = expand_weekly_occurrences(
+        expanded = occurrences_by_class.get(class_id, [])
+        expanded = overlay_occurrences(
+            expanded,
+            payloads.get(class_id, []),
             class_id=class_id,
-            schedule={"slots": schedule_slots},
-            start_date=start_date,
-            end_date=end_date,
             range_start=range_start,
             range_end=range_end,
         )
         for occurrence in expanded:
             slot_id = str(occurrence.source_slot_id or "")
-            if not slot_id or slot_id not in assignment_windows:
+            if not slot_id:
                 continue
             assignment = next(
                 (
                     window
-                    for window in assignment_windows[slot_id]
+                    for window in assignment_windows.get(slot_id, [])
                     if window[1] <= occurrence.original_start_at
                     and (window[2] is None or window[2] > occurrence.original_start_at)
                 ),
                 None,
             )
-            if assignment is None:
+            if occurrence.kind == "MAKEUP":
+                assignment_role = (
+                    "TEACHER"
+                    if str(staff_id) in occurrence.teacher_ids
+                    else "ASSISTANT"
+                    if str(staff_id) in occurrence.assistant_ids
+                    else None
+                )
+            else:
+                assignment_role = assignment[0] if assignment else None
+            if assignment_role is None:
                 continue
-            assignment_role = assignment[0]
             # Sessions from today onward stay in the regular attendance screen;
             # this picker is only the short backfill window.
             if occurrence.original_start_at >= today_start:
@@ -467,6 +514,7 @@ async def manual_check_in(
         str(staff_id),
         days_before=3,
         days_after=7,
+        for_update=True,
     )
     if occurrence is None:
         raise HTTPException(

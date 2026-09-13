@@ -66,7 +66,9 @@ def snapshot_fee_record(record: FeeRecord | None) -> FeeRecordAuditSnapshot | No
         _to_int(record.paid_amount) if record.paid_amount is not None else None
     )
     refunded_amount = _to_int(record.refunded_amount)
-    if record.status == "PAID" and refunded_amount > 0:
+    if record.status in ("VOID", "SUPERSEDED"):
+        state = record.status
+    elif record.status == "PAID" and refunded_amount > 0:
         state = (
             "REFUNDED_FULL"
             if paid_amount and refunded_amount >= paid_amount

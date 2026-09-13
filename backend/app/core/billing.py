@@ -159,12 +159,17 @@ def get_enrollment_next_fee_due(
     upcoming_dates: list[date] = []
     max_cycle = -1
     max_anchor_cycle = -1
-    current_revision = getattr(enrollment, "__dict__", {}).get(
-        "current_billing_revision"
+    attributes = getattr(enrollment, "__dict__", None)
+    current_revision = (
+        attributes.get("current_billing_revision")
+        if attributes is not None
+        else getattr(enrollment, "current_billing_revision", None)
     )
     current_revision_id = getattr(enrollment, "current_billing_revision_id", None)
     cumulative_deferral_days = 0
     for record in getattr(enrollment, "fee_records", None) or []:
+        if getattr(record, "status", None) == "SUPERSEDED":
+            continue
         cycle_no = getattr(record, "cycle_no", None)
         if cycle_no is not None:
             max_cycle = max(max_cycle, int(cycle_no))
@@ -178,10 +183,18 @@ def get_enrollment_next_fee_due(
             )
         base_due_date = getattr(record, "base_due_date", None)
         adjusted_due_date = getattr(record, "adjusted_due_date", None)
-        if base_due_date is not None and adjusted_due_date is not None:
+        if (
+            base_due_date is not None
+            and adjusted_due_date is not None
+            and getattr(record, "status", None) != "VOID"
+        ):
             cumulative_deferral_days = max(
                 cumulative_deferral_days,
-                max(0, (adjusted_due_date - base_due_date).days),
+                max(
+                    0,
+                    (adjusted_due_date - base_due_date).days
+                    - int(getattr(record, "collection_due_offset_days", 0) or 0),
+                ),
             )
         if getattr(record, "status", None) != "UNPAID":
             continue
@@ -231,19 +244,84 @@ def get_enrollment_next_fee_due(
     schedule_cycle = (
         max_anchor_cycle + 1 if current_revision is not None else next_cycle
     )
+    if current_revision is not None:
+        schedule_cycle = max(
+            schedule_cycle,
+            int(getattr(current_revision, "first_anchor_cycle_no", 0) or 0),
+        )
     coverage_start, _ = cycle_coverage_interval(
         enrollment_date, billing_type, cycle_weeks, schedule_cycle
     )
-    if cycle_exists(coverage_start, getattr(class_, "stopped_on", None)):
+    stop_date = min(
+        [
+            d
+            for d in (
+                getattr(class_, "stopped_on", None),
+                getattr(enrollment, "ended_on", None),
+            )
+            if isinstance(d, date)
+        ],
+        default=None,
+    )
+    if (
+        cycle_exists(coverage_start, stop_date)
+        and getattr(current_revision, "state", None) != "PENDING"
+    ):
         next_due = cycle_base_due_date(
             enrollment_date, billing_type, cycle_weeks, schedule_cycle
         )
+        windows = getattr(enrollment, "billing_deferral_windows", None)
+        if isinstance(windows, list):
+            cumulative_deferral_days = max(
+                0,
+                sum(days for effective, days in windows if effective <= coverage_start),
+            )
         if cumulative_deferral_days:
             next_due = next_due + timedelta(days=cumulative_deferral_days)
         if next_due < reference:
             overdue_dates.append(next_due)
         else:
             upcoming_dates.append(next_due)
+
+    # A future new anchor does not suppress the explicitly retained old cadence.
+    segments = getattr(current_revision, "scheduled_segments", None)
+    if (
+        isinstance(segments, list)
+        and getattr(current_revision, "state", None) != "PENDING"
+    ):
+        from app.core.billing_change_plan import Interval, uncovered_intervals
+        from app.services.billing_segment_service import segment_spans
+
+        covered = tuple(
+            Interval(r.coverage_start, r.coverage_end)
+            for r in getattr(enrollment, "fee_records", [])
+            if getattr(r, "status", None) != "SUPERSEDED"
+            and isinstance(getattr(r, "coverage_start", None), date)
+            and isinstance(getattr(r, "coverage_end", None), date)
+        )
+        covered += tuple(
+            Interval(date.fromisoformat(s["start"]), date.fromisoformat(s["end"]))
+            for s in (getattr(current_revision, "waived_intervals", None) or [])
+        )
+        for segment in segments:
+            for span in segment_spans(segment, date.max):
+                gaps = uncovered_intervals(span, covered)
+                if not gaps:
+                    continue
+                candidate = gaps[0].start
+                if stop_date and candidate >= stop_date:
+                    break
+                windows = getattr(enrollment, "billing_deferral_windows", None)
+                shift = (
+                    sum(days for effective, days in windows if effective <= candidate)
+                    if isinstance(windows, list)
+                    else cumulative_deferral_days
+                )
+                candidate += timedelta(days=max(0, shift))
+                (overdue_dates if candidate < reference else upcoming_dates).append(
+                    candidate
+                )
+                break
 
     if overdue_dates:
         return max(overdue_dates), NEXT_FEE_DUE_OVERDUE

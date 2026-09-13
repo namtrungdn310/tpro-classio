@@ -43,6 +43,10 @@ class EnrollmentServiceCreditEvent(WorkspaceScoped, Base):
         ForeignKey("profiles.id", ondelete="SET NULL"),
     )
     reason_snapshot: Mapped[str | None] = mapped_column(Text)
+    suspension_command_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("suspension_commands.id", ondelete="RESTRICT"),
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -75,6 +79,7 @@ class ServiceCreditAllocation(WorkspaceScoped, Base):
         nullable=False,
     )
     allocated_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    applies_from: Mapped[date | None] = mapped_column(Date)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

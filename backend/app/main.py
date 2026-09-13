@@ -40,6 +40,7 @@ from app.routers.reports import router as reports_router
 from app.routers.staff import router as staff_router
 from app.routers.students import enrollments_router, students_router
 from app.routers.suspensions import router as suspensions_router
+from app.routers.enrollment_suspensions import router as enrollment_suspensions_router
 from app.services.auth_flow_service import purge_expired_auth_flows
 from app.services.google_identity_service import sync_due_google_avatars
 
@@ -77,6 +78,8 @@ _REQUIRED_SCHEMA_RELATIONS = (
     "student_membership_commands",
     "student_membership_command_items",
     "class_schedule_slot_staff_revisions",
+    "start_date_change_commands",
+    "start_date_change_command_items",
 )
 
 # Several forward migrations provide trigger-only invariants. Readiness must
@@ -94,6 +97,15 @@ _REQUIRED_SCHEMA_TRIGGERS = (
     "class_teachers:class_teachers_validate_staff",
     "class_schedule_slot_staff:class_schedule_slot_staff_validate_assignment",
     "class_schedule_slot_staff_revisions:class_schedule_slot_staff_revisions_validate",
+    "classes:class_admission_start_boundary",
+    "enrollments:enrollment_class_start_boundary",
+    "suspension_commands:zz_suspension_command_boundary",
+    "suspension_commands:suspension_commands_immutable",
+    "enrollment_service_credit_events:suspension_credit_command_boundary",
+    "service_credit_allocations:zz_service_credit_allocation_balance",
+    "enrollment_service_credit_events:zz_suspension_signed_event",
+    "service_credit_allocations:zz_suspension_request_protection",
+    "service_credit_allocations:suspension_allocation_windows",
 )
 
 _REQUIRED_SCHEMA_FUNCTIONS = (
@@ -121,8 +133,24 @@ _REQUIRED_SCHEMA_COLUMNS = (
     "fee_records:review_required",
     "billing_anchor_revisions:billing_cycle_weeks_snapshot",
     "billing_anchor_revisions:change_kind",
+    "billing_anchor_revisions:scheduled_segments",
+    "billing_anchor_revisions:waived_intervals",
     "class_teachers:role",
     "staff_compensation_rates:assignment_role",
+    "enrollments:admission_version",
+    "start_date_change_commands:operation_kind",
+    "start_date_change_commands:execution_plan",
+    "fee_records:admission_date_snapshot",
+    "fee_records:billing_anchor_date_snapshot",
+    "fee_records:collection_due_offset_days",
+    "class_schedule_adjustments:adjustment_kind",
+    "class_schedule_adjustments:create_payload",
+    "class_schedule_adjustments:create_result",
+    "enrollment_suspensions:enrollment_id",
+    "enrollment_suspensions:version",
+    "suspension_commands:before_snapshot",
+    "enrollment_service_credit_events:suspension_command_id",
+    "service_credit_allocations:applies_from",
 )
 
 
@@ -345,6 +373,7 @@ app.include_router(staff_router, prefix="/staff")
 app.include_router(students_router, prefix="/students")
 app.include_router(enrollments_router, prefix="/enrollments")
 app.include_router(suspensions_router, prefix="/classes")
+app.include_router(enrollment_suspensions_router, prefix="/enrollments")
 
 
 @app.middleware("http")

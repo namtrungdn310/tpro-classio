@@ -151,6 +151,14 @@ async def _make_class_with_teacher(
             ),
             {"c": class_id, "t": assistant_id},
         )
+    # REWRITE fixture: live classes now have stable relational occurrence IDs.
+    # Keep the JSON compatibility projection but do not exercise legacy repair
+    # accidentally in ordinary makeup/financial-isolation tests.
+    from app.models.class_ import Class
+    from app.services.schedule_slot_service import sync_class_slots
+
+    class_ = await db.get(Class, class_id)
+    await sync_class_slots(db, class_, class_.schedule, effective_from=monday)
 
 
 async def _make_student(db, student_id: str, name: str) -> None:
@@ -189,6 +197,14 @@ async def _make_enrollment(
             "enrollment_date": enrollment_date,
             "status": status,
         },
+    )
+    await db.execute(
+        text("""
+        insert into public.enrollment_slot_selections (enrollment_id, slot_id, effective_from)
+        select cast(:e as uuid), id, :start from public.class_schedule_slots
+        where class_id = cast(:c as uuid)
+    """),
+        {"e": enrollment_id, "c": class_id, "start": enrollment_date},
     )
 
 

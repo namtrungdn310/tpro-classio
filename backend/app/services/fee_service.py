@@ -5,7 +5,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import contains_eager, raiseload
@@ -930,6 +930,17 @@ async def _transition_fee_records(
 
     ordered_ids = list(dict.fromkeys(str(id_) for id_ in ids))
     records = await _load_locked_fee_records(db, ordered_ids)
+    if action in {"notify", "pay", "unnotify"} and any(
+        record.status in ("VOID", "SUPERSEDED") for record in records
+    ):
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Khoản học phí này đã được thay thế hoặc đã huỷ, không thể thực hiện thao tác. "
+                "Vui lòng tải lại danh sách để thu theo khoản học phí mới."
+            ),
+        )
     if action in {"notify", "pay"} and any(
         bool(record.review_required) for record in records
     ):
@@ -1011,7 +1022,14 @@ async def _transition_fee_records(
                     detail="Cần xử lý kỳ học phí trước đó trước khi ghi nhận sớm kỳ này.",
                 )
 
-    if action == "unnotify" and any(record.status == "PAID" for record in records):
+    if action == "unnotify" and any(
+        (
+            record.status == "PAID"
+            or record.paid_date is not None
+            or (record.paid_amount or 0) > 0
+        )
+        for record in records
+    ):
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -1569,7 +1587,7 @@ async def _get_fee_records_by_ids(
         )
     )
     if for_update:
-        query = query.with_for_update(of=FeeRecord)
+        query = query.order_by(FeeRecord.id).with_for_update(of=FeeRecord)
 
     result = await db.execute(query.execution_options(populate_existing=True))
     records_by_id = {record.id: record for record in result.scalars().unique().all()}
@@ -1604,6 +1622,12 @@ def _reconcile_unnotified_record(record: FeeRecord) -> bool:
     physically deleted.
     """
 
+    from app.core.config import settings
+
+    if settings.independent_billing_dates_enabled and record.cycle_no is not None:
+        # Existing obligations belong to their confirmed financial plan. An
+        # academic edit/notification undo must not reprice or void them.
+        return False
     enrollment = record.enrollment
     class_ = enrollment.class_ if enrollment else None
     student = enrollment.student if enrollment else None
@@ -1851,16 +1875,26 @@ def _record_class_name(record: FeeRecord) -> str:
 
 def _apply_fee_state_filter(query, state: str | None):
     if state == "PAID":
-        return query.where(FeeRecord.status == "PAID")
+        return query.where(
+            or_(
+                FeeRecord.status == "PAID",
+                and_(FeeRecord.paid_amount.is_not(None), FeeRecord.paid_amount > 0),
+                FeeRecord.paid_date.is_not(None),
+            )
+        )
     if state == "NOTIFIED_UNPAID":
         return query.where(
             FeeRecord.status == "UNPAID",
             FeeRecord.notified_at.is_not(None),
+            FeeRecord.paid_date.is_(None),
+            func.coalesce(FeeRecord.paid_amount, 0) == 0,
         )
     if state == "UNNOTIFIED":
         return query.where(
             FeeRecord.status == "UNPAID",
             FeeRecord.notified_at.is_(None),
+            FeeRecord.paid_date.is_(None),
+            func.coalesce(FeeRecord.paid_amount, 0) == 0,
         )
     return query
 

@@ -54,7 +54,10 @@ def _mock_enrollment(
 
 
 @pytest.mark.asyncio
-async def test_preview_v3_fingerprints_enrollment_updates() -> None:
+async def test_preview_v3_fingerprints_enrollment_updates(monkeypatch) -> None:
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "independent_billing_dates_enabled", False)
     now = datetime.now(timezone.utc)
     student = _mock_student(updated_at=now)
     class_id = str(uuid4())

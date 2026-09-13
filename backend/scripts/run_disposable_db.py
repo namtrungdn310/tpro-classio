@@ -302,6 +302,15 @@ def scenario_clean_chain():
         (120, "120_student_lifecycle_event_reason.sql"),
         (121, "121_start_date_change_commands.sql"),
         (122, "122_contextual_class_staff_assignments.sql"),
+        (123, "123_transfer_final_cycle_choice.sql"),
+        (124, "124_independent_admission_dates.sql"),
+        (125, "125_billing_execution_plans.sql"),
+        (126, "126_separate_superseded_fee_metadata.sql"),
+        (127, "127_billing_schedule_segments.sql"),
+        (128, "128_suspension_command_contract.sql"),
+        (129, "129_enrollment_suspensions.sql"),
+        (130, "130_suspension_ledger_boundaries.sql"),
+        (131, "131_suspension_signed_balance.sql"),
     ):
         code, _ = psql_file(DB, MIGRATIONS / filename)
         check_ok(code, f"{number:03d} migration failed")
@@ -772,9 +781,17 @@ grant all on all sequences in schema public to m051_owner;
         (119, "119_membership_effective_dates.sql"),
         (120, "120_student_lifecycle_event_reason.sql"),
         (121, "121_start_date_change_commands.sql"),
+        (122, "122_contextual_class_staff_assignments.sql"),
+        (123, "123_transfer_final_cycle_choice.sql"),
+        (124, "124_independent_admission_dates.sql"),
+        (125, "125_billing_execution_plans.sql"),
     ):
+        # Owner/runtime scenario uses the same application schema as clean-chain.
         code, _ = psql_file(owner_db, MIGRATIONS / filename)
         check_ok(code, f"owner {number:03d} migration failed")
+    for filename in ("126_separate_superseded_fee_metadata.sql", "127_billing_schedule_segments.sql", "128_suspension_command_contract.sql", "129_enrollment_suspensions.sql", "130_suspension_ledger_boundaries.sql", "131_suspension_signed_balance.sql"):
+        code, _ = psql_file(owner_db, MIGRATIONS / filename)
+        check_ok(code, f"owner {filename} failed")
     code, _ = run(
         [
             PSQL,

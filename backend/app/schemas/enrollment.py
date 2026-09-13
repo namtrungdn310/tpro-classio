@@ -3,7 +3,7 @@ from typing import Literal
 from uuid import UUID
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 EnrollmentStatus = Literal["active", "dropped", "completed", "cancelled"]
 
@@ -40,6 +40,22 @@ class EnrollmentUpdate(BaseModel):
 
     custom_fee: int | None = Field(default=None, ge=0, le=999_999_999_999)
     enrollment_date: date | None = None
+    contract_version: Literal[1, 4] = 1
+    expected_admission_version: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def validate_independent_date(self):
+        if self.contract_version == 4 and "enrollment_date" in self.model_fields_set:
+            if self.enrollment_date is None or self.expected_admission_version is None:
+                raise ValueError(
+                    "Sửa ngày ghi danh cần ngày hợp lệ và phiên bản ghi danh"
+                )
+            if "custom_fee" in self.model_fields_set:
+                raise ValueError(
+                    "Vui lòng lưu học phí riêng với thay đổi ngày ghi danh"
+                )
+        return self
+
     billing_change_reason: str | None = Field(
         default=None, min_length=3, max_length=500
     )
@@ -78,6 +94,7 @@ class EnrollmentResponse(BaseModel):
     ended_on: date | None = None
     effective_state: Literal["SCHEDULED", "CURRENT", "ENDED", "CANCELLED"] = "CURRENT"
     billing_anchor_version: int = 0
+    admission_version: int = 0
     ended_at: datetime | None = None
     end_reason: str | None = None
     selected_slot_ids: list[UUID] = Field(default_factory=list)

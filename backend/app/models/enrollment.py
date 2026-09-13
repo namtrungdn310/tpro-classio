@@ -28,6 +28,9 @@ class Enrollment(WorkspaceScoped, Base):
         nullable=False,
     )
     enrollment_date: Mapped[date | None] = mapped_column(Date)
+    admission_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     # Exclusive business boundary. This is the end of one student's class
     # membership, not a planned class end date.
     ended_on: Mapped[date | None] = mapped_column(Date)

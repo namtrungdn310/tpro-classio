@@ -43,6 +43,7 @@ async def close_enrollment_financial_projection(
     actor_user_id: str | None,
     reason: str,
     close_on: date | None = None,
+    include_cycle_containing_close_date: bool = False,
 ) -> None:
     """Close mutable fees and revoke stale QR references for a membership.
 
@@ -58,6 +59,16 @@ async def close_enrollment_financial_projection(
     from app.services.payment_scaffold_service import (
         revoke_open_payment_requests_for_fee_records,
     )
+    from app.services.suspension_boundary_service import record_closed_preservation
+    from app.models.payment_request import PaymentRequest, PaymentRequestItem
+
+    await record_closed_preservation(
+        db,
+        enrollment,
+        close_on or enrollment.ended_on,
+        actor_id=actor_user_id,
+        reason=reason,
+    )
 
     records = list(
         (
@@ -66,7 +77,25 @@ async def close_enrollment_financial_projection(
                 .where(
                     FeeRecord.enrollment_id == enrollment.id,
                     FeeRecord.status.notin_(("VOID", "SUPERSEDED")),
+                    ~select(PaymentRequest.id)
+                    .outerjoin(
+                        PaymentRequestItem,
+                        PaymentRequestItem.payment_request_id == PaymentRequest.id,
+                    )
+                    .where(
+                        or_(
+                            PaymentRequest.fee_record_id == FeeRecord.id,
+                            PaymentRequestItem.fee_record_id == FeeRecord.id,
+                        ),
+                        or_(
+                            PaymentRequest.sent_at.is_not(None),
+                            PaymentRequest.paid_at.is_not(None),
+                            PaymentRequest.status == "PAID",
+                        ),
+                    )
+                    .exists(),
                 )
+                .options(selectinload(FeeRecord.payments))
                 .with_for_update()
             )
         ).all()
@@ -74,16 +103,23 @@ async def close_enrollment_financial_projection(
     if not records:
         return
 
-    mutable = [
-        record
-        for record in records
-        if not is_fee_record_protected(record)
-        and (
-            close_on is None
-            or (record.coverage_start or record.base_due_date or record.due_date)
-            >= close_on
+    def should_void(record: FeeRecord) -> bool:
+        if is_fee_record_protected(record):
+            return False
+        if close_on is None:
+            return True
+        starts_on = record.coverage_start or record.base_due_date or record.due_date
+        if starts_on is None:
+            return False
+        if starts_on >= close_on:
+            return True
+        return bool(
+            include_cycle_containing_close_date
+            and record.coverage_end is not None
+            and record.coverage_end >= close_on
         )
-    ]
+
+    mutable = [record for record in records if should_void(record)]
     if not mutable:
         return
     # A notified unpaid row remains a real debt after the membership closes,
@@ -133,6 +169,7 @@ def _to_response(
         ended_on=enrollment.ended_on,
         effective_state=effective_enrollment_state(enrollment),
         billing_anchor_version=int(enrollment.billing_anchor_version or 0),
+        admission_version=int(getattr(enrollment, "admission_version", 0) or 0),
         ended_at=enrollment.ended_at,
         end_reason=enrollment.end_reason,
         selected_slot_ids=[
@@ -475,6 +512,7 @@ async def realign_open_slot_selections(
     *,
     previous_start: date,
     next_start: date,
+    validate_only: bool = False,
 ) -> None:
     """Keep current attendance entitlements aligned with an edited start date."""
 
@@ -486,7 +524,7 @@ async def realign_open_slot_selections(
                     EnrollmentSlotSelection.enrollment_id == enrollment.id,
                     EnrollmentSlotSelection.effective_until.is_(None),
                 )
-                .with_for_update()
+                .with_for_update(read=validate_only)
             )
         ).all()
     )
@@ -543,7 +581,10 @@ async def realign_open_slot_selections(
                     "class_id": str(class_.id),
                 },
             )
-        selection.effective_from = next_start
+        if not validate_only:
+            selection.effective_from = next_start
+    if validate_only:
+        return
     await db.flush()
 
 
@@ -748,6 +789,11 @@ async def update_enrollment(
     *,
     actor_user_id: str | None = None,
 ) -> EnrollmentResponse | None:
+    from app.services.independent_dates_guard import require_date_contract
+
+    require_date_contract(
+        data.contract_version, has_date_edit="enrollment_date" in data.model_fields_set
+    )
     enrollment = await _get_enrollment(db, id)
     if enrollment is None:
         return None
@@ -764,6 +810,12 @@ async def update_enrollment(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Không thể chỉnh sửa ghi danh của lớp đã ngừng hoạt động",
+        )
+    if data.contract_version == 4:
+        # Serialize with class-level date edits before acquiring student and
+        # enrollment locks; the inverse ordering can deadlock two admins.
+        await db.execute(
+            select(Class.id).where(Class.id == enrollment.class_id).with_for_update()
         )
     active_student_id = await db.scalar(
         select(Student.id)
@@ -821,18 +873,30 @@ async def update_enrollment(
             from app.services.billing_anchor_service import reanchor_enrollment_billing
 
             previous_start = enrollment.enrollment_date
-            await reanchor_enrollment_billing(
-                db,
-                enrollment,
-                new_anchor=resolved_date,
-                reason=(
-                    data.billing_change_reason
-                    or "Điều chỉnh ngày bắt đầu từ hồ sơ học viên"
-                ),
-                actor_user_id=actor_user_id,
-                request_id=data.billing_request_id,
-                expected_version=data.expected_billing_version,
-            )
+            if data.contract_version == 4:
+                from app.services.admission_date_service import change_admission_date
+
+                await change_admission_date(
+                    db,
+                    enrollment,
+                    next_date=resolved_date,
+                    reason=data.billing_change_reason
+                    or "Điều chỉnh ngày ghi danh từ hồ sơ học viên",
+                    actor_user_id=actor_user_id,
+                    request_id=data.billing_request_id,
+                    expected_version=data.expected_admission_version,
+                )
+            else:
+                await reanchor_enrollment_billing(
+                    db,
+                    enrollment,
+                    new_anchor=resolved_date,
+                    reason=data.billing_change_reason
+                    or "Điều chỉnh ngày bắt đầu từ hồ sơ học viên",
+                    actor_user_id=actor_user_id,
+                    request_id=data.billing_request_id,
+                    expected_version=data.expected_billing_version,
+                )
             if "selected_slot_ids" not in fields and previous_start is not None:
                 await realign_open_slot_selections(
                     db,
@@ -855,7 +919,8 @@ async def update_enrollment(
             [str(slot_id) for slot_id in data.selected_slot_ids],
         )
 
-    await _reconcile_current_fee_records(db, [enrollment])
+    if data.contract_version != 4 or "custom_fee" in fields:
+        await _reconcile_current_fee_records(db, [enrollment])
     await db.commit()
     _clear_dependent_caches()
 

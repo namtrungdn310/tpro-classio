@@ -17,7 +17,10 @@ from app.models.class_schedule_slot import (
     ClassScheduleSlotStaffRevision,
 )
 from app.models.class_ import Class
-from app.services.schedule_slot_service import expand_class_occurrences
+from app.services.effective_occurrence_service import (
+    expand_effective_occurrences,
+    load_exception_payloads,
+)
 
 
 class StaffOccurrence:
@@ -101,6 +104,7 @@ async def resolve_occurrence_for_staff(
     *,
     days_before: int = 2,
     days_after: int = 7,
+    for_update: bool = False,
 ) -> StaffOccurrence | None:
     """Find the canonical occurrence matching the requested occurrence id."""
     range_start = datetime.now(timezone.utc) - timedelta(days=days_before)
@@ -111,18 +115,57 @@ async def resolve_occurrence_for_staff(
             Class.cancelled_at.is_(None),
         )
     )
-    for class_ in result.scalars().unique().all():
-        occurrences = await expand_class_occurrences(
+    classes = result.scalars().unique().all()
+    payloads = await load_exception_payloads(
+        db,
+        [str(c.id) for c in classes],
+        range_start=range_start,
+        range_end=range_end,
+    )
+    for class_ in classes:
+        occurrences = await expand_effective_occurrences(
             db,
             class_,
             range_start=range_start,
             range_end=range_end,
+            payloads=payloads.get(str(class_.id), []),
         )
         for occurrence in occurrences:
             if attendance_occurrence_id(occurrence.key) != occurrence_id:
                 continue
             if occurrence.source_slot_id is None:
                 continue
+            if for_update:
+                # The same class lock is acquired by suspension/makeup commands.
+                # Re-read the overlay after waiting, never trust the earlier list.
+                locked_class = await db.scalar(
+                    select(Class)
+                    .where(Class.id == class_.id)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+                if (
+                    locked_class is None
+                    or not locked_class.is_active
+                    or locked_class.cancelled_at
+                ):
+                    return None
+                current = await expand_effective_occurrences(
+                    db,
+                    locked_class,
+                    range_start=range_start,
+                    range_end=range_end,
+                )
+                occurrence = next(
+                    (
+                        o
+                        for o in current
+                        if attendance_occurrence_id(o.key) == occurrence_id
+                    ),
+                    None,
+                )
+                if occurrence is None or occurrence.source_slot_id is None:
+                    return None
             assignment = await _assignment_role_at_occurrence(
                 db,
                 occurrence=occurrence,
@@ -138,44 +181,63 @@ async def resolve_occurrence_for_staff(
 async def teacher_today_occurrences(db: AsyncSession, staff_id: str):
     """Occurrences hôm nay + upcoming 7 ngày assigned tới staff; kèm checkins."""
     from app.models.staff_attendance import StaffAttendanceEntry
+    from app.services.schedule_slot_service import expand_class_occurrences_bulk
+    from app.services.effective_occurrence_service import overlay_occurrences
 
     today = business_today()
     range_start = datetime.combine(today, datetime.min.time(), tzinfo=BUSINESS_TIMEZONE)
     range_end = range_start + timedelta(days=7)
     result = await db.execute(
-        select(Class).where(
+        select(Class.id).where(
             Class.is_active.is_(True),
             Class.cancelled_at.is_(None),
         )
     )
     occurrences = []
     checkins = []
-    for class_ in result.scalars().unique().all():
-        expanded = await expand_class_occurrences(
-            db,
-            class_,
+    class_ids = [str(cid) for cid in result.scalars().all()]
+    payloads = await load_exception_payloads(
+        db,
+        class_ids,
+        range_start=range_start,
+        range_end=range_end,
+    )
+    regular = await expand_class_occurrences_bulk(
+        db, class_ids, range_start=range_start, range_end=range_end
+    )
+    entries = (
+        await db.scalars(
+            select(StaffAttendanceEntry).where(
+                StaffAttendanceEntry.staff_id == staff_id,
+                StaffAttendanceEntry.occurrence_start_at >= range_start,
+                StaffAttendanceEntry.occurrence_start_at < range_end,
+                StaffAttendanceEntry.reversed_at.is_(None),
+            )
+        )
+    ).all()
+    by_occurrence = {
+        (str(e.occurrence_slot_id), e.occurrence_start_at): e for e in entries
+    }
+    for class_id in class_ids:
+        expanded = overlay_occurrences(
+            regular.get(class_id, []),
+            payloads.get(class_id, []),
+            class_id=class_id,
             range_start=range_start,
             range_end=range_end,
         )
         for occurrence in expanded:
             if occurrence.source_slot_id is None:
                 continue
-            assignment = await _assignment_role_at_occurrence(
-                db,
-                occurrence=occurrence,
-                slot_id=occurrence.source_slot_id,
-                staff_id=staff_id,
-            )
-            if assignment is None:
+            # Dated expansion already applied the assignment history, and makeup
+            # expansion uses the immutable staff snapshot rather than today's links.
+            if str(staff_id) not in {
+                *occurrence.teacher_ids,
+                *occurrence.assistant_ids,
+            }:
                 continue
-            checkin = await db.scalar(
-                select(StaffAttendanceEntry).where(
-                    StaffAttendanceEntry.staff_id == staff_id,
-                    StaffAttendanceEntry.occurrence_slot_id
-                    == occurrence.source_slot_id,
-                    StaffAttendanceEntry.occurrence_start_at
-                    == occurrence.original_start_at,
-                )
+            checkin = by_occurrence.get(
+                (str(occurrence.source_slot_id), occurrence.original_start_at)
             )
             occurrences.append(
                 {

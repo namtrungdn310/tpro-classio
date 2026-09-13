@@ -208,6 +208,15 @@ try {
   Invoke-Sql (Join-Path $Migrations "120_student_lifecycle_event_reason.sql") "s1b-120"
   Invoke-Sql (Join-Path $Migrations "121_start_date_change_commands.sql") "s1b-121"
   Invoke-Sql (Join-Path $Migrations "122_contextual_class_staff_assignments.sql") "s1b-122"
+  Invoke-Sql (Join-Path $Migrations "123_transfer_final_cycle_choice.sql") "s1b-123"
+  Invoke-Sql (Join-Path $Migrations "124_independent_admission_dates.sql") "s1b-124"
+  Invoke-Sql (Join-Path $Migrations "125_billing_execution_plans.sql") "s1b-125"
+  Invoke-Sql (Join-Path $Migrations "126_separate_superseded_fee_metadata.sql") "s1b-126"
+  Invoke-Sql (Join-Path $Migrations "127_billing_schedule_segments.sql") "s1b-127"
+  Invoke-Sql (Join-Path $Migrations "128_suspension_command_contract.sql") "s1b-128"
+  Invoke-Sql (Join-Path $Migrations "129_enrollment_suspensions.sql") "s1b-129"
+  Invoke-Sql (Join-Path $Migrations "130_suspension_ledger_boundaries.sql") "s1b-130"
+  Invoke-Sql (Join-Path $Migrations "131_suspension_signed_balance.sql") "s1b-131"
   Invoke-Sql (Join-Path $SqlRoot "verify_security.sql") "s1b-verify-security-after-tenant-isolation"
 
   # ================= SCENARIO 2: ROLLBACK / REAPPLY =================

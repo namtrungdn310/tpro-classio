@@ -10,7 +10,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -34,6 +34,13 @@ class StartDateChangeCommandRecord(WorkspaceScoped, Base):
     )
     request_id: Mapped[str] = mapped_column(UUID(as_uuid=False), nullable=False)
     subject_type: Mapped[str] = mapped_column(Text, nullable=False)
+    operation_kind: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="LEGACY_DATE_CHANGE",
+        server_default="LEGACY_DATE_CHANGE",
+    )
+    execution_plan: Mapped[dict | None] = mapped_column(JSONB)
     class_id: Mapped[str | None] = mapped_column(
         UUID(as_uuid=False), ForeignKey("classes.id", ondelete="RESTRICT")
     )
@@ -99,9 +106,7 @@ class StartDateChangeCommandItem(WorkspaceScoped, Base):
         UUID(as_uuid=False),
         ForeignKey("billing_anchor_revisions.id", ondelete="RESTRICT"),
     )
-    first_anchor_cycle_no: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0
-    )
+    first_anchor_cycle_no: Mapped[int | None] = mapped_column(Integer, nullable=True)
     selected_historical_cycles: Mapped[list[int] | None] = mapped_column(ARRAY(Integer))
     protected_fee_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     superseded_fee_count: Mapped[int] = mapped_column(

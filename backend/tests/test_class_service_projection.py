@@ -96,6 +96,17 @@ def _scripted_session(enrollment_rows, aggregate_rows, unpaid_rows) -> _FakeSess
             _FakeResult(enrollment_rows),
             _FakeResult(aggregate_rows),
             _FakeResult(unpaid_rows),
+            _FakeResult(
+                [
+                    _FakeRow(
+                        enrollment_id=r.enrollment_id,
+                        effective=date(2000, 1, 1),
+                        days=r.max_deferral,
+                    )
+                    for r in aggregate_rows
+                    if r.max_deferral
+                ]
+            ),
         ]
     )
 

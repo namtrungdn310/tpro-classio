@@ -45,9 +45,11 @@ def _cycle_weeks(enrollment: Enrollment) -> int | None:
 
 def _is_protected(record: FeeRecord) -> bool:
     return bool(
-        record.status == "PAID"
-        or record.notified_at is not None
-        or int(record.refunded_amount or 0) > 0
+        getattr(record, "status", None) == "PAID"
+        or getattr(record, "paid_date", None) is not None
+        or int(getattr(record, "paid_amount", 0) or 0) > 0
+        or getattr(record, "notified_at", None) is not None
+        or int(getattr(record, "refunded_amount", 0) or 0) > 0
     )
 
 
@@ -487,14 +489,24 @@ async def reanchor_enrollment_billing(
     )
 
 
-def _review_response(revision: BillingAnchorRevision) -> BillingReviewResponse:
+def _review_response(
+    revision: BillingAnchorRevision, snapshots=()
+) -> BillingReviewResponse:
     enrollment = revision.enrollment
     student = enrollment.student
     class_ = enrollment.class_
     fees = []
+    protected_ids = {s.id for s in snapshots if s.protected}
     for record in sorted(revision.fee_records, key=lambda row: row.cycle_no):
+        if record.status in {"VOID", "SUPERSEDED"}:
+            continue
         cancellable = bool(
-            record.status == "UNPAID"
+            revision.state == "PENDING"
+            and str(record.id) not in protected_ids
+            and not int(record.paid_amount or 0)
+            and not record.paid_date
+            and not record.payments
+            and record.status == "UNPAID"
             and record.notified_at is None
             and int(record.refunded_amount or 0) == 0
         )
@@ -522,11 +534,8 @@ def _review_response(revision: BillingAnchorRevision) -> BillingReviewResponse:
         student_code=student.student_code,
         class_id=UUID(class_.id),
         class_name=class_.name,
-        change_kind=(
-            "PACKAGE_DURATION_CHANGE"
-            if revision.change_kind == "PACKAGE_DURATION_CHANGE"
-            else "ENROLLMENT_DATE_CHANGE"
-        ),
+        change_kind=revision.change_kind,
+        context_token=_review_context_token(revision, snapshots),
         class_billing_cycle_revision_id=(
             UUID(revision.class_billing_cycle_revision_id)
             if revision.class_billing_cycle_revision_id
@@ -552,6 +561,20 @@ def _review_response(revision: BillingAnchorRevision) -> BillingReviewResponse:
     )
 
 
+def _review_context_token(revision, snapshots):
+    from app.services.billing_schedule_change_service import digest
+
+    return digest(
+        {
+            "id": str(revision.id),
+            "state": revision.state,
+            "anchor": revision.anchor_date,
+            "reason": revision.reason,
+            "fees": [(s.id, s.status, s.financial_version) for s in snapshots],
+        }
+    )
+
+
 async def list_billing_reviews(
     db: AsyncSession,
     *,
@@ -567,13 +590,38 @@ async def list_billing_reviews(
             selectinload(BillingAnchorRevision.enrollment).selectinload(
                 Enrollment.class_
             ),
-            selectinload(BillingAnchorRevision.fee_records),
+            selectinload(BillingAnchorRevision.fee_records).selectinload(
+                FeeRecord.payments
+            ),
             selectinload(BillingAnchorRevision.class_billing_cycle_revision),
         )
         .order_by(BillingAnchorRevision.created_at.desc())
     )
     revisions = list(result.scalars().unique().all())
-    reviews = [_review_response(revision) for revision in revisions]
+    from app.services.billing_schedule_change_service import load_billing_context
+
+    reviews = []
+    for revision in revisions:
+        _, _, snapshots = await load_billing_context(
+            db, UUID(revision.enrollment_id), require_contract=False
+        )
+        revision = await db.scalar(
+            select(BillingAnchorRevision)
+            .where(BillingAnchorRevision.id == revision.id)
+            .options(
+                selectinload(BillingAnchorRevision.enrollment).selectinload(
+                    Enrollment.student
+                ),
+                selectinload(BillingAnchorRevision.enrollment).selectinload(
+                    Enrollment.class_
+                ),
+                selectinload(BillingAnchorRevision.fee_records).selectinload(
+                    FeeRecord.payments
+                ),
+                selectinload(BillingAnchorRevision.class_billing_cycle_revision),
+            )
+        )
+        reviews.append(_review_response(revision, snapshots))
     return BillingReviewListResponse(reviews=reviews, pending_count=len(reviews))
 
 
@@ -584,6 +632,19 @@ async def resolve_billing_review(
     *,
     actor_user_id: str | None,
 ) -> BillingReviewResponse | None:
+    from app.services.billing_schedule_change_service import load_billing_context
+
+    enrollment_id = await db.scalar(
+        select(BillingAnchorRevision.enrollment_id).where(
+            BillingAnchorRevision.id == str(review_id)
+        )
+    )
+    if enrollment_id is None:
+        return None
+    # Same lock order as anchor changes: class -> student -> enrollment -> fees -> QR.
+    enrollment, _, snapshots = await load_billing_context(
+        db, UUID(str(enrollment_id)), lock=True, require_contract=False
+    )
     revision = await db.scalar(
         select(BillingAnchorRevision)
         .where(BillingAnchorRevision.id == str(review_id))
@@ -594,15 +655,30 @@ async def resolve_billing_review(
             selectinload(BillingAnchorRevision.enrollment).selectinload(
                 Enrollment.class_
             ),
-            selectinload(BillingAnchorRevision.fee_records),
+            selectinload(BillingAnchorRevision.fee_records).selectinload(
+                FeeRecord.payments
+            ),
             selectinload(BillingAnchorRevision.class_billing_cycle_revision),
         )
+        .execution_options(populate_existing=True)
         .with_for_update()
     )
     if revision is None:
         return None
     if revision.state != "PENDING":
-        return _review_response(revision)
+        return _review_response(revision, snapshots)
+    if str(enrollment.current_billing_revision_id) != str(revision.id):
+        raise HTTPException(
+            409, detail="Lịch này không còn là lịch hiện tại. Vui lòng tải lại."
+        )
+    if (
+        payload.expected_context_token
+        and payload.expected_context_token != _review_context_token(revision, snapshots)
+    ):
+        raise HTTPException(
+            409,
+            detail="Khoản thu đã thay đổi. Vui lòng tải lại và kiểm tra trước khi xác nhận.",
+        )
 
     selected = {str(record_id) for record_id in payload.fee_record_ids}
     if payload.decision == "WAIVE_CHARGE":
@@ -610,13 +686,17 @@ async def resolve_billing_review(
             raise HTTPException(status_code=422, detail="Hủy khoản thu phải có lý do")
         if not selected:
             raise HTTPException(status_code=422, detail="Hãy chọn khoản thu cần hủy")
-        records = [record for record in revision.fee_records if record.id in selected]
+        records = [
+            record for record in revision.fee_records if str(record.id) in selected
+        ]
         if len(records) != len(selected):
             raise HTTPException(
                 status_code=409, detail="Danh sách khoản thu đã thay đổi"
             )
+        protected_ids = {s.id for s in snapshots if s.protected}
         if any(
-            record.status != "UNPAID"
+            str(record.id) in protected_ids
+            or record.status != "UNPAID"
             or record.notified_at is not None
             or int(record.refunded_amount or 0) > 0
             for record in records
@@ -625,32 +705,62 @@ async def resolve_billing_review(
                 status_code=409,
                 detail="Chỉ có thể hủy khoản chưa báo và chưa có giao dịch",
             )
+        from app.services.fee_operation_service import (
+            append_fee_operation,
+            snapshot_fee_record,
+        )
+        from app.services.payment_scaffold_service import (
+            revoke_open_payment_requests_for_fee_records,
+        )
+
+        before = [snapshot_fee_record(record) for record in records]
+        await revoke_open_payment_requests_for_fee_records(
+            db, list(selected), actor_id=actor_user_id, reason=payload.reason
+        )
         now = datetime.now(timezone.utc)
         for record in records:
             record.status = "VOID"
             record.voided_at = now
             record.review_required = False
             record.note = payload.reason
+        await append_fee_operation(
+            db,
+            action="sync_void",
+            before=before,
+            after=[snapshot_fee_record(record) for record in records],
+            actor_id=actor_user_id,
+            request_id=payload.request_id,
+            reason=payload.reason,
+        )
     else:
         for record in revision.fee_records:
             if record.status == "UNPAID":
                 record.review_required = False
 
-    revision.state = "CONFIRMED"
-    revision.resolved_by = actor_user_id
-    revision.resolved_at = datetime.now(timezone.utc)
-    revision.resolution_note = payload.reason or "Đã xác nhận lịch thu mới"
-    if revision.class_billing_cycle_revision_id:
+    if payload.decision == "CONFIRM":
+        revision.state = "CONFIRMED"
+        revision.resolved_by = actor_user_id
+        revision.resolved_at = datetime.now(timezone.utc)
+        revision.resolution_note = (
+            payload.reason or "Đã xác nhận lịch thu và các khoản còn hiệu lực"
+        )
+    if revision.state == "CONFIRMED" and revision.class_billing_cycle_revision_id:
         await _resolve_class_cycle_revision_if_complete(
             db,
             revision.class_billing_cycle_revision_id,
             actor_user_id=actor_user_id,
         )
     await db.commit()
+    from app.services.enrollment_service import _clear_dependent_caches
+
+    _clear_dependent_caches()
     # The flush used to resolve the parent class revision can expire fee rows on
     # databases with server-side update triggers. Reload the complete aggregate
     # explicitly after commit so response serialization never performs implicit
     # async IO (which would raise MissingGreenlet under asyncpg).
+    _, _, snapshots = await load_billing_context(
+        db, UUID(str(enrollment_id)), require_contract=False
+    )
     resolved_revision = await db.scalar(
         select(BillingAnchorRevision)
         .where(BillingAnchorRevision.id == str(review_id))
@@ -661,10 +771,12 @@ async def resolve_billing_review(
             selectinload(BillingAnchorRevision.enrollment).selectinload(
                 Enrollment.class_
             ),
-            selectinload(BillingAnchorRevision.fee_records),
+            selectinload(BillingAnchorRevision.fee_records).selectinload(
+                FeeRecord.payments
+            ),
             selectinload(BillingAnchorRevision.class_billing_cycle_revision),
         )
     )
     if resolved_revision is None:  # pragma: no cover - protected by FK/audit rules
         return None
-    return _review_response(resolved_revision)
+    return _review_response(resolved_revision, snapshots)

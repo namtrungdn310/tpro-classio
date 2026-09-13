@@ -29,6 +29,70 @@ from app.services.payment_reconciliation_service import (
 router = APIRouter(tags=["reports"])
 
 
+@router.get("/billing/enrollments/{id}/suspensions")
+async def suspension_report_history(
+    id: UUID,
+    year: int | None = Query(default=None, ge=0, le=9998),
+    page: int = Query(default=1, ge=1, le=100000),
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+):
+    from app.services.suspension_report_service import read_suspension_history
+
+    return await read_suspension_history(db, id, year=year, page=page)
+
+
+@router.get("/billing/enrollments")
+async def billing_report_enrollments(
+    q: str = Query(default="", max_length=100),
+    page: int = Query(default=1, ge=1, le=100000),
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+):
+    from app.services.billing_schedule_read_service import read_report_enrollments
+
+    return await read_report_enrollments(db, q=q, page=page)
+
+
+@router.get("/billing/enrollments/{id}/history")
+async def billing_report_history(
+    id: UUID,
+    year: int | None = Query(default=None, ge=0, le=9998),
+    page: int = Query(default=1, ge=1, le=100000),
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+):
+    from app.services.billing_schedule_read_service import read_schedule_history
+
+    return await read_schedule_history(db, id, year=year, page=page)
+
+
+@router.get("/billing/enrollments/{id}/fees")
+async def billing_report_fees(
+    id: UUID,
+    year: int | None = Query(default=None, ge=0, le=9998),
+    state: Literal["ALL", "PENDING", "PAID", "REFUNDED"] = "ALL",
+    include_inactive: bool = False,
+    order: Literal["asc", "desc"] = "desc",
+    page: int = Query(default=1, ge=1, le=100000),
+    page_size: int = Query(default=20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+):
+    from app.services.billing_schedule_read_service import read_schedule_fees
+
+    return await read_schedule_fees(
+        db,
+        id,
+        year=year,
+        state=state,
+        include_inactive=include_inactive,
+        order=order,
+        page=page,
+        page_size=page_size,
+    )
+
+
 @router.get("/fees/paid", response_model=FeePaidReceiptListResponse)
 async def list_paid_fee_receipts(
     period: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$"),

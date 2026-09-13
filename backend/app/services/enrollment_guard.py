@@ -36,6 +36,7 @@ async def get_open_suspension(
         .where(
             ClassScheduleAdjustment.class_id == class_id,
             ClassScheduleAdjustment.status == "OPEN",
+            ClassScheduleAdjustment.adjustment_kind != "OCCURRENCE",
             ClassScheduleAdjustment.affected_from <= enrollment_date,
             ClassScheduleAdjustment.affected_through >= enrollment_date,
         )

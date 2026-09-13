@@ -546,35 +546,149 @@ async def expand_class_occurrences(
     range_start,
     range_end,
 ) -> list:
-    """Occurrence expansion từ nguồn relational (fallback JSON compat).
+    """Expand the dated slot/staff history, not today's schedule into the past.
 
-    R6-D07: canonical source là `class_schedule_slots`; `classes.schedule`
-    chỉ là compatibility projection (retire tại D19).
+    Only genuinely JSON-only legacy classes may use the fallback. A class
+    with closed relational slots must never resurrect them from stale JSON.
     """
+    from sqlalchemy.orm import selectinload
 
+    slots = list(
+        (
+            await db.scalars(
+                select(ClassScheduleSlot)
+                .where(ClassScheduleSlot.class_id == str(class_.id))
+                .options(selectinload(ClassScheduleSlot.staff_links))
+                .order_by(ClassScheduleSlot.id)
+            )
+        )
+        .unique()
+        .all()
+    )
+    revisions = list(
+        (
+            await db.scalars(
+                select(ClassScheduleSlotStaffRevision).where(
+                    ClassScheduleSlotStaffRevision.slot_id.in_([s.id for s in slots]),
+                )
+            )
+        ).all()
+    )
+    revisions_by_slot = {}
+    for revision in revisions:
+        revisions_by_slot.setdefault(str(revision.slot_id), []).append(revision)
+    return expand_dated_slots(
+        class_, slots, revisions_by_slot, range_start=range_start, range_end=range_end
+    )
+
+
+async def expand_class_occurrences_bulk(db, class_ids, *, range_start, range_end):
+    """Bounded batch reads (including eager links), not per-occurrence queries."""
+    from sqlalchemy.orm import raiseload, selectinload
+
+    if not class_ids:
+        return {}
+    classes = (
+        await db.scalars(
+            select(Class).where(Class.id.in_(class_ids)).options(raiseload("*"))
+        )
+    ).all()
+    slots = (
+        (
+            await db.scalars(
+                select(ClassScheduleSlot)
+                .where(ClassScheduleSlot.class_id.in_(class_ids))
+                .options(selectinload(ClassScheduleSlot.staff_links))
+            )
+        )
+        .unique()
+        .all()
+    )
+    revisions = (
+        await db.scalars(
+            select(ClassScheduleSlotStaffRevision).where(
+                ClassScheduleSlotStaffRevision.slot_id.in_([s.id for s in slots])
+            )
+        )
+    ).all()
+    by_class, by_slot = {}, {}
+    for slot in slots:
+        by_class.setdefault(str(slot.class_id), []).append(slot)
+    for revision in revisions:
+        by_slot.setdefault(str(revision.slot_id), []).append(revision)
+    return {
+        str(c.id): expand_dated_slots(
+            c,
+            by_class.get(str(c.id), []),
+            by_slot,
+            range_start=range_start,
+            range_end=range_end,
+        )
+        for c in classes
+    }
+
+
+def expand_dated_slots(class_, slots, revisions_by_slot, *, range_start, range_end):
+    from datetime import timedelta
     from app.core.occurrence import expand_weekly_occurrences
 
-    slots = await load_class_slots(db, str(class_.id))
-    schedule_payload: dict | None = None
-    schedule_text = (
-        class_.schedule.get("text", "") if isinstance(class_.schedule, dict) else ""
-    )
-    if slots:
-        schedule_payload = {
-            "text": schedule_text,
-            "slots": slots,
-        }
-    elif class_.schedule is not None:
-        # Legacy class chưa được dual-write: dùng JSON làm nguồn tạm.
-        schedule_payload = (
-            class_.schedule if isinstance(class_.schedule, dict) else None
+    if not slots:
+        return expand_weekly_occurrences(
+            class_id=str(class_.id),
+            schedule=class_.schedule if isinstance(class_.schedule, dict) else None,
+            start_date=class_.start_date,
+            end_date=class_.stopped_on - timedelta(days=1)
+            if class_.stopped_on
+            else None,
+            range_start=range_start,
+            range_end=range_end,
         )
-
-    return expand_weekly_occurrences(
-        class_id=str(class_.id),
-        schedule=schedule_payload,
-        start_date=class_.start_date,
-        end_date=class_.stopped_on,
-        range_start=range_start,
-        range_end=range_end,
-    )
+    result = []
+    for slot in slots:
+        start = max(d for d in (class_.start_date, slot.effective_from) if d)
+        stop = min(
+            [d for d in (class_.stopped_on, slot.effective_until) if d], default=None
+        )
+        if stop and start >= stop:
+            continue
+        expanded = expand_weekly_occurrences(
+            class_id=str(class_.id),
+            schedule={
+                "slots": [
+                    {
+                        "day": slot.weekday,
+                        "start": _time_text(slot.local_start),
+                        "end": _time_text(slot.local_end),
+                        "slot_id": str(slot.id),
+                        "version": slot.version,
+                    }
+                ]
+            },
+            start_date=start,
+            end_date=stop - timedelta(days=1) if stop else None,
+            range_start=range_start,
+            range_end=range_end,
+        )
+        history = revisions_by_slot.get(str(slot.id), [])
+        staff_with_history = {str(r.staff_id) for r in history}
+        fallback = {
+            str(link.staff_id): link.role
+            for link in slot.staff_links
+            if str(link.staff_id) not in staff_with_history
+        }
+        for occurrence in expanded:
+            assignments = dict(fallback)
+            for revision in history:
+                if revision.effective_from <= occurrence.original_start_at and (
+                    revision.effective_until is None
+                    or revision.effective_until > occurrence.original_start_at
+                ):
+                    assignments[str(revision.staff_id)] = revision.role
+            occurrence.teacher_ids = sorted(
+                sid for sid, role in assignments.items() if role == "TEACHER"
+            )
+            occurrence.assistant_ids = sorted(
+                sid for sid, role in assignments.items() if role == "ASSISTANT"
+            )
+        result.extend(expanded)
+    return sorted(result, key=lambda item: (item.original_start_at, item.key))

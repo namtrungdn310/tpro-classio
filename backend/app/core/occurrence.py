@@ -204,7 +204,11 @@ def apply_exceptions(
             suppressed_originals.add(key)
         replacement_start = raw.get("replacement_start_at")
         replacement_end = raw.get("replacement_end_at")
-        if replacement_start is not None and replacement_end is not None:
+        if (
+            status in ("MAKEUP_SCHEDULED", "MAKEUP_COMPLETED")
+            and replacement_start is not None
+            and replacement_end is not None
+        ):
             replacement_start = replacement_start.astimezone(utc)
             replacement_end = replacement_end.astimezone(utc)
             makeups.append(

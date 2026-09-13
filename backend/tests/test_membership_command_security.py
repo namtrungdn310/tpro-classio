@@ -344,11 +344,16 @@ async def test_preview_fingerprint_changes_with_source_fee_state():
         status="UNPAID",
         final_amount=800_000,
         coverage_start=date(2026, 9, 1),
-        coverage_end=date(2026, 9, 30),
+        coverage_end=date(2026, 9, 5),
         due_date=date(2026, 9, 10),
     )
 
-    async def run_preview(fee_status="UNPAID", final_amount=800_000):
+    async def run_preview(
+        fee_status="UNPAID",
+        final_amount=800_000,
+        *,
+        collect_source_final_cycle=True,
+    ):
         fee_record_1.status = fee_status
         fee_record_1.final_amount = final_amount
         db = AsyncMock()
@@ -388,6 +393,7 @@ async def test_preview_fingerprint_changes_with_source_fee_state():
             expected_updated_at="2026-09-02T10:00:00Z",
             mode="transfer",
             source_enrollment_id=source_id,
+            collect_source_final_cycle=collect_source_final_cycle,
             targets=[
                 StudentEnrollmentTarget(
                     class_id=target_class_id,
@@ -401,7 +407,19 @@ async def test_preview_fingerprint_changes_with_source_fee_state():
     res1 = await run_preview(fee_status="UNPAID", final_amount=800_000)
     res2 = await run_preview(fee_status="PAID", final_amount=800_000)
     res3 = await run_preview(fee_status="PAID", final_amount=900_000)
+    res4 = await run_preview(
+        fee_status="PAID",
+        final_amount=900_000,
+        collect_source_final_cycle=False,
+    )
 
-    assert res1 is not None and res2 is not None and res3 is not None
+    assert (
+        res1 is not None and res2 is not None and res3 is not None and res4 is not None
+    )
     assert res1.preview_fingerprint != res2.preview_fingerprint
     assert res2.preview_fingerprint != res3.preview_fingerprint
+    assert res3.preview_fingerprint != res4.preview_fingerprint
+    assert res1.source is not None
+    assert res1.source.waivable_final_cycle_count == 1
+    assert res2.source is not None
+    assert res2.source.protected_fee_count == 1

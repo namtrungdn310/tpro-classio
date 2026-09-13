@@ -44,9 +44,159 @@ from app.services.student_service import (
     update_student,
 )
 from app.services.student_reactivation_service import reactivate_student
+from app.schemas.billing_schedule_change import (
+    BillingScheduleApplyRequest,
+    BillingScheduleOptionsRequest,
+    BillingScheduleOptionsResponse,
+    BillingSchedulePreviewRequest,
+    BillingSchedulePreviewResponse,
+)
 
 students_router = APIRouter(tags=["students"])
 enrollments_router = APIRouter(tags=["enrollments"])
+
+
+@students_router.get("/date-capabilities")
+async def date_capabilities(principal: Principal = Depends(require_management)):
+    from app.core.config import settings
+
+    return {"independent_billing_dates": settings.independent_billing_dates_enabled}
+
+
+@enrollments_router.get("/{id}/billing-schedule")
+async def read_billing_schedule(
+    id: UUID,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+):
+    from app.services.billing_schedule_change_service import load_billing_context
+    from sqlalchemy import or_, select
+    from app.models.start_date_change_command import (
+        StartDateChangeCommandRecord,
+        StartDateChangeCommandItem,
+    )
+
+    enrollment, records, snapshots = await load_billing_context(db, id)
+    revision = enrollment.current_billing_revision
+    history = list(
+        (
+            await db.scalars(
+                select(StartDateChangeCommandRecord)
+                .where(
+                    StartDateChangeCommandRecord.state == "COMPLETED",
+                    or_(
+                        StartDateChangeCommandRecord.id.in_(
+                            select(StartDateChangeCommandItem.command_id).where(
+                                StartDateChangeCommandItem.enrollment_id == str(id)
+                            )
+                        ),
+                        StartDateChangeCommandRecord.execution_plan["response"]["plan"][
+                            "enrollment_id"
+                        ].astext
+                        == str(id),
+                        StartDateChangeCommandRecord.execution_plan[
+                            "fee_record_id"
+                        ].astext.in_([str(record.id) for record in records]),
+                    ),
+                )
+                .order_by(
+                    StartDateChangeCommandRecord.created_at.desc(),
+                    StartDateChangeCommandRecord.id,
+                )
+                .limit(20)
+            )
+        ).all()
+    )
+    return {
+        "enrollment_id": str(enrollment.id),
+        "anchor_date": revision.anchor_date if revision else None,
+        "version": enrollment.billing_anchor_version,
+        "billing_type": revision.billing_type_snapshot if revision else None,
+        "cycle_weeks": revision.billing_cycle_weeks_snapshot if revision else None,
+        "review_pending": bool(revision and revision.state == "PENDING"),
+        "history": [
+            {
+                "id": str(event.id),
+                "kind": event.operation_kind,
+                "old_date": event.old_date,
+                "new_date": event.new_date,
+                "reason": event.reason,
+                "created_at": event.created_at,
+            }
+            for event in history
+        ],
+        "fees": [
+            {
+                "id": str(record.id),
+                "due_date": record.adjusted_due_date or record.due_date,
+                "coverage_start": record.coverage_start,
+                "coverage_end": record.coverage_end,
+                "amount": int(record.final_amount),
+                "status": record.status,
+                "paid_amount": int(record.paid_amount or 0),
+                "refunded_amount": int(record.refunded_amount or 0),
+                "protected": snapshot.protected,
+            }
+            for record, snapshot in zip(records, snapshots)
+        ],
+    }
+
+
+@enrollments_router.get("/{id}/billing-schedule/summary")
+async def billing_schedule_summary(
+    id: UUID,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+):
+    from app.services.billing_schedule_read_service import read_schedule_summary
+
+    return await read_schedule_summary(db, id)
+
+
+@enrollments_router.post(
+    "/{id}/billing-schedule/options", response_model=BillingScheduleOptionsResponse
+)
+async def analyze_billing_schedule_options_route(
+    id: UUID,
+    payload: BillingScheduleOptionsRequest,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+):
+    from app.services.billing_schedule_change_service import (
+        analyze_billing_schedule_options,
+    )
+
+    return await analyze_billing_schedule_options(db, id, payload)
+
+
+@enrollments_router.post(
+    "/{id}/billing-schedule/preview", response_model=BillingSchedulePreviewResponse
+)
+async def preview_billing_schedule_route(
+    id: UUID,
+    payload: BillingSchedulePreviewRequest,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+):
+    from app.services.billing_schedule_change_service import preview_billing_schedule
+
+    return await preview_billing_schedule(db, id, payload)
+
+
+@enrollments_router.post(
+    "/{id}/billing-schedule/apply", response_model=BillingSchedulePreviewResponse
+)
+async def apply_billing_schedule_route(
+    id: UUID,
+    payload: BillingScheduleApplyRequest,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_management),
+):
+    from app.services.billing_schedule_change_service import apply_billing_schedule
+
+    return await apply_billing_schedule(
+        db, id, payload, actor_user_id=principal.user_id
+    )
 
 
 @students_router.get("", response_model=list[StudentResponse])

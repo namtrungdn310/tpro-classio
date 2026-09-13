@@ -284,10 +284,32 @@ class ClassStartDatePreviewRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     start_date: date
+    contract_version: Literal[1, 2] = 1
+    admission_dates: dict[UUID, date] = Field(default_factory=dict)
     expected_version: int = Field(ge=1)
     default_decision: str | None = None
     enrollment_decisions: dict[UUID, str] | None = None
     class_patch: "ClassUpdate | None" = None
+
+    @model_validator(mode="after")
+    def validate_academic_date_contract(self):
+        if self.contract_version == 2:
+            if self.default_decision is not None or self.enrollment_decisions:
+                raise ValueError("Đổi ngày lớp không được thay đổi lịch thu")
+            if self.class_patch is not None:
+                financial_fields = {
+                    "base_fee",
+                    "type",
+                    "billing_cycle_months",
+                    "billing_cycle_weeks",
+                }
+                if financial_fields.intersection(self.class_patch.model_fields_set):
+                    raise ValueError(
+                        "Vui lòng điều chỉnh học phí riêng với ngày bắt đầu lớp"
+                    )
+        elif self.admission_dates:
+            raise ValueError("Cần phiên bản mới để xác nhận ngày ghi danh")
+        return self
 
 
 class ClassStartDateUpdate(ClassStartDatePreviewRequest):

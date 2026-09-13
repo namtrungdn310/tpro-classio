@@ -23,6 +23,7 @@ from app.models.class_lifecycle_event import ClassLifecycleEvent
 from app.models.enrollment import Enrollment
 from app.models.fee_record import FeeRecord
 from app.models.payment_request import PaymentRequest, PaymentRequestItem
+from app.models.student import Student
 from app.schemas.class_ import (
     ClassBillingCyclePreviewRequest,
     ClassBillingCyclePreviewResponse,
@@ -51,9 +52,12 @@ class _EnrollmentImpact:
 
 def _is_protected(record: FeeRecord) -> bool:
     return bool(
-        record.status == "PAID"
-        or record.notified_at is not None
-        or int(record.refunded_amount or 0) > 0
+        getattr(record, "status", None) == "PAID"
+        or getattr(record, "paid_date", None) is not None
+        or int(getattr(record, "paid_amount", 0) or 0) > 0
+        or getattr(record, "notified_at", None) is not None
+        or int(getattr(record, "refunded_amount", 0) or 0) > 0
+        or bool(getattr(record, "payments", None))
     )
 
 
@@ -98,6 +102,15 @@ def _impact_for_enrollment(
         _old_weeks(enrollment, previous_weeks),
         today,
     )
+    current_revision = enrollment.current_billing_revision
+    generation_floor = getattr(current_revision, "generation_floor", None)
+    if isinstance(generation_floor, date):
+        transition = max(transition, generation_floor)
+    waivers = getattr(current_revision, "waived_intervals", None)
+    if isinstance(waivers, list):
+        transition = max(
+            [transition, *(date.fromisoformat(span["end"]) for span in waivers)]
+        )
     protected_through = max(
         (record.coverage_end for record in protected if record.coverage_end),
         default=None,
@@ -143,15 +156,47 @@ async def _load_class(
         .where(Class.id == str(class_id))
         .options(
             selectinload(Class.enrollments).selectinload(Enrollment.student),
-            selectinload(Class.enrollments).selectinload(Enrollment.fee_records),
+            selectinload(Class.enrollments)
+            .selectinload(Enrollment.fee_records)
+            .selectinload(FeeRecord.payments),
             selectinload(Class.enrollments).selectinload(
                 Enrollment.current_billing_revision
             ),
         )
     )
     if lock:
-        statement = statement.with_for_update()
-    return (await db.execute(statement)).scalars().unique().one_or_none()
+        statement = statement.with_for_update().execution_options(
+            populate_existing=True
+        )
+    class_ = (await db.execute(statement)).scalars().unique().one_or_none()
+    if lock and class_ is not None:
+        # Match anchor/membership writers: class -> students -> enrollments ->
+        # fees -> payment requests. Eager-loaded rows may be stale after waiting.
+        student_ids = sorted({row.student_id for row in class_.enrollments})
+        await db.execute(
+            select(Student.id)
+            .where(Student.id.in_(student_ids))
+            .order_by(Student.id)
+            .with_for_update()
+        )
+        enrollment_ids = sorted(row.id for row in class_.enrollments)
+        # The class lock already stabilized membership. Lock IDs without expiring
+        # eager-loaded relationships needed below (async code cannot lazy-load).
+        await db.execute(
+            select(Enrollment.id)
+            .where(Enrollment.id.in_(enrollment_ids))
+            .order_by(Enrollment.id)
+            .with_for_update()
+        )
+        await db.execute(
+            select(FeeRecord)
+            .where(FeeRecord.enrollment_id.in_(enrollment_ids))
+            .options(selectinload(FeeRecord.payments))
+            .order_by(FeeRecord.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    return class_
 
 
 def _validate_change(class_: Class, request: ClassBillingCyclePreviewRequest) -> None:
@@ -188,6 +233,29 @@ def _fingerprint(
                 "transition_on": impact.transition_on.isoformat(),
                 "protected": sorted(record.id for record in impact.protected),
                 "supersedable": sorted(record.id for record in impact.supersedable),
+                "fees": [
+                    {
+                        key: str(getattr(record, key, None))
+                        for key in (
+                            "id",
+                            "status",
+                            "coverage_start",
+                            "coverage_end",
+                            "base_amount",
+                            "discount_amount",
+                            "paid_amount",
+                            "paid_date",
+                            "refunded_amount",
+                            "notified_at",
+                            "due_date",
+                            "adjusted_due_date",
+                            "updated_at",
+                        )
+                    }
+                    for record in sorted(
+                        impact.protected + impact.supersedable, key=lambda row: row.id
+                    )
+                ],
             }
             for impact in sorted(impacts, key=lambda value: value.enrollment.id)
         ],
@@ -395,12 +463,13 @@ async def update_class_billing_cycle(
         for record in impact.supersedable:
             record.status = "SUPERSEDED"
             record.superseded_at = now
-            record.voided_at = now
+            record.voided_at = None
         after_snapshots.extend(
             snapshot_fee_record(record) for record in impact.supersedable
         )
 
         sequence = int(enrollment.billing_anchor_version or 0) + 1
+        previous_revision = enrollment.current_billing_revision
         anchor_revision = BillingAnchorRevision(
             enrollment_id=enrollment.id,
             sequence_no=sequence,
@@ -410,6 +479,9 @@ async def update_class_billing_cycle(
             generation_floor=impact.transition_on,
             first_anchor_cycle_no=0,
             next_due_date=impact.transition_on,
+            scheduled_segments=getattr(previous_revision, "scheduled_segments", None)
+            or [],
+            waived_intervals=getattr(previous_revision, "waived_intervals", None) or [],
             change_kind="PACKAGE_DURATION_CHANGE",
             billing_type_snapshot="COURSE",
             billing_cycle_months_snapshot=class_.billing_cycle_months,
@@ -432,7 +504,9 @@ async def update_class_billing_cycle(
         coverage_start, coverage_end = cycle_coverage_interval(
             impact.transition_on, "COURSE", preview.next_weeks, 0
         )
-        deferral = await enrollment_total_deferral_days(db, enrollment.id)
+        deferral = await enrollment_total_deferral_days(
+            db, enrollment.id, coverage_start=coverage_start
+        )
         amount = int(
             enrollment.custom_fee
             if enrollment.custom_fee is not None

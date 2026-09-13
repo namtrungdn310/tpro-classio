@@ -11,7 +11,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -53,6 +53,18 @@ class BillingAnchorRevision(WorkspaceScoped, Base):
     generation_floor: Mapped[date] = mapped_column(Date, nullable=False)
     first_anchor_cycle_no: Mapped[int] = mapped_column(Integer, nullable=False)
     next_due_date: Mapped[date] = mapped_column(Date, nullable=False)
+    scheduled_segments: Mapped[list] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+    )
+    waived_intervals: Mapped[list] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+    )
     change_kind: Mapped[str] = mapped_column(Text, nullable=False, default="INITIAL")
     billing_type_snapshot: Mapped[str] = mapped_column(
         Text, nullable=False, default="MONTHLY"

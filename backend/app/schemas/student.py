@@ -284,6 +284,12 @@ class StudentEnrollmentInfo(BaseModel):
     ended_on: date | None = None
     effective_state: Literal["SCHEDULED", "CURRENT", "ENDED", "CANCELLED"] = "CURRENT"
     billing_anchor_version: int = 0
+    billing_anchor_date: date | None = None
+    next_due_date: date | None = None
+    current_period: str | None = None
+    current_fee_status: str | None = None
+    next_period: str | None = None
+    admission_version: int = 0
     status: Literal["active", "dropped", "completed", "cancelled"]
     selected_slot_ids: list[UUID] = Field(default_factory=list)
 
@@ -363,6 +369,7 @@ class StudentEnrollmentPatch(BaseModel):
     enrollment_id: UUID
     custom_fee: int | None = Field(default=None, ge=0, le=999_999_999_999)
     enrollment_date: date | None = None
+    expected_admission_version: int | None = Field(default=None, ge=0)
     billing_change_reason: str | None = Field(
         default=None, min_length=3, max_length=500
     )
@@ -407,7 +414,7 @@ class StudentMembershipCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     request_id: UUID
-    contract_version: Literal[1, 2, 3] = 1
+    contract_version: Literal[1, 2, 3, 4] = 1
     expected_preview_fingerprint: str | None = Field(
         default=None,
         pattern=r"^[0-9a-f]{64}$",
@@ -420,6 +427,7 @@ class StudentMembershipCommand(BaseModel):
     targets: list[StudentEnrollmentTarget] = Field(default_factory=list, max_length=20)
     mode: Literal["supplement", "transfer"] = "supplement"
     source_enrollment_id: UUID | None = None
+    collect_source_final_cycle: bool = True
     billing_change_reason: str | None = Field(
         default=None, min_length=3, max_length=500
     )
@@ -432,11 +440,13 @@ class StudentMembershipCommand(BaseModel):
         if self.mode == "transfer":
             if self.source_enrollment_id is None:
                 raise ValueError("Chuyển lớp phải chỉ định lớp nguồn")
-            if len(self.targets) != 1:
-                raise ValueError("Mỗi lần chuyển lớp chỉ được chọn đúng một lớp đích")
+            if not self.targets:
+                raise ValueError("Chuyển lớp phải chọn ít nhất một lớp đích")
         elif self.source_enrollment_id is not None:
             raise ValueError("Học thêm hoặc xếp lớp không được gửi lớp nguồn")
-        if self.contract_version in (2, 3):
+        if self.mode != "transfer" and not self.collect_source_final_cycle:
+            raise ValueError("Tuỳ chọn kỳ cuối chỉ áp dụng khi đổi lớp")
+        if self.contract_version in (2, 3, 4):
             if self.targets and any(
                 target.enrollment_date is None for target in self.targets
             ):
@@ -450,6 +460,8 @@ class StudentMembershipCommand(BaseModel):
                 raise ValueError(
                     "Yêu cầu thay đổi lớp bắt buộc phải có mã xác thực xem trước"
                 )
+        if self.contract_version == 4:
+            validate_academic_updates(self.enrollment_updates)
         return self
 
 
@@ -463,7 +475,8 @@ class StudentMembershipPreviewRequest(BaseModel):
     )
     mode: Literal["supplement", "transfer"] = "supplement"
     source_enrollment_id: UUID | None = None
-    contract_version: Literal[1, 2, 3] = 3
+    collect_source_final_cycle: bool = True
+    contract_version: Literal[1, 2, 3, 4] = 3
 
     @model_validator(mode="after")
     def validate_shape(self) -> "StudentMembershipPreviewRequest":
@@ -477,11 +490,39 @@ class StudentMembershipPreviewRequest(BaseModel):
         if any(target.enrollment_date is None for target in self.targets):
             raise ValueError("Mỗi lớp được chọn phải có ngày bắt đầu")
         if self.mode == "transfer":
-            if self.source_enrollment_id is None or len(self.targets) != 1:
-                raise ValueError("Chuyển lớp cần một lớp nguồn và đúng một lớp đích")
+            if self.source_enrollment_id is None or not self.targets:
+                raise ValueError("Chuyển lớp cần một lớp nguồn và ít nhất một lớp đích")
         elif self.source_enrollment_id is not None:
             raise ValueError("Học thêm hoặc xếp lớp không được gửi lớp nguồn")
+        if self.mode != "transfer" and not self.collect_source_final_cycle:
+            raise ValueError("Tuỳ chọn kỳ cuối chỉ áp dụng khi đổi lớp")
+        if self.contract_version == 4:
+            validate_academic_updates(self.enrollment_updates)
         return self
+
+
+def validate_academic_updates(updates: list[StudentEnrollmentPatch]) -> None:
+    ids = [update.enrollment_id for update in updates]
+    if len(ids) != len(set(ids)):
+        raise ValueError("Danh sách cập nhật ghi danh không được trùng lặp")
+    for update in updates:
+        if "enrollment_date" in update.model_fields_set:
+            if (
+                update.enrollment_date is None
+                or update.expected_admission_version is None
+            ):
+                raise ValueError(
+                    "Sửa ngày ghi danh cần ngày hợp lệ và phiên bản ghi danh"
+                )
+            if "custom_fee" in update.model_fields_set:
+                raise ValueError(
+                    "Vui lòng lưu học phí riêng với thay đổi ngày ghi danh"
+                )
+        if (
+            update.decision_code is not None
+            or update.selected_historical_cycles is not None
+        ):
+            raise ValueError("Điều chỉnh lịch thu phải dùng thao tác tài chính riêng")
 
 
 class StudentMembershipPreviewWarning(BaseModel):
@@ -514,6 +555,8 @@ class StudentMembershipSourceImpact(BaseModel):
     ends_on: date
     mutable_fee_count: int = Field(ge=0)
     protected_fee_count: int = Field(ge=0)
+    collect_final_cycle: bool
+    waivable_final_cycle_count: int = Field(ge=0)
 
 
 class StudentMembershipPreviewResponse(BaseModel):

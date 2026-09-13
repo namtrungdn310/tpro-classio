@@ -1,7 +1,7 @@
 import hashlib
 import json
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from fastapi import HTTPException, status
@@ -11,6 +11,7 @@ from sqlalchemy.orm import raiseload, selectinload
 
 from app.core.performance import log_timing
 from app.core.billing import get_enrollment_fee_amount
+from app.core.billing_schedule import add_months_clamped
 from app.core.business_time import business_today
 from app.core.class_lifecycle import (
     is_operational_class,
@@ -89,7 +90,96 @@ def _student_response_load_options():
     return (
         enrollments.selectinload(Enrollment.class_).raiseload("*"),
         enrollments.selectinload(Enrollment.slot_selections),
+        enrollments.selectinload(Enrollment.current_billing_revision),
+        enrollments.selectinload(Enrollment.fee_records),
     )
+
+
+def _resolve_enrollment_cycle_info(
+    enrollment: Enrollment, today: date
+) -> tuple[str | None, str | None, str | None, date | None]:
+    """Resolve (current_period, current_fee_status, next_period, next_due_date) for an enrollment."""
+    rev = getattr(enrollment, "current_billing_revision", None)
+    raw_records = getattr(enrollment, "fee_records", None) or []
+    active_records = [
+        r
+        for r in raw_records
+        if getattr(r, "status", None) not in ("VOID", "SUPERSEDED")
+    ]
+    active_records.sort(key=lambda r: getattr(r, "cycle_no", 0))
+
+    curr_record = None
+    for r in active_records:
+        start = getattr(r, "coverage_start", None)
+        end = getattr(r, "coverage_end", None)
+        if start and end and start <= today < end:
+            curr_record = r
+            break
+
+    if not curr_record and active_records:
+        unpaid = [r for r in active_records if getattr(r, "status", None) == "UNPAID"]
+        curr_record = unpaid[0] if unpaid else active_records[-1]
+
+    enrollment_date = getattr(enrollment, "enrollment_date", None)
+    rev_anchor = getattr(rev, "anchor_date", None) or getattr(
+        enrollment, "billing_anchor_date", None
+    )
+
+    # 1. Resolve current cycle date
+    curr_date = None
+    if curr_record:
+        curr_date = (
+            getattr(curr_record, "coverage_start", None)
+            or getattr(curr_record, "due_date", None)
+            or getattr(curr_record, "base_due_date", None)
+        )
+    if not curr_date:
+        curr_date = rev_anchor or enrollment_date or today
+
+    current_period = (
+        curr_date.isoformat()
+        if isinstance(curr_date, (date, datetime))
+        else str(curr_date)
+    )
+    current_fee_status = getattr(curr_record, "status", None) if curr_record else None
+
+    # 2. Resolve next fee due
+    from app.core.billing import get_enrollment_next_fee_due
+
+    next_due = get_enrollment_next_fee_due(enrollment, today)
+    next_due_date = next_due[0] if next_due else None
+
+    # 3. Resolve next cycle date
+    next_date = None
+    if curr_record and curr_record in active_records:
+        idx = active_records.index(curr_record)
+        if idx + 1 < len(active_records):
+            next_rec = active_records[idx + 1]
+            next_date = getattr(next_rec, "coverage_start", None) or getattr(
+                next_rec, "due_date", None
+            )
+
+    if not next_date:
+        if curr_record and getattr(curr_record, "coverage_end", None):
+            next_date = curr_record.coverage_end
+        elif next_due_date:
+            next_date = next_due_date
+        elif curr_date and isinstance(curr_date, date):
+            next_date = add_months_clamped(curr_date, 1)
+        elif rev_anchor:
+            next_date = add_months_clamped(rev_anchor, 1)
+        elif enrollment_date:
+            next_date = add_months_clamped(enrollment_date, 1)
+        else:
+            next_date = add_months_clamped(today, 1)
+
+    next_period = (
+        next_date.isoformat()
+        if isinstance(next_date, (date, datetime))
+        else str(next_date)
+    )
+
+    return current_period, current_fee_status, next_period, next_due_date
 
 
 def _clean_payload(payload: dict) -> dict:
@@ -127,39 +217,59 @@ def _to_response(student: Student) -> StudentResponse:
             and is_operational_class(enrollment.class_)
         )
     ]
-    active_enrollments = [
-        StudentEnrollmentInfo(
-            id=enrollment.id,
-            class_id=enrollment.class_.id,
-            class_name=enrollment.class_.name,
-            class_category=enrollment.class_.class_category,
-            class_grade_mode=enrollment.class_.grade_mode,
-            class_grade_level=enrollment.class_.grade_level,
-            class_start_date=enrollment.class_.start_date,
-            class_end_date=None,
-            custom_fee=int(enrollment.custom_fee)
-            if enrollment.custom_fee is not None
-            else None,
-            effective_fee=get_enrollment_fee_amount(enrollment),
-            enrollment_date=enrollment.enrollment_date,
-            ended_on=enrollment.ended_on,
-            effective_state=effective_enrollment_state(enrollment),
-            billing_anchor_version=int(enrollment.billing_anchor_version or 0),
-            status=enrollment.status,
-            selected_slot_ids=[
-                selection.slot_id
-                for selection in enrollment.slot_selections
-                if selection.effective_until is None
-            ],
-        )
-        for enrollment in student.enrollments
+    today = business_today()
+    active_enrollments = []
+    for enrollment in student.enrollments:
         if (
             enrollment_visible_current_or_scheduled(enrollment)
             and enrollment.class_ is not None
             and enrollment.class_.identity_scheme != "LEGACY"
             and is_operational_class(enrollment.class_)
-        )
-    ]
+        ):
+            (
+                curr_period,
+                curr_fee_status,
+                next_period,
+                next_due,
+            ) = _resolve_enrollment_cycle_info(enrollment, today)
+            active_enrollments.append(
+                StudentEnrollmentInfo(
+                    id=enrollment.id,
+                    class_id=enrollment.class_.id,
+                    class_name=enrollment.class_.name,
+                    class_category=enrollment.class_.class_category,
+                    class_grade_mode=enrollment.class_.grade_mode,
+                    class_grade_level=enrollment.class_.grade_level,
+                    class_start_date=enrollment.class_.start_date,
+                    class_end_date=None,
+                    custom_fee=int(enrollment.custom_fee)
+                    if enrollment.custom_fee is not None
+                    else None,
+                    effective_fee=get_enrollment_fee_amount(enrollment),
+                    enrollment_date=enrollment.enrollment_date,
+                    ended_on=enrollment.ended_on,
+                    effective_state=effective_enrollment_state(enrollment),
+                    billing_anchor_version=int(enrollment.billing_anchor_version or 0),
+                    billing_anchor_date=getattr(
+                        getattr(enrollment, "current_billing_revision", None),
+                        "anchor_date",
+                        None,
+                    ),
+                    next_due_date=next_due,
+                    current_period=curr_period,
+                    current_fee_status=curr_fee_status,
+                    next_period=next_period,
+                    admission_version=int(
+                        getattr(enrollment, "admission_version", 0) or 0
+                    ),
+                    status=enrollment.status,
+                    selected_slot_ids=[
+                        selection.slot_id
+                        for selection in enrollment.slot_selections
+                        if selection.effective_until is None
+                    ],
+                )
+            )
     historical_enrollments = [
         enrollment
         for enrollment in student.enrollments
@@ -334,6 +444,11 @@ async def get_students(
         if has_more:
             students = students[:bounded_limit]
 
+        from app.services.billing_projection_context import attach_deferral_context
+
+        await attach_deferral_context(
+            db, [e for student in students for e in student.enrollments]
+        )
         return [_to_response(student) for student in students], has_more
 
 
@@ -449,6 +564,9 @@ async def get_student(db: AsyncSession, id: UUID) -> StudentResponse | None:
     if student is None:
         return None
 
+    from app.services.billing_projection_context import attach_deferral_context
+
+    await attach_deferral_context(db, student.enrollments)
     return _to_response(student)
 
 
@@ -605,6 +723,16 @@ async def apply_student_membership_command(
 ) -> StudentResponse | None:
     """Apply profile, membership and slot changes in one database transaction."""
 
+    from app.services.independent_dates_guard import require_date_contract
+
+    require_date_contract(
+        command.contract_version,
+        has_date_edit=any(
+            "enrollment_date" in update.model_fields_set
+            for update in command.enrollment_updates
+        ),
+    )
+
     await db.execute(
         text("select pg_advisory_xact_lock(hashtext(:key))"),
         {"key": f"student-command:{command.request_id}"},
@@ -699,7 +827,7 @@ async def apply_student_membership_command(
         update.enrollment_date is not None for update in command.enrollment_updates
     )
     requires_preview = (
-        command.contract_version in (2, 3)
+        command.contract_version in (2, 3, 4)
         and (bool(command.targets) or has_date_change)
     ) or command.expected_preview_fingerprint is not None
     if requires_preview:
@@ -739,11 +867,20 @@ async def apply_student_membership_command(
                 enrollment_updates=command.enrollment_updates,
                 mode=command.mode,
                 source_enrollment_id=command.source_enrollment_id,
+                collect_source_final_cycle=command.collect_source_final_cycle,
                 contract_version=command.contract_version,
             ),
         )
         if preview is None:
             return None
+        if not preview.can_apply:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "MEMBERSHIP_PREVIEW_BLOCKED",
+                    "message": "Thay đổi ghi danh chưa đủ điều kiện áp dụng. Vui lòng xem lại.",
+                },
+            )
         if (
             command.expected_preview_fingerprint is not None
             and preview.preview_fingerprint != command.expected_preview_fingerprint
@@ -769,6 +906,7 @@ async def apply_student_membership_command(
         mode=command.mode,
         state="PENDING",
         target_count=len(command.targets),
+        collect_source_final_cycle=command.collect_source_final_cycle,
         actor_user_id=actor_user_id,
     )
     db.add(command_record)
@@ -837,24 +975,40 @@ async def apply_student_membership_command(
             await ensure_enrollment_allowed(db, enrollment.class_, resolved_date)
             if resolved_date != enrollment.enrollment_date:
                 previous_start = enrollment.enrollment_date
-                await reanchor_enrollment_billing(
-                    db,
-                    enrollment,
-                    new_anchor=resolved_date,
-                    reason=(
-                        update.billing_change_reason
-                        or command.billing_change_reason
-                        or "Điều chỉnh ngày bắt đầu từ hồ sơ học viên"
-                    ),
-                    actor_user_id=actor_user_id,
-                    request_id=uuid5(
-                        NAMESPACE_URL,
-                        f"{command.request_id}:enrollment:{enrollment.id}",
-                    ),
-                    expected_version=update.expected_billing_version,
-                    decision_code=update.decision_code,
-                    selected_historical_cycles=update.selected_historical_cycles,
+                change_reason = (
+                    update.billing_change_reason
+                    or command.billing_change_reason
+                    or "Điều chỉnh ngày ghi danh từ hồ sơ học viên"
                 )
+                change_request_id = uuid5(
+                    NAMESPACE_URL, f"{command.request_id}:enrollment:{enrollment.id}"
+                )
+                if command.contract_version == 4:
+                    from app.services.admission_date_service import (
+                        change_admission_date,
+                    )
+
+                    await change_admission_date(
+                        db,
+                        enrollment,
+                        next_date=resolved_date,
+                        reason=change_reason,
+                        actor_user_id=actor_user_id,
+                        request_id=change_request_id,
+                        expected_version=update.expected_admission_version,
+                    )
+                else:
+                    await reanchor_enrollment_billing(
+                        db,
+                        enrollment,
+                        new_anchor=resolved_date,
+                        reason=change_reason,
+                        actor_user_id=actor_user_id,
+                        request_id=change_request_id,
+                        expected_version=update.expected_billing_version,
+                        decision_code=update.decision_code,
+                        selected_historical_cycles=update.selected_historical_cycles,
+                    )
                 if "selected_slot_ids" not in fields and previous_start is not None:
                     await realign_open_slot_selections(
                         db,
@@ -871,7 +1025,9 @@ async def apply_student_membership_command(
                 [str(slot_id) for slot_id in (update.selected_slot_ids or [])],
                 actor_user_id=actor_user_id,
             )
-        if {"custom_fee", "enrollment_date"}.intersection(fields):
+        if "custom_fee" in fields or (
+            command.contract_version != 4 and "enrollment_date" in fields
+        ):
             await _reconcile_current_fee_records(db, [enrollment])
 
     active_class_ids = {
@@ -946,8 +1102,14 @@ async def apply_student_membership_command(
 
     if command.mode == "transfer" and command.source_enrollment_id is not None:
         source = enrollment_by_id[str(command.source_enrollment_id)]
-        target_enrollment = created_targets[0]
-        transfer_on = target_enrollment.enrollment_date
+        target_start_dates = [
+            enrollment.enrollment_date
+            for enrollment in created_targets
+            if enrollment.enrollment_date is not None
+        ]
+        if not target_start_dates:
+            raise AssertionError("transfer targets must have an enrollment date")
+        transfer_on = min(target_start_dates)
         if source.enrollment_date is None or transfer_on <= source.enrollment_date:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -959,7 +1121,8 @@ async def apply_student_membership_command(
         if source.status != "cancelled":
             from app.services.fee_cycle_service import ensure_final_cycle_for_stop
 
-            await ensure_final_cycle_for_stop(db, source, stopped_on=transfer_on)
+            if command.collect_source_final_cycle:
+                await ensure_final_cycle_for_stop(db, source, stopped_on=transfer_on)
             source.status = "dropped"
             source.ended_on = transfer_on
             source.ended_at = datetime.now(timezone.utc)
@@ -975,6 +1138,9 @@ async def apply_student_membership_command(
                 actor_user_id=actor_user_id,
                 reason="Chuyển lớp",
                 close_on=transfer_on,
+                include_cycle_containing_close_date=(
+                    not command.collect_source_final_cycle
+                ),
             )
 
     command_record.state = "COMPLETED"

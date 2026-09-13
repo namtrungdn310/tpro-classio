@@ -32,6 +32,11 @@ class ClassScheduleAdjustment(WorkspaceScoped, Base):
         nullable=False,
     )
     reason_code: Mapped[str] = mapped_column(Text, nullable=False)
+    adjustment_kind: Mapped[str] = mapped_column(
+        Text, nullable=False, default="LEGACY_REVIEW", server_default="LEGACY_REVIEW"
+    )
+    create_payload: Mapped[dict | None] = mapped_column(JSONB)
+    create_result: Mapped[dict | None] = mapped_column(JSONB)
     reason_note: Mapped[str | None] = mapped_column(Text)
     affected_from: Mapped[date] = mapped_column(Date, nullable=False)
     affected_through: Mapped[date] = mapped_column(Date, nullable=False)

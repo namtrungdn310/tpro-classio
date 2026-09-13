@@ -59,6 +59,7 @@ from app.schemas.staff import (  # noqa: E402
     StaffPayrollSettlementReversalCreate,
 )
 from app.services.fee_service import refund_fee_records  # noqa: E402
+from app.core.billing_schedule import add_months_clamped  # noqa: E402
 from app.services.billing_anchor_service import ensure_initial_billing_revision  # noqa: E402
 from app.services.class_makeup_service import (  # noqa: E402
     create_postponement,
@@ -1031,16 +1032,31 @@ async def seed(args: argparse.Namespace) -> None:
                     )
                     or 0
                 )
+                anchor_date = enrollment.enrollment_date
+                if enrollment.current_billing_revision_id:
+                    rev = await db.get(BillingAnchorRevision, enrollment.current_billing_revision_id)
+                    if rev and rev.anchor_date:
+                        anchor_date = rev.anchor_date
+                anchor_day = anchor_date.day if anchor_date else 1
+
                 for month_offset in range(-11, 1):
                     period_date = shift_month(today.replace(day=1), month_offset)
                     next_period = shift_month(period_date, 1)
                     is_current = month_offset == 0
-                    # The current demo period must already be actionable on the
-                    # selected business date; otherwise dashboard, fee and
-                    # report screens look empty during the first days of a month.
-                    due_date = (
-                        period_date if is_current else period_date + timedelta(days=4)
-                    )
+
+                    if anchor_day > 1 and class_row.type == "MONTHLY":
+                        cov_start = add_months_clamped(
+                            date(period_date.year, period_date.month, min(anchor_day, 28)), 0
+                        )
+                        cov_end = add_months_clamped(cov_start, 1)
+                        due_date = cov_start
+                    else:
+                        cov_start = period_date
+                        cov_end = next_period - timedelta(days=1)
+                        due_date = (
+                            period_date if is_current else period_date + timedelta(days=4)
+                        )
+
                     status = "UNPAID" if is_current and index % 4 in {0, 1} else "PAID"
                     notified = status == "PAID" or (is_current and index % 4 == 0)
                     amount = int(class_row.base_fee)
@@ -1067,6 +1083,9 @@ async def seed(args: argparse.Namespace) -> None:
                         existing_fee.adjusted_due_date = due_date
                         if existing_fee.status == "PAID":
                             existing_fee.paid_date = paid_on
+                    if existing_fee is not None:
+                        existing_fee.coverage_start = cov_start
+                        existing_fee.coverage_end = cov_end
                     cycle_no = (
                         int(existing_fee.cycle_no)
                         if existing_fee is not None
@@ -1087,8 +1106,8 @@ async def seed(args: argparse.Namespace) -> None:
                         anchor_cycle_no=cycle_no,
                         base_due_date=due_date,
                         adjusted_due_date=due_date,
-                        coverage_start=period_date,
-                        coverage_end=next_period - timedelta(days=1),
+                        coverage_start=cov_start,
+                        coverage_end=cov_end,
                         origin="ENROLLMENT",
                         enrollment_date_snapshot=enrollment.enrollment_date,
                         student_name_snapshot=student_name_by_key[student_key],

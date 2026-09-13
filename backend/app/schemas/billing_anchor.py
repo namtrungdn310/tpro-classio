@@ -54,7 +54,8 @@ class BillingReviewResponse(BaseModel):
     student_code: str | None = None
     class_id: UUID
     class_name: str
-    change_kind: Literal["ENROLLMENT_DATE_CHANGE", "PACKAGE_DURATION_CHANGE"]
+    change_kind: str
+    context_token: str | None = None
     class_billing_cycle_revision_id: UUID | None = None
     previous_date: date | None
     next_date: date
@@ -76,6 +77,7 @@ class BillingReviewResolveRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     decision: Literal["CONFIRM", "WAIVE_CHARGE"]
+    expected_context_token: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     fee_record_ids: list[UUID] = Field(default_factory=list, max_length=20)
     reason: str | None = Field(default=None, min_length=3, max_length=500)
     request_id: UUID = Field(default_factory=uuid4)

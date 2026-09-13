@@ -1,6 +1,7 @@
 from datetime import date, datetime
 
 from sqlalchemy import (
+    Boolean,
     Date,
     DateTime,
     ForeignKey,
@@ -47,6 +48,9 @@ class StudentMembershipCommandRecord(WorkspaceScoped, Base):
     mode: Mapped[str] = mapped_column(Text, nullable=False)
     state: Mapped[str] = mapped_column(Text, nullable=False, default="PENDING")
     target_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    collect_source_final_cycle: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True
+    )
     actor_user_id: Mapped[str | None] = mapped_column(
         UUID(as_uuid=False), ForeignKey("profiles.id", ondelete="SET NULL")
     )

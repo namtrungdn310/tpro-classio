@@ -131,7 +131,10 @@ async def test_legacy_end_date_no_longer_blocks_a_new_enrollment() -> None:
         assert enrollment.status == "active"
 
 
-async def test_start_date_preview_fingerprint_and_audited_update() -> None:
+async def test_start_date_preview_fingerprint_and_audited_update(monkeypatch) -> None:
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "independent_billing_dates_enabled", False)
     async with AsyncSessionLocal() as db:
         created = await _create_open_class(db, start_offset=-10)
         previous_start = created.start_date

@@ -61,6 +61,9 @@ class FeeRecord(WorkspaceScoped, Base):
     cycle_no: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     base_due_date: Mapped[date | None] = mapped_column(Date)
     adjusted_due_date: Mapped[date | None] = mapped_column(Date)
+    collection_due_offset_days: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     coverage_start: Mapped[date | None] = mapped_column(Date)
     coverage_end: Mapped[date | None] = mapped_column(Date)
     origin: Mapped[str] = mapped_column(Text, nullable=False)
@@ -71,6 +74,8 @@ class FeeRecord(WorkspaceScoped, Base):
     superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     voided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     enrollment_date_snapshot: Mapped[date | None] = mapped_column(Date)
+    admission_date_snapshot: Mapped[date | None] = mapped_column(Date)
+    billing_anchor_date_snapshot: Mapped[date | None] = mapped_column(Date)
     student_name_snapshot: Mapped[str | None] = mapped_column(Text)
     class_name_snapshot: Mapped[str | None] = mapped_column(Text)
     class_type_snapshot: Mapped[str | None] = mapped_column(

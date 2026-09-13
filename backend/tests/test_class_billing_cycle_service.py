@@ -8,6 +8,7 @@ from app.schemas.class_ import ClassBillingCyclePreviewRequest
 from app.services.class_billing_cycle_service import (
     _fingerprint,
     _impact_for_enrollment,
+    _is_protected,
     _validate_change,
 )
 
@@ -139,6 +140,41 @@ def test_duration_command_rejects_monthly_and_stopped_classes() -> None:
     )
     with pytest.raises(ValueError, match="đã ngừng"):
         _validate_change(stopped, request)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("base_amount", 900000),
+        ("discount_amount", 100000),
+        ("paid_amount", 1),
+        ("refunded_amount", 1),
+        ("adjusted_due_date", date(2026, 9, 27)),
+        ("updated_at", datetime(2026, 9, 2, tzinfo=timezone.utc)),
+    ],
+)
+def test_duration_preview_detects_changes_even_with_same_fee_ids(field, value):
+    class_ = SimpleNamespace(id="fixture", version=1, billing_cycle_weeks=4)
+    fee = _fee("future", date(2026, 9, 26), date(2026, 10, 24))
+    enrollment = _enrollment([fee])
+    impact = _impact_for_enrollment(
+        enrollment, previous_weeks=4, today=date(2026, 9, 2)
+    )
+    original = _fingerprint(class_, next_weeks=6, impacts=[impact])
+    setattr(fee, field, value)
+    assert _fingerprint(class_, next_weeks=6, impacts=[impact]) != original
+
+
+def test_duration_preserves_fee_with_payment_history_even_when_projection_is_unpaid():
+    fee = _fee("has-payment", date(2026, 9, 26), date(2026, 10, 24))
+    fee.payments = [SimpleNamespace(id="payment-history")]
+    assert _is_protected(fee)
+    impact = _impact_for_enrollment(
+        _enrollment([fee]), previous_weeks=4, today=date(2026, 9, 2)
+    )
+    assert impact.protected == [fee]
+    assert impact.supersedable == []
+    assert impact.transition_on == date(2026, 10, 24)
 
 
 def test_next_due_uses_confirmed_revision_cadence_not_current_class_value() -> None:

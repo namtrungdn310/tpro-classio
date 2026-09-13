@@ -97,7 +97,8 @@ async def create_cycle_zero(
         change_kind=change_kind,
         reason=reason,
     )
-    enrollment_date = enrollment.enrollment_date or date.today()
+    # Admission and billing anchors are independent after baseline creation.
+    enrollment_date = revision.anchor_date
     amount = int(enrollment.custom_fee) if enrollment.custom_fee is not None else 0
     class_ = getattr(enrollment, "class_", None)
     if class_ is not None:
@@ -133,6 +134,8 @@ async def create_cycle_zero(
             else CYCLE_ORIGIN_GENERATOR
         ),
         enrollment_date_snapshot=enrollment_date,
+        admission_date_snapshot=enrollment.enrollment_date,
+        billing_anchor_date_snapshot=enrollment_date,
         class_name_snapshot=class_.name if class_ is not None else None,
         class_type_snapshot=(
             _enrollment_billing_type(enrollment) if class_ is not None else "MONTHLY"
@@ -174,6 +177,23 @@ async def ensure_enrollment_cycles(
         return []
     if not bool(getattr(class_, "is_active", True)) or class_.cancelled_at is not None:
         return []
+
+    # The same enrollment/class lock protects old segments and the new cadence.
+    revision_for_segments = None
+    if enrollment.current_billing_revision_id:
+        revision_for_segments = await db.get(
+            BillingAnchorRevision, enrollment.current_billing_revision_id
+        )
+    segment_records = []
+    if revision_for_segments is not None and revision_for_segments.state == "CONFIRMED":
+        from app.services.billing_segment_service import materialize_retained_segments
+
+        await lock_enrollment_cycle_identity(db, enrollment.id)
+        segment_records = await materialize_retained_segments(
+            db, enrollment, revision_for_segments, up_to=up_to
+        )
+        if segment_records:
+            known_max_cycle = None
 
     if known_max_cycle is None:
         await lock_enrollment_cycle_identity(db, enrollment.id)
@@ -224,7 +244,7 @@ async def ensure_enrollment_cycles(
         if enrollment.custom_fee is not None
         else int(class_.base_fee)
     )
-    created: list[FeeRecord] = []
+    created: list[FeeRecord] = list(segment_records)
     while True:
         coverage_start, coverage_end = cycle_coverage_interval(
             schedule_anchor,
@@ -232,7 +252,11 @@ async def ensure_enrollment_cycles(
             cycle_weeks,
             next_anchor_cycle,
         )
-        if not cycle_exists(coverage_start, class_.stopped_on):
+        stop_date = min(
+            [d for d in (class_.stopped_on, enrollment.ended_on) if d is not None],
+            default=None,
+        )
+        if not cycle_exists(coverage_start, stop_date):
             break
         if coverage_start > up_to:
             break
@@ -247,7 +271,11 @@ async def ensure_enrollment_cycles(
         from app.core.billing_schedule import adjusted_due_after_deferral
         from app.services.credit_service import enrollment_total_deferral_days
 
-        deferral = await enrollment_total_deferral_days(db, enrollment.id)
+        deferral = await enrollment_total_deferral_days(
+            db,
+            enrollment.id,
+            coverage_start=coverage_start,
+        )
         record = FeeRecord(
             enrollment_id=enrollment.id,
             billing_revision_id=revision.id if revision is not None else None,
@@ -261,6 +289,8 @@ async def ensure_enrollment_cycles(
             coverage_end=coverage_end,
             origin=CYCLE_ORIGIN_GENERATOR,
             enrollment_date_snapshot=schedule_anchor,
+            admission_date_snapshot=enrollment.enrollment_date,
+            billing_anchor_date_snapshot=schedule_anchor,
             class_name_snapshot=class_.name,
             class_type_snapshot=billing_type,
             billing_cycle_months_snapshot=(
@@ -279,6 +309,9 @@ async def ensure_enrollment_cycles(
         next_anchor_cycle += 1
     if created:
         await db.flush()
+        from app.services.credit_service import allocate_pending_service_credits
+
+        await allocate_pending_service_credits(db, enrollment.id, created)
     return created
 
 
@@ -311,11 +344,41 @@ async def ensure_final_cycle_for_stop(
         revision.anchor_date if revision is not None else enrollment.enrollment_date
     )
     last_active = stopped_on - timedelta(days=1)
+    segments = getattr(revision, "scheduled_segments", None)
+    if isinstance(segments, list) and segments and revision.state == "CONFIRMED":
+        from app.services.billing_segment_service import materialize_retained_segments
+        from app.services.credit_service import allocate_pending_service_credits
+
+        retained = await materialize_retained_segments(
+            db, enrollment, revision, up_to=last_active, stop_on=stopped_on
+        )
+        await allocate_pending_service_credits(db, enrollment.id, retained)
+        final_retained = await db.scalar(
+            select(FeeRecord)
+            .where(
+                FeeRecord.enrollment_id == enrollment.id,
+                FeeRecord.status.notin_(("VOID", "SUPERSEDED")),
+                FeeRecord.coverage_start <= last_active,
+                FeeRecord.coverage_end > last_active,
+            )
+            .order_by(FeeRecord.coverage_start.desc(), FeeRecord.id)
+            .limit(1)
+        )
+        if final_retained is not None:
+            final_retained.is_final_cycle = True
+            final_retained.final_cycle_reason = (
+                f"Kỳ cuối trước khi lớp ngừng từ {stopped_on.strftime('%d/%m/%Y')}"
+            )
+            return final_retained
     if anchor > last_active:
         return None
     weeks = (
-        max(int(revision.billing_cycle_weeks_snapshot or 1), 1)
-        if revision is not None and revision.billing_type_snapshot == "COURSE"
+        (
+            max(int(revision.billing_cycle_weeks_snapshot or 1), 1)
+            if revision.billing_type_snapshot == "COURSE"
+            else None
+        )
+        if revision is not None
         else _enrollment_cycle_weeks(enrollment)
     )
     billing_type = (
@@ -335,14 +398,23 @@ async def ensure_final_cycle_for_stop(
             FeeRecord.enrollment_id == enrollment.id,
             FeeRecord.billing_revision_id == (revision.id if revision else None),
             FeeRecord.anchor_cycle_no == anchor_cycle,
-            FeeRecord.status.notin_(("VOID", "SUPERSEDED")),
+            FeeRecord.status != "SUPERSEDED",
         )
     )
     reason = f"Kỳ cuối trước khi lớp ngừng từ {stopped_on.strftime('%d/%m/%Y')}"
     if existing is not None:
+        # A cancelled obligation is a deliberate disposition, not a missing
+        # invoice. Stopping a class must never resurrect it.
+        if existing.status == "VOID":
+            return None
         existing.is_final_cycle = True
         existing.final_cycle_reason = reason
         return existing
+
+    if revision is not None and anchor_cycle < revision.first_anchor_cycle_no:
+        # The accepted plan can explicitly waive the interval before its
+        # generation floor. A later stop must honour that decision.
+        return None
 
     max_cycle = await db.scalar(
         select(func.max(FeeRecord.cycle_no)).where(
@@ -357,7 +429,9 @@ async def ensure_final_cycle_for_stop(
     from app.core.billing_schedule import adjusted_due_after_deferral
     from app.services.credit_service import enrollment_total_deferral_days
 
-    deferral = await enrollment_total_deferral_days(db, enrollment.id)
+    deferral = await enrollment_total_deferral_days(
+        db, enrollment.id, coverage_start=coverage_start
+    )
     amount = (
         int(enrollment.custom_fee)
         if enrollment.custom_fee is not None
@@ -379,6 +453,8 @@ async def ensure_final_cycle_for_stop(
         coverage_end=coverage_end,
         origin="FINAL_CYCLE",
         enrollment_date_snapshot=anchor,
+        admission_date_snapshot=enrollment.enrollment_date,
+        billing_anchor_date_snapshot=anchor,
         class_name_snapshot=enrollment.class_.name,
         class_type_snapshot=billing_type,
         billing_cycle_months_snapshot=(

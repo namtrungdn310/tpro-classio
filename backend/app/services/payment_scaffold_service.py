@@ -169,7 +169,12 @@ async def create_payment_request_for_records(
     max_due = today + timedelta(days=settings.payment_early_window_days)
     for record in records:
         due = _effective_due(record)
-        if record.status in {"PAID", "VOID", "SUPERSEDED"} or due is None:
+        if (
+            record.status in {"PAID", "VOID", "SUPERSEDED"}
+            or record.paid_date is not None
+            or (record.paid_amount is not None and record.paid_amount > 0)
+            or due is None
+        ):
             raise PaymentRequestUnavailableError(
                 "Chỉ khoản học phí chưa nộp còn hiệu lực mới được tạo mã."
             )
@@ -208,6 +213,7 @@ async def create_payment_request_for_records(
             PaymentRequest.status == "OPEN",
             PaymentRequestItem.fee_record_id.in_(ordered),
         )
+        .order_by(PaymentRequest.id)
         .with_for_update(of=PaymentRequest)
     )
     open_requests = list(
@@ -239,6 +245,7 @@ async def create_payment_request_for_records(
             PaymentRequest.status == "OPEN",
             PaymentRequestItem.fee_record_id.in_(ordered),
         )
+        .order_by(PaymentRequest.id)
         .with_for_update(of=PaymentRequest)
     )
     existing_rows = existing_result.all()
@@ -452,14 +459,18 @@ async def revoke_open_payment_requests_for_fee_records(
         return 0
     result = await db.execute(
         select(PaymentRequest)
-        .join(
+        .outerjoin(
             PaymentRequestItem,
             PaymentRequestItem.payment_request_id == PaymentRequest.id,
         )
         .where(
             PaymentRequest.status == "OPEN",
-            PaymentRequestItem.fee_record_id.in_(ids),
+            or_(
+                PaymentRequestItem.fee_record_id.in_(ids),
+                PaymentRequest.fee_record_id.in_(ids),
+            ),
         )
+        .order_by(PaymentRequest.id)
         .with_for_update(of=PaymentRequest)
     )
     # A few pure service tests use a lightweight DB double whose ``scalars``
@@ -518,6 +529,7 @@ async def get_open_payment_request_ids_for_fee_records(
             PaymentRequest.status == "OPEN",
             PaymentRequestItem.fee_record_id.in_(ids),
         )
+        .order_by(PaymentRequest.id)
         .with_for_update(of=PaymentRequest)
     )
     return {str(fee_id): str(request_id) for fee_id, request_id in result.all()}

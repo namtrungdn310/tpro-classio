@@ -57,6 +57,16 @@ async def preview_student_membership(
 ) -> StudentMembershipPreviewResponse | None:
     """Validate and price a membership command without writing any row."""
 
+    from app.services.independent_dates_guard import require_date_contract
+
+    require_date_contract(
+        request.contract_version,
+        has_date_edit=any(
+            "enrollment_date" in update.model_fields_set
+            for update in request.enrollment_updates
+        ),
+    )
+
     student = await db.scalar(select(Student).where(Student.id == str(student_id)))
     if student is None:
         return None
@@ -255,7 +265,10 @@ async def preview_student_membership(
 
     source_records: list[FeeRecord] = []
     if source is not None:
-        transfer_on = resolved_targets[0][2]
+        # A multi-target transfer leaves the source as soon as the first target
+        # enrollment starts. Using the minimum also keeps preview/fingerprint
+        # independent from the order in which the UI sends selected classes.
+        transfer_on = min(resolved for _, _, resolved, _ in resolved_targets)
         source_records = list(
             (
                 await db.scalars(
@@ -266,18 +279,34 @@ async def preview_student_membership(
                 )
             ).all()
         )
-        mutable_count = sum(
+        future_mutable_count = sum(
             1
             for record in source_records
             if not is_fee_record_protected(record)
             and (record.coverage_start or record.base_due_date or record.due_date)
             >= transfer_on
         )
+        waivable_final_cycle_count = sum(
+            1
+            for record in source_records
+            if not is_fee_record_protected(record)
+            and (record.coverage_start or record.base_due_date or record.due_date)
+            < transfer_on
+            and record.coverage_end is not None
+            and record.coverage_end >= transfer_on
+        )
+        mutable_count = future_mutable_count + (
+            0 if request.collect_source_final_cycle else waivable_final_cycle_count
+        )
         protected_overlap_count = sum(
             1
             for record in source_records
             if is_fee_record_protected(record)
-            and (record.coverage_end is None or record.coverage_end > transfer_on)
+            # Coverage intervals are half-open. A protected cycle ending exactly
+            # on the transfer boundary is still the student's final source
+            # cycle and must be disclosed when the administrator chooses to
+            # waive that cycle.
+            and (record.coverage_end is None or record.coverage_end >= transfer_on)
         )
         source_impact = StudentMembershipSourceImpact(
             enrollment_id=UUID(source.id),
@@ -286,6 +315,8 @@ async def preview_student_membership(
             ends_on=transfer_on,
             mutable_fee_count=mutable_count,
             protected_fee_count=protected_overlap_count,
+            collect_final_cycle=request.collect_source_final_cycle,
+            waivable_final_cycle_count=waivable_final_cycle_count,
         )
         if protected_overlap_count:
             warnings.append(
@@ -414,7 +445,10 @@ async def preview_student_membership(
                 )
             )
             if enr is None or enr.status != "active":
-                continue
+                raise _conflict(
+                    "SOURCE_MEMBERSHIP_CHANGED",
+                    "Lớp của học viên vừa thay đổi. Vui lòng tải lại.",
+                )
             active_fees = [
                 f for f in enr.fee_records if f.status not in ("VOID", "SUPERSEDED")
             ]
@@ -431,6 +465,127 @@ async def preview_student_membership(
                     enr.class_, upd.enrollment_date
                 )
                 await ensure_enrollment_allowed(db, enr.class_, resolved_enr_date)
+
+            if request.contract_version == 4:
+                from app.services.admission_date_service import (
+                    validate_admission_date_change,
+                )
+
+                if upd.enrollment_date is not None:
+                    await validate_admission_date_change(
+                        db,
+                        enr,
+                        next_date=resolved_enr_date,
+                        expected_version=upd.expected_admission_version,
+                    )
+                    if (
+                        upd.selected_slot_ids is None
+                        and resolved_enr_date != enr.enrollment_date
+                    ):
+                        from app.services.enrollment_service import (
+                            realign_open_slot_selections,
+                        )
+
+                        await realign_open_slot_selections(
+                            db,
+                            enr,
+                            enr.class_,
+                            previous_start=enr.enrollment_date,
+                            next_start=resolved_enr_date,
+                            validate_only=True,
+                        )
+                selected_ids = (
+                    [str(slot_id) for slot_id in upd.selected_slot_ids]
+                    if upd.selected_slot_ids is not None
+                    else [
+                        selection.slot_id
+                        for selection in enr.slot_selections
+                        if selection.effective_until is None
+                    ]
+                )
+                slots = list(
+                    (
+                        await db.scalars(
+                            select(ClassScheduleSlot).where(
+                                ClassScheduleSlot.id.in_(selected_ids),
+                                ClassScheduleSlot.class_id == enr.class_id,
+                                ClassScheduleSlot.effective_from <= resolved_enr_date,
+                                or_(
+                                    ClassScheduleSlot.effective_until.is_(None),
+                                    ClassScheduleSlot.effective_until
+                                    > resolved_enr_date,
+                                ),
+                            )
+                        )
+                    ).all()
+                )
+                if len(slots) != len(set(selected_ids)):
+                    raise _conflict(
+                        "SLOT_NOT_EFFECTIVE_ON_DATE",
+                        "Buổi học không có hiệu lực tại ngày ghi danh mới.",
+                    )
+                await _ensure_student_schedule_available(
+                    db,
+                    student_id=str(student_id),
+                    class_=enr.class_,
+                    selected_slot_ids=selected_ids,
+                    enrollment_id=str(enr.id),
+                    effective_from=resolved_enr_date,
+                )
+                enrollment_update_impacts.append(
+                    {
+                        "enrollment_id": str(enr.id),
+                        "class_id": str(enr.class_id),
+                        "student_id": str(student.id),
+                        "student_name": student.full_name,
+                        "must_change": False,
+                        "class_name": enr.class_.name,
+                        "old_enrollment_date": enr.enrollment_date,
+                        "new_enrollment_date": resolved_enr_date,
+                        "finance_unchanged": True,
+                        "decisions": [],
+                        "recommended_decision": "KEEP_EXISTING_SCHEDULE",
+                        "protected_fee_count": len(protected_fees),
+                        "mutable_fee_count": len(active_fees) - len(protected_fees),
+                    }
+                )
+                fingerprint_updates.append(
+                    {
+                        "enrollment_id": str(enr.id),
+                        "patch": upd.model_dump(mode="json", exclude_unset=True),
+                        "old_date": enr.enrollment_date,
+                        "resolved_date": resolved_enr_date,
+                        "admission_version": enr.admission_version,
+                        "billing_version": enr.billing_anchor_version,
+                        "revision_id": enr.current_billing_revision_id,
+                        "class_version": enr.class_.version,
+                        "slots": [
+                            (
+                                str(slot.id),
+                                slot.weekday,
+                                str(slot.local_start),
+                                str(slot.local_end),
+                                str(slot.effective_from),
+                                str(slot.effective_until),
+                            )
+                            for slot in sorted(slots, key=lambda item: str(item.id))
+                        ],
+                        "fees": [
+                            (
+                                str(fee.id),
+                                fee.status,
+                                str(fee.coverage_start),
+                                str(fee.coverage_end),
+                                str(fee.paid_amount),
+                                str(fee.notified_at),
+                            )
+                            for fee in sorted(
+                                active_fees, key=lambda item: str(item.id)
+                            )
+                        ],
+                    }
+                )
+                continue
 
             effective_fee = (
                 int(upd.custom_fee)
@@ -527,6 +682,8 @@ async def preview_student_membership(
             "ends_on": transfer_on,
             "mutable_fee_count": mutable_count,
             "protected_fee_count": protected_overlap_count,
+            "collect_final_cycle": request.collect_source_final_cycle,
+            "waivable_final_cycle_count": waivable_final_cycle_count,
             "records": source_records_snapshot,
         }
         if source is not None
@@ -538,6 +695,8 @@ async def preview_student_membership(
         fingerprint_dict["enrollment_updates"] = sorted(
             fingerprint_updates, key=lambda x: str(x["enrollment_id"])
         )
+    if request.contract_version == 4:
+        fingerprint_dict["contract_version"] = 4
 
     fingerprint = _preview_hash(fingerprint_dict)
     return StudentMembershipPreviewResponse(
