@@ -172,12 +172,12 @@ export function StudentLearningHistory({
                       </div>
                       <div className="sm:col-span-2">
                         <dt className="text-[13px] text-gray-500">Lịch học đã chọn</dt>
-                        <dd className="mt-0.5 leading-5 text-gray-900">{scheduleLabel(enrollment)}</dd>
+                        <dd className="mt-0.5 font-medium leading-5 text-gray-900">{scheduleLabel(enrollment)}</dd>
                       </div>
                       {enrollment.status !== "active" && enrollment.end_reason ? (
                         <div className="sm:col-span-2">
                           <dt className="text-[13px] text-gray-500">Lý do kết thúc</dt>
-                          <dd className="mt-0.5 leading-5 text-gray-900">{enrollment.end_reason}</dd>
+                          <dd className="mt-0.5 font-medium leading-5 text-gray-900">{enrollment.end_reason}</dd>
                         </div>
                       ) : null}
                       {enrollment.status !== "active" && enrollment.ended_at ? (
